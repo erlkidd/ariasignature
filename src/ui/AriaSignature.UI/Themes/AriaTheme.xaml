@@ -1,0 +1,11 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Color x:Key="AriaPrimaryColor">#2F6FED</Color>
+    <Color x:Key="AriaSurfaceColor">#F7F9FC</Color>
+    <SolidColorBrush x:Key="AriaPrimaryBrush" Color="{StaticResource AriaPrimaryColor}" />
+    <SolidColorBrush x:Key="AriaSurfaceBrush" Color="{StaticResource AriaSurfaceColor}" />
+    <Style TargetType="Window">
+        <Setter Property="Background" Value="{StaticResource AriaSurfaceBrush}" />
+        <Setter Property="FontFamily" Value="Segoe UI" />
+    </Style>
+</ResourceDictionary>

@@ -34,4 +34,8 @@
 - UI now works in strict service-first mode for disk data (no direct local disk provider in UI process).
 - Backup creation form now supports both `.1CD` file mode and `MSSQL` mode.
 - Service warmup now performs initial telemetry refresh on startup.
+- Backup lifecycle in UI expanded: inline edit, enable/disable, run-now, delete.
+- API not-found cases moved to explicit `application/problem+json` semantics.
+- Added release gate assets: `scripts/release-gate.ps1` and `docs/RELEASE_GATE.md`.
+- Installer branding now uses `SetupIconFile` with shared `icon.ico`.
 - Build verification is green for all projects.

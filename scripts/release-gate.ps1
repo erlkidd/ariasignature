@@ -1,0 +1,38 @@
+param(
+    [string]$Configuration = "Release"
+)
+
+$ErrorActionPreference = "Stop"
+Set-Location (Resolve-Path "$PSScriptRoot\..")
+
+Write-Host "1/5 Build solution..."
+dotnet build .\AriaSignature.slnx -c $Configuration
+
+Write-Host "2/5 Run tests..."
+dotnet test .\AriaSignature.slnx -c $Configuration
+
+Write-Host "3/5 Publish UI..."
+dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c $Configuration -o .\publish\ui
+
+Write-Host "4/5 Publish service..."
+dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c $Configuration -o .\publish\service
+
+Write-Host "5/5 Build installer..."
+$isccPath = Get-Command iscc -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue
+if (-not $isccPath) {
+    $fallback = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+    if (Test-Path $fallback) {
+        $isccPath = $fallback
+    }
+}
+
+if (-not $isccPath) {
+    throw "ISCC.exe not found. Install Inno Setup 6 or add ISCC to PATH."
+}
+
+& $isccPath .\installer\inno\AriaSignature.iss
+if ($LASTEXITCODE -ne 0) {
+    throw "ISCC failed with exit code $LASTEXITCODE"
+}
+
+Write-Host "Release gate completed successfully."

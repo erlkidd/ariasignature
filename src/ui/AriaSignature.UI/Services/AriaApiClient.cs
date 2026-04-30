@@ -42,4 +42,32 @@ public sealed class AriaApiClient
 
         return await response.Content.ReadFromJsonAsync<BackupJob>(_jsonOptions, cancellationToken);
     }
+
+    public async Task<BackupJob?> UpdateBackupJobAsync(string apiBaseUrl, Guid id, BackupJobUpsertModel request, CancellationToken cancellationToken)
+    {
+        using var response = await _httpClient.PutAsJsonAsync($"{apiBaseUrl.TrimEnd('/')}/backups/{id}", request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        return await response.Content.ReadFromJsonAsync<BackupJob>(_jsonOptions, cancellationToken);
+    }
+
+    public async Task<bool> DeleteBackupJobAsync(string apiBaseUrl, Guid id, CancellationToken cancellationToken)
+    {
+        using var response = await _httpClient.DeleteAsync($"{apiBaseUrl.TrimEnd('/')}/backups/{id}", cancellationToken);
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<BackupLog?> RunBackupJobAsync(string apiBaseUrl, Guid id, CancellationToken cancellationToken)
+    {
+        using var response = await _httpClient.PostAsync($"{apiBaseUrl.TrimEnd('/')}/backups/{id}/run", content: null, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        return await response.Content.ReadFromJsonAsync<BackupLog>(_jsonOptions, cancellationToken);
+    }
 }

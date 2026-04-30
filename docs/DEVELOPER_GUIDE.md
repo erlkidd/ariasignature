@@ -29,13 +29,14 @@
 - `DiskTelemetryService` orchestrates refresh and query operations.
 - `SqliteDiskTelemetryRepository` stores disk snapshots and SMART history.
 
-## Backup module baseline
+## Backup module
 
 - `IBackupService` provides backup job CRUD and execution APIs.
 - `BackupService` applies retry policy (3 attempts) and writes execution logs.
 - `BackupExecutor` supports file copy backups and MSSQL `BACKUP DATABASE` flow.
 - Retention policy is applied after each successful backup run.
 - `BackupSchedulerHostedService` polls due cron jobs and runs them automatically.
+- API validation now includes type-specific checks for `File` vs `MsSql`.
 
 ## Data persistence
 
@@ -52,6 +53,8 @@
 - UI pulls live data from local API via `AriaApiClient` and manual refresh command.
 - UI does not use direct local disk probing anymore; disk data source is only the service API.
 - Backup creation UI supports task type selection (`File` / `MsSql`) with source semantics per type.
+- Backup jobs in UI support inline update, enable/disable toggle, manual run, and delete.
+- App resources include `Themes/AriaTheme.xaml` as a shared visual dictionary.
 
 ## Icon asset policy
 
@@ -83,4 +86,6 @@
 ## Testing baseline
 
 - API integration tests run via `WebApplicationFactory`.
-- Current tests validate `/api/v1/status` and `/api/v1/disks` availability.
+- API tests validate status/disks endpoints, backup CRUD/run, and problem+json not-found semantics.
+- Release gate automation script is available at `scripts/release-gate.ps1`.
+- RC checklist is documented in `docs/RELEASE_GATE.md`.

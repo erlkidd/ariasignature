@@ -12,6 +12,10 @@ public sealed class MainViewModel : ObservableObject
     private readonly AriaApiClient _apiClient = new();
     public ICommand RefreshCommand { get; }
     public ICommand CreateBackupCommand { get; }
+    public ICommand SaveBackupCommand { get; }
+    public ICommand DeleteBackupCommand { get; }
+    public ICommand RunBackupCommand { get; }
+    public ICommand ToggleBackupCommand { get; }
 
     public ObservableCollection<Disk> Disks { get; } = [];
     public ObservableCollection<BackupJob> BackupJobs { get; } = [];
@@ -174,10 +178,33 @@ public sealed class MainViewModel : ObservableObject
         ? @"Пример: C:\Bases\Accounting\1Cv8.1CD"
         : "Пример: Server=HOST;Database=DB;User Id=sa;Password=***;";
 
+    private BackupJob? _selectedBackupJob;
+    public BackupJob? SelectedBackupJob
+    {
+        get => _selectedBackupJob;
+        set
+        {
+            if (_selectedBackupJob == value)
+            {
+                return;
+            }
+
+            _selectedBackupJob = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanEditSelectedBackup));
+        }
+    }
+
+    public bool CanEditSelectedBackup => SelectedBackupJob is not null;
+
     public MainViewModel()
     {
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
         CreateBackupCommand = new AsyncRelayCommand(CreateBackupAsync);
+        SaveBackupCommand = new AsyncRelayCommand(SaveBackupAsync);
+        DeleteBackupCommand = new AsyncRelayCommand(DeleteBackupAsync);
+        RunBackupCommand = new AsyncRelayCommand(RunBackupAsync);
+        ToggleBackupCommand = new AsyncRelayCommand(ToggleBackupStateAsync);
         _ = RefreshAsync();
     }
 
@@ -242,6 +269,73 @@ public sealed class MainViewModel : ObservableObject
         {
             OperationStatus = $"Ошибка создания задачи: {ex.Message}";
         }
+    }
+
+    public async Task SaveBackupAsync()
+    {
+        if (SelectedBackupJob is null)
+        {
+            OperationStatus = "Выберите задачу для редактирования";
+            return;
+        }
+
+        var request = new BackupJobUpsertModel
+        {
+            Name = SelectedBackupJob.Name,
+            Type = SelectedBackupJob.Type,
+            Source = SelectedBackupJob.Source,
+            Destination = SelectedBackupJob.Destination,
+            ScheduleCron = SelectedBackupJob.ScheduleCron,
+            RetentionCount = Math.Max(SelectedBackupJob.RetentionCount, 1),
+            IsEnabled = SelectedBackupJob.IsEnabled
+        };
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var updated = await _apiClient.UpdateBackupJobAsync(ApiBaseUrl, SelectedBackupJob.Id, request, cts.Token);
+        OperationStatus = updated is null
+            ? "Не удалось сохранить изменения задачи"
+            : $"Задача \"{updated.Name}\" обновлена";
+        await RefreshAsync();
+    }
+
+    public async Task DeleteBackupAsync()
+    {
+        if (SelectedBackupJob is null)
+        {
+            OperationStatus = "Выберите задачу для удаления";
+            return;
+        }
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var deleted = await _apiClient.DeleteBackupJobAsync(ApiBaseUrl, SelectedBackupJob.Id, cts.Token);
+        OperationStatus = deleted ? "Задача удалена" : "Не удалось удалить задачу";
+        await RefreshAsync();
+    }
+
+    public async Task RunBackupAsync()
+    {
+        if (SelectedBackupJob is null)
+        {
+            OperationStatus = "Выберите задачу для запуска";
+            return;
+        }
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var log = await _apiClient.RunBackupJobAsync(ApiBaseUrl, SelectedBackupJob.Id, cts.Token);
+        OperationStatus = log is null ? "Не удалось запустить задачу" : $"Запуск завершен: {log.Status}";
+        await RefreshAsync();
+    }
+
+    public async Task ToggleBackupStateAsync()
+    {
+        if (SelectedBackupJob is null)
+        {
+            OperationStatus = "Выберите задачу для включения/выключения";
+            return;
+        }
+
+        SelectedBackupJob.IsEnabled = !SelectedBackupJob.IsEnabled;
+        await SaveBackupAsync();
     }
 
     private static string MapCronPreset(string preset)

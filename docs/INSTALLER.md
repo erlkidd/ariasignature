@@ -20,6 +20,7 @@ dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj 
 - Open `installer/inno/AriaSignature.iss` in Inno Setup Compiler.
 - Build the installer.
 - Output package appears in `artifacts/installer`.
+- For automated RC run use: `.\scripts\release-gate.ps1`.
 
 ## Elevation and permissions
 
@@ -48,5 +49,5 @@ dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj 
 ## Icon notes
 
 - Source visual asset is root `icon.png`.
-- Tray icon already uses this asset at runtime.
-- For installer executable icon, convert `icon.png` to `icon.ico` and set `SetupIconFile` in the script.
+- Unified `icon.ico` is used for exe/window/tray/shortcuts/installer.
+- `SetupIconFile` is enabled in `AriaSignature.iss`.

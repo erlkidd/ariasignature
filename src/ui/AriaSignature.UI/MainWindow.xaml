@@ -79,7 +79,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="12" />
                         <RowDefinition Height="2*" />
-                        <RowDefinition Height="12" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
@@ -120,16 +120,25 @@
                         Grid.Row="2"
                         AutoGenerateColumns="False"
                         CanUserAddRows="False"
-                        IsReadOnly="True"
-                        ItemsSource="{Binding BackupJobs}">
+                        IsReadOnly="False"
+                        ItemsSource="{Binding BackupJobs}"
+                        SelectedItem="{Binding SelectedBackupJob}">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Имя задачи" Binding="{Binding Name}" Width="2*" />
-                            <DataGridTextColumn Header="Тип" Binding="{Binding Type}" Width="*" />
-                            <DataGridTextColumn Header="Источник" Binding="{Binding Source}" Width="2*" />
-                            <DataGridTextColumn Header="Назначение" Binding="{Binding Destination}" Width="2*" />
-                            <DataGridTextColumn Header="Расписание (Cron)" Binding="{Binding ScheduleCron}" Width="*" />
+                            <DataGridComboBoxColumn Header="Тип" Width="*" SelectedItemBinding="{Binding Type}" ItemsSource="{Binding DataContext.BackupTypes, RelativeSource={RelativeSource AncestorType=Window}}" />
+                            <DataGridTextColumn Header="Источник" Binding="{Binding Source, UpdateSourceTrigger=PropertyChanged}" Width="2*" />
+                            <DataGridTextColumn Header="Назначение" Binding="{Binding Destination, UpdateSourceTrigger=PropertyChanged}" Width="2*" />
+                            <DataGridTextColumn Header="Расписание (Cron)" Binding="{Binding ScheduleCron, UpdateSourceTrigger=PropertyChanged}" Width="*" />
+                            <DataGridCheckBoxColumn Header="Включена" Binding="{Binding IsEnabled}" Width="*" />
                         </DataGrid.Columns>
                     </DataGrid>
+
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0" HorizontalAlignment="Right">
+                        <Button Margin="0,0,8,0" Padding="12,4" Content="Сохранить" Command="{Binding SaveBackupCommand}" />
+                        <Button Margin="0,0,8,0" Padding="12,4" Content="Вкл/Выкл" Command="{Binding ToggleBackupCommand}" />
+                        <Button Margin="0,0,8,0" Padding="12,4" Content="Запустить" Command="{Binding RunBackupCommand}" />
+                        <Button Padding="12,4" Content="Удалить" Command="{Binding DeleteBackupCommand}" />
+                    </StackPanel>
 
                     <DataGrid
                         Grid.Row="4"

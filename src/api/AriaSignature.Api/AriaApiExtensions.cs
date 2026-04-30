@@ -60,13 +60,29 @@ public static class AriaApiExtensions
         api.MapGet("/disks/{id:guid}", async (Guid id, IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
         {
             var disk = await telemetry.GetDiskByIdAsync(id, cancellationToken);
-            return disk is null ? Results.NotFound() : Results.Ok(disk);
+            return disk is null
+                ? Results.Problem(
+                    title: "Диск не найден",
+                    detail: $"Диск с идентификатором '{id}' не существует",
+                    statusCode: StatusCodes.Status404NotFound)
+                : Results.Ok(disk);
         })
             .WithName("GetDiskById")
             .WithOpenApi();
 
         api.MapGet("/disks/{id:guid}/smart", async (Guid id, IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
-            Results.Ok(await telemetry.GetSmartMetricsAsync(id, cancellationToken)))
+        {
+            var disk = await telemetry.GetDiskByIdAsync(id, cancellationToken);
+            if (disk is null)
+            {
+                return Results.Problem(
+                    title: "Диск не найден",
+                    detail: $"SMART-метрики недоступны, диск '{id}' не найден",
+                    statusCode: StatusCodes.Status404NotFound);
+            }
+
+            return Results.Ok(await telemetry.GetSmartMetricsAsync(id, cancellationToken));
+        })
             .WithName("GetDiskSmart")
             .WithOpenApi();
 
@@ -100,7 +116,12 @@ public static class AriaApiExtensions
 
             var job = MapRequestToJob(request);
             var updated = await backups.UpdateJobAsync(id, job, cancellationToken);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
+            return updated is null
+                ? Results.Problem(
+                    title: "Задача архивации не найдена",
+                    detail: $"Задача с идентификатором '{id}' не существует",
+                    statusCode: StatusCodes.Status404NotFound)
+                : Results.Ok(updated);
         })
             .WithName("UpdateBackup")
             .WithOpenApi();
@@ -108,7 +129,12 @@ public static class AriaApiExtensions
         api.MapDelete("/backups/{id:guid}", async (Guid id, IBackupService backups, CancellationToken cancellationToken) =>
         {
             var deleted = await backups.DeleteJobAsync(id, cancellationToken);
-            return deleted ? Results.NoContent() : Results.NotFound();
+            return deleted
+                ? Results.NoContent()
+                : Results.Problem(
+                    title: "Задача архивации не найдена",
+                    detail: $"Удаление невозможно: задача '{id}' не существует",
+                    statusCode: StatusCodes.Status404NotFound);
         })
             .WithName("DeleteBackup")
             .WithOpenApi();
@@ -146,10 +172,36 @@ public static class AriaApiExtensions
         {
             errors["source"] = ["Источник обязателен"];
         }
+        else if (request.Type == BackupType.File && !Path.IsPathRooted(request.Source))
+        {
+            errors["source"] = ["Для File-архивации путь источника должен быть абсолютным"];
+        }
+        else if (request.Type == BackupType.MsSql)
+        {
+            if (!request.Source.Contains("Server=", StringComparison.OrdinalIgnoreCase))
+            {
+                errors["source"] = ["Для MsSql требуется connection string c параметром Server"];
+            }
+
+            if (!request.Source.Contains("Database=", StringComparison.OrdinalIgnoreCase) &&
+                !request.Source.Contains("Initial Catalog=", StringComparison.OrdinalIgnoreCase))
+            {
+                errors["source"] = ["Для MsSql требуется Database или Initial Catalog"];
+            }
+        }
 
         if (string.IsNullOrWhiteSpace(request.Destination))
         {
             errors["destination"] = ["Назначение обязательно"];
+        }
+        else if (!Path.IsPathRooted(request.Destination))
+        {
+            errors["destination"] = ["Путь назначения должен быть абсолютным"];
+        }
+        else if (request.Type == BackupType.File &&
+                 string.Equals(Path.GetFullPath(request.Source), Path.GetFullPath(request.Destination), StringComparison.OrdinalIgnoreCase))
+        {
+            errors["destination"] = ["Источник и назначение не должны совпадать"];
         }
 
         if (request.RetentionCount <= 0)

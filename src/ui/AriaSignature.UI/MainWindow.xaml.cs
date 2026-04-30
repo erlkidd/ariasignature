@@ -31,7 +31,7 @@ public partial class MainWindow : Window
 
     private void TrySetWindowIcon()
     {
-        var iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icon.png");
+        var iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icon.ico");
         if (!System.IO.File.Exists(iconPath))
         {
             return;

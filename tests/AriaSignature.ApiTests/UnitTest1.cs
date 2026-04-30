@@ -33,6 +33,14 @@ public sealed class ApiEndpointsTests : IClassFixture<WebApplicationFactory<Prog
     }
 
     [Fact]
+    public async Task DiskByUnknownId_ReturnsProblemNotFound()
+    {
+        var response = await _client.GetAsync($"/api/v1/disks/{Guid.NewGuid()}");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    [Fact]
     public async Task BackupCrudAndRunFlow_Works()
     {
         var request = new UpsertBackupJobRequest
@@ -78,5 +86,31 @@ public sealed class ApiEndpointsTests : IClassFixture<WebApplicationFactory<Prog
 
         var response = await _client.PostAsJsonAsync("/api/v1/backups", request);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateMsSqlBackup_WithInvalidConnectionString_ReturnsBadRequest()
+    {
+        var request = new UpsertBackupJobRequest
+        {
+            Name = "MSSQL",
+            Type = BackupType.MsSql,
+            Source = "Server=.;User Id=sa;",
+            Destination = "C:\\temp\\backups",
+            ScheduleCron = "0 */5 * * * ?",
+            RetentionCount = 1,
+            IsEnabled = true
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/v1/backups", request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeleteUnknownBackup_ReturnsProblemNotFound()
+    {
+        var response = await _client.DeleteAsync($"/api/v1/backups/{Guid.NewGuid()}");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
     }
 }
