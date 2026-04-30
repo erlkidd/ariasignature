@@ -9,8 +9,7 @@
         Height="700"
         Width="1100"
         MinHeight="600"
-        MinWidth="900"
-        Icon="Assets/icon.ico">
+        MinWidth="900">
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

@@ -1,4 +1,5 @@
 ﻿using System.Windows;
+using System.Windows.Media.Imaging;
 
 namespace AriaSignature.UI;
 
@@ -13,6 +14,7 @@ public partial class MainWindow : Window
     {
         _app = app;
         InitializeComponent();
+        TrySetWindowIcon();
         Closing += OnClosingToTray;
     }
 
@@ -25,5 +27,16 @@ public partial class MainWindow : Window
 
         e.Cancel = true;
         Hide();
+    }
+
+    private void TrySetWindowIcon()
+    {
+        var iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icon.png");
+        if (!System.IO.File.Exists(iconPath))
+        {
+            return;
+        }
+
+        Icon = new BitmapImage(new Uri(iconPath, UriKind.Absolute));
     }
 }

@@ -43,9 +43,9 @@ Source: "..\..\publish\ui\*"; DestDir: "{app}\ui"; Flags: recursesubdirs createa
 Source: "..\..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{group}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"
-Name: "{autodesktop}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{commonstartup}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Parameters: "--tray"; Tasks: autostarttray
+Name: "{group}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; IconFilename: "{app}\ui\Assets\icon.ico"
+Name: "{autodesktop}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Tasks: desktopicon; IconFilename: "{app}\ui\Assets\icon.ico"
+Name: "{commonstartup}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Parameters: "--tray"; Tasks: autostarttray; IconFilename: "{app}\ui\Assets\icon.ico"
 
 [Run]
 Filename: "sc.exe"; Parameters: "create AriaSignatureService binPath= ""{app}\service\{#MyServiceExeName}"" start= auto"; Flags: runhidden

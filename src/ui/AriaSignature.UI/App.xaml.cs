@@ -48,12 +48,7 @@ public partial class App : System.Windows.Application
     private void InitializeTrayIcon()
     {
         var iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icon.ico");
-        if (!System.IO.File.Exists(iconPath))
-        {
-            return;
-        }
-
-        _trayDrawingIcon = new Drawing.Icon(iconPath);
+        _trayDrawingIcon = LoadTrayIcon(iconPath);
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Открыть", null, (_, _) =>
@@ -78,6 +73,23 @@ public partial class App : System.Windows.Application
             MainWindow!.WindowState = WindowState.Normal;
             MainWindow?.Activate();
         };
+    }
+
+    private static Drawing.Icon LoadTrayIcon(string iconPath)
+    {
+        try
+        {
+            if (System.IO.File.Exists(iconPath))
+            {
+                return new Drawing.Icon(iconPath);
+            }
+        }
+        catch
+        {
+            // Fallback to avoid application crash on invalid icon file.
+        }
+
+        return Drawing.SystemIcons.Application;
     }
 
     public bool CanCloseToTray()
