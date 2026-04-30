@@ -1,6 +1,7 @@
 using AriaSignature.Application.Abstractions;
 using AriaSignature.Domain.Entities;
 using AriaSignature.Domain.Enums;
+using Quartz;
 
 namespace AriaSignature.Application.Services;
 
@@ -75,6 +76,42 @@ public sealed class BackupService : IBackupService
 
         await _repository.AddLogAsync(log, cancellationToken);
         return log;
+    }
+
+    public async Task<IReadOnlyCollection<BackupLog>> RunDueJobsAsync(DateTimeOffset nowUtc, CancellationToken cancellationToken)
+    {
+        var jobs = await _repository.GetJobsAsync(cancellationToken);
+        var dueLogs = new List<BackupLog>();
+
+        foreach (var job in jobs.Where(j => j.IsEnabled))
+        {
+            if (string.IsNullOrWhiteSpace(job.ScheduleCron) || !CronExpression.IsValidExpression(job.ScheduleCron))
+            {
+                continue;
+            }
+
+            var cron = new CronExpression(job.ScheduleCron)
+            {
+                TimeZone = TimeZoneInfo.Utc
+            };
+
+            if (!cron.IsSatisfiedBy(nowUtc.UtcDateTime))
+            {
+                continue;
+            }
+
+            var jobLogs = await _repository.GetLogsByJobAsync(job.Id, cancellationToken);
+            var minuteWindowStart = new DateTimeOffset(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, nowUtc.Minute, 0, TimeSpan.Zero);
+            if (jobLogs.Any(log => log.StartTimeUtc >= minuteWindowStart))
+            {
+                continue;
+            }
+
+            var logResult = await RunJobAsync(job.Id, cancellationToken);
+            dueLogs.Add(logResult);
+        }
+
+        return dueLogs;
     }
 
     public Task<IReadOnlyCollection<BackupLog>> GetLogsAsync(CancellationToken cancellationToken)

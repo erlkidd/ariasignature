@@ -27,6 +27,7 @@ AriaSignature is a local Windows service and desktop application for:
 - Configuration and operational data are persisted in local SQLite storage.
 - Desktop UI contains tabs for disks, backup, and settings.
 - Application runs with tray icon support for quick restore/exit actions.
+- UI can refresh operational data from local API with status of last sync.
 
 ## Planned next capabilities
 

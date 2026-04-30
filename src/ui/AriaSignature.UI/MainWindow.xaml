@@ -14,6 +14,7 @@
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -24,7 +25,19 @@
             FontWeight="SemiBold"
             Text="AriaSignature — Панель управления" />
 
-        <TabControl Grid.Row="1">
+        <DockPanel Grid.Row="1" Margin="0,0,0,12">
+            <Button
+                DockPanel.Dock="Right"
+                MinWidth="120"
+                Padding="10,4"
+                Command="{Binding RefreshCommand}"
+                Content="Обновить" />
+            <TextBlock
+                VerticalAlignment="Center"
+                Text="{Binding LastSyncStatus}" />
+        </DockPanel>
+
+        <TabControl Grid.Row="2">
             <TabItem Header="Накопители">
                 <Grid Margin="12">
                     <DataGrid

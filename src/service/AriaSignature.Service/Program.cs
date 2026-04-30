@@ -22,6 +22,7 @@ builder.Services.AddApplication();
 builder.Services.AddInfrastructure();
 builder.Services.AddHostedService<DatabaseInitializationHostedService>();
 builder.Services.AddHostedService<Worker>();
+builder.Services.AddHostedService<BackupSchedulerHostedService>();
 builder.Services.AddHostedService<LocalApiHostedService>();
 builder.Services.AddQuartz(options =>
 {

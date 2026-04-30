@@ -35,6 +35,7 @@
 - `BackupService` applies retry policy (3 attempts) and writes execution logs.
 - `BackupExecutor` supports file copy backups and MSSQL `BACKUP DATABASE` flow.
 - Retention policy is applied after each successful backup run.
+- `BackupSchedulerHostedService` polls due cron jobs and runs them automatically.
 
 ## Data persistence
 
@@ -48,6 +49,7 @@
 - Main window includes required tabs: Disks, Backup, Settings.
 - No business logic is implemented in `code-behind`.
 - Root `icon.png` is linked as UI resource (`Assets/icon.png`).
+- UI pulls live data from local API via `AriaApiClient` and manual refresh command.
 
 ## Icon asset policy
 
