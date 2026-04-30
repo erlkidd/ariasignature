@@ -29,6 +29,13 @@
 - `DiskTelemetryService` orchestrates refresh and query operations.
 - `InMemoryDiskTelemetryRepository` stores latest disk snapshots and SMART history.
 
+## Backup module baseline
+
+- `IBackupService` provides backup job CRUD and execution APIs.
+- `BackupService` applies retry policy (3 attempts) and writes execution logs.
+- `BackupExecutor` supports file copy backups and MSSQL `BACKUP DATABASE` flow.
+- Retention policy is applied after each successful backup run.
+
 ## Icon asset policy
 
 - Source icon file is tracked in repository root as `icon.png`.

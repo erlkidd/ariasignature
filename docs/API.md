@@ -26,8 +26,8 @@
 - `GET /backups` - list backup jobs
 - `POST /backups` - create backup job
 - `PUT /backups/{id}` - update backup job
-- `DELETE /backups/{id}` - delete backup job
-- `POST /backups/{id}/run` - run backup job immediately
+- `DELETE /backups/{id}` - delete backup job (404 if missing)
+- `POST /backups/{id}/run` - run backup job immediately (with retry policy)
 
 ### Logs
 

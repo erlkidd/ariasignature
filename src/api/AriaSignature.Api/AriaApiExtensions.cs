@@ -1,5 +1,6 @@
 using AriaSignature.Application.Abstractions;
 using AriaSignature.Domain.Entities;
+using AriaSignature.Domain.Enums;
 
 namespace AriaSignature.Api;
 
@@ -46,27 +47,50 @@ public static class AriaApiExtensions
             .WithName("GetDiskSmart")
             .WithOpenApi();
 
-        api.MapGet("/backups", () => Results.Ok(Array.Empty<BackupJob>()))
+        api.MapGet("/backups", async (IBackupService backups, CancellationToken cancellationToken) =>
+            Results.Ok(await backups.GetJobsAsync(cancellationToken)))
             .WithName("GetBackups")
             .WithOpenApi();
 
-        api.MapPost("/backups", (BackupJob job) => Results.Created($"/api/v1/backups/{job.Id}", job))
+        api.MapPost("/backups", async (BackupJob job, IBackupService backups, CancellationToken cancellationToken) =>
+        {
+            var created = await backups.CreateJobAsync(job, cancellationToken);
+            return Results.Created($"/api/v1/backups/{created.Id}", created);
+        })
             .WithName("CreateBackup")
             .WithOpenApi();
 
-        api.MapPut("/backups/{id:guid}", (Guid id, BackupJob job) => Results.Ok(new { id, job }))
+        api.MapPut("/backups/{id:guid}", async (Guid id, BackupJob job, IBackupService backups, CancellationToken cancellationToken) =>
+        {
+            var updated = await backups.UpdateJobAsync(id, job, cancellationToken);
+            return updated is null ? Results.NotFound() : Results.Ok(updated);
+        })
             .WithName("UpdateBackup")
             .WithOpenApi();
 
-        api.MapDelete("/backups/{id:guid}", (Guid id) => Results.NoContent())
+        api.MapDelete("/backups/{id:guid}", async (Guid id, IBackupService backups, CancellationToken cancellationToken) =>
+        {
+            var deleted = await backups.DeleteJobAsync(id, cancellationToken);
+            return deleted ? Results.NoContent() : Results.NotFound();
+        })
             .WithName("DeleteBackup")
             .WithOpenApi();
 
-        api.MapPost("/backups/{id:guid}/run", (Guid id) => Results.Accepted($"/api/v1/backups/logs", new { id, started = true }))
+        api.MapPost("/backups/{id:guid}/run", async (Guid id, IBackupService backups, CancellationToken cancellationToken) =>
+        {
+            var log = await backups.RunJobAsync(id, cancellationToken);
+            if (log.Status == BackupExecutionStatus.Failed && log.Message == "Backup job not found")
+            {
+                return Results.NotFound(log);
+            }
+
+            return Results.Accepted($"/api/v1/backups/logs", log);
+        })
             .WithName("RunBackup")
             .WithOpenApi();
 
-        api.MapGet("/backups/logs", () => Results.Ok(Array.Empty<BackupLog>()))
+        api.MapGet("/backups/logs", async (IBackupService backups, CancellationToken cancellationToken) =>
+            Results.Ok(await backups.GetLogsAsync(cancellationToken)))
             .WithName("GetBackupLogs")
             .WithOpenApi();
 

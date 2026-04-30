@@ -21,6 +21,9 @@ AriaSignature is a local Windows service and desktop application for:
 - Core status endpoint is available at `/api/v1/status`.
 - Disk inventory endpoint is available at `/api/v1/disks`.
 - SMART history endpoint is available at `/api/v1/disks/{id}/smart`.
+- Backup tasks can be created/updated/deleted from API.
+- Manual backup run endpoint is available at `/api/v1/backups/{id}/run`.
+- Backup execution logs are available at `/api/v1/backups/logs`.
 
 ## Planned next capabilities
 
