@@ -29,4 +29,9 @@
 - Russian localization baseline enforced for installer, uninstaller, and UI texts.
 - Automatic cron-driven backup scheduler and UI API synchronization added.
 - Installer elevation, service recovery, tray autostart, and close-to-tray behavior added.
+- `.gitignore` expanded for .NET/WPF/SQLite runtime and test artifacts.
+- Disk diagnostics upgraded: service now reads SMART ATA attributes, power counters, and per-disk volume capacity via WMI.
+- UI now works in strict service-first mode for disk data (no direct local disk provider in UI process).
+- Backup creation form now supports both `.1CD` file mode and `MSSQL` mode.
+- Service warmup now performs initial telemetry refresh on startup.
 - Build verification is green for all projects.

@@ -29,6 +29,10 @@
 - `DELETE /backups/{id}` - delete backup job (404 if missing)
 - `POST /backups/{id}/run` - run backup job immediately (with retry policy)
 
+`Type` in backup contract supports:
+- `File` - `Source` is path to `.1CD` (or source folder/file), `Destination` is target directory.
+- `MsSql` - `Source` is SQL connection string, `Destination` is target directory for `.bak`.
+
 ### Logs
 
 - `GET /backups/logs` - list backup execution logs

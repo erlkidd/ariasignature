@@ -21,6 +21,7 @@ builder.Services.AddSerilog();
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure();
 builder.Services.AddHostedService<DatabaseInitializationHostedService>();
+builder.Services.AddHostedService<TelemetryWarmupHostedService>();
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddHostedService<BackupSchedulerHostedService>();
 builder.Services.AddHostedService<LocalApiHostedService>();

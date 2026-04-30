@@ -28,9 +28,11 @@ AriaSignature is a local Windows service and desktop application for:
 - Desktop UI contains tabs for disks, backup, and settings.
 - Application runs with tray icon support for quick restore/exit actions.
 - UI can refresh operational data from local API with status of last sync.
+- Disk table shows SMART-oriented fields (health, temperature, power-on hours, power cycles, sector error counters).
+- In backup form you can select backup type: `.1CD` file copy or `MSSQL` backup mode.
 
 ## Planned next capabilities
 
-- Expanded SMART attributes (temperature, hours, cycles, vendor-specific details).
-- File-based and MSSQL backup execution module.
-- Retention policy and backup logs in persistent storage.
+- Expand hardware diagnostics depth further toward HDS-level detail (vendor-specific nuances).
+- Improve backup UX for easier path/connection input and task validation.
+- Add release acceptance checklist before each installer build.

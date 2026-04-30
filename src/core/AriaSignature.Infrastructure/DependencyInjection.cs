@@ -13,7 +13,15 @@ public static class DependencyInjection
     {
         services.AddSingleton<SqliteConnectionFactory>();
         services.AddSingleton<ISqliteDatabaseInitializer, SqliteDatabaseInitializer>();
-        services.AddSingleton<IDiskTelemetryCollector, WmiDiskTelemetryCollector>();
+        if (OperatingSystem.IsWindows())
+        {
+            services.AddSingleton<IDiskTelemetryCollector, WmiDiskTelemetryCollector>();
+        }
+        else
+        {
+            services.AddSingleton<IDiskTelemetryCollector, NoopDiskTelemetryCollector>();
+        }
+
         services.AddSingleton<IDiskTelemetryRepository, SqliteDiskTelemetryRepository>();
         services.AddSingleton<IBackupJobRepository, SqliteBackupJobRepository>();
         services.AddSingleton<IBackupExecutor, BackupExecutor>();

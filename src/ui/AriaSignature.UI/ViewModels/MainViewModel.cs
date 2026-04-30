@@ -10,7 +10,6 @@ namespace AriaSignature.UI.ViewModels;
 public sealed class MainViewModel : ObservableObject
 {
     private readonly AriaApiClient _apiClient = new();
-    private readonly LocalDiskInfoProvider _localDiskInfoProvider = new();
     public ICommand RefreshCommand { get; }
     public ICommand CreateBackupCommand { get; }
 
@@ -67,6 +66,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public ObservableCollection<string> SchedulePresets { get; } = ["Ежедневно", "Еженедельно", "Ежемесячно"];
+    public ObservableCollection<BackupType> BackupTypes { get; } = [BackupType.File, BackupType.MsSql];
 
     private string _selectedSchedulePreset = "Ежедневно";
     public string SelectedSchedulePreset
@@ -116,6 +116,24 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    private BackupType _newBackupType = BackupType.File;
+    public BackupType NewBackupType
+    {
+        get => _newBackupType;
+        set
+        {
+            if (_newBackupType == value)
+            {
+                return;
+            }
+
+            _newBackupType = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SourceFieldLabel));
+            OnPropertyChanged(nameof(SourceFieldHint));
+        }
+    }
+
     private string _newBackupDestination = string.Empty;
     public string NewBackupDestination
     {
@@ -148,6 +166,14 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    public string SourceFieldLabel => NewBackupType == BackupType.File
+        ? "Источник (.1CD)"
+        : "Источник (MSSQL connection string)";
+
+    public string SourceFieldHint => NewBackupType == BackupType.File
+        ? @"Пример: C:\Bases\Accounting\1Cv8.1CD"
+        : "Пример: Server=HOST;Database=DB;User Id=sa;Password=***;";
+
     public MainViewModel()
     {
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
@@ -157,15 +183,14 @@ public sealed class MainViewModel : ObservableObject
 
     public async Task RefreshAsync()
     {
-        var localDisks = _localDiskInfoProvider.GetLocalDisks();
-        ReplaceCollection(Disks, localDisks);
-
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var disks = await _apiClient.GetDisksAsync(ApiBaseUrl, cts.Token);
             var jobs = await _apiClient.GetBackupJobsAsync(ApiBaseUrl, cts.Token);
             var logs = await _apiClient.GetBackupLogsAsync(ApiBaseUrl, cts.Token);
 
+            ReplaceCollection(Disks, disks);
             ReplaceCollection(BackupJobs, jobs);
             ReplaceCollection(BackupLogs, logs);
             OperationStatus = $"Данные обновлены: {DateTime.Now:dd.MM.yyyy HH:mm:ss}";
@@ -189,7 +214,7 @@ public sealed class MainViewModel : ObservableObject
         var request = new BackupJobUpsertModel
         {
             Name = NewBackupName,
-            Type = BackupType.File,
+            Type = NewBackupType,
             Source = NewBackupSource,
             Destination = NewBackupDestination,
             ScheduleCron = MapCronPreset(SelectedSchedulePreset),
@@ -210,6 +235,7 @@ public sealed class MainViewModel : ObservableObject
             OperationStatus = $"Задача \"{created.Name}\" создана";
             NewBackupName = string.Empty;
             NewBackupSource = string.Empty;
+            NewBackupDestination = string.Empty;
             await RefreshAsync();
         }
         catch (Exception ex)

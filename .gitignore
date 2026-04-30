@@ -1,40 +1,59 @@
-# Build artifacts
+# ----------------------------
+# Build outputs
+# ----------------------------
 bin/
 obj/
 publish/
 artifacts/
+out/
 
-# User-specific files
-*.user
+# ----------------------------
+# .NET / NuGet
+# ----------------------------
+packages/
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+
+# ----------------------------
+# IDE / Editor
+# ----------------------------
+.vs/
+.vscode/
+.idea/
 *.suo
+*.user
 *.userosscache
 *.sln.docstates
+*.rsuser
 
-# Visual Studio / Rider / VS Code
-.vs/
-.idea/
-.vscode/
-
-# Test and coverage
+# ----------------------------
+# Test / Coverage
+# ----------------------------
 TestResults/
 *.trx
 coverage/
 *.coverage
 *.coveragexml
+*.opencover.xml
 
-# Logs
-*.log
+# ----------------------------
+# Runtime data (generated locally)
+# ----------------------------
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 logs/
+*.log
 
-# NuGet
-packages/
-*.nupkg
-*.snupkg
-
-# OS files
+# ----------------------------
+# OS / temp
+# ----------------------------
 .DS_Store
 Thumbs.db
-
-# Local tooling artifacts
-*.cache
 *.tmp
+*.temp
+*.cache

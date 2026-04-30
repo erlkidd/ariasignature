@@ -1,10 +1,12 @@
 using System.Management;
+using System.Runtime.Versioning;
 using AriaSignature.Application.Abstractions;
 using AriaSignature.Domain.Entities;
 using AriaSignature.Domain.Enums;
 
 namespace AriaSignature.Infrastructure.Monitoring;
 
+[SupportedOSPlatform("windows")]
 public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
 {
     public Task<IReadOnlyCollection<Disk>> CollectAsync(CancellationToken cancellationToken)
@@ -14,10 +16,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             return Task.FromResult<IReadOnlyCollection<Disk>>(Array.Empty<Disk>());
         }
 
-        var freeByDeviceId = DriveInfo.GetDrives()
-            .Where(d => d.IsReady && d.DriveType == DriveType.Fixed)
-            .ToDictionary(d => d.Name.TrimEnd('\\'), d => (total: d.TotalSize, free: d.TotalFreeSpace));
-
+        var smartSnapshot = ReadSmartSnapshot();
         var disks = new List<Disk>();
         using var searcher = new ManagementObjectSearcher("SELECT Model, SerialNumber, InterfaceType, Size, DeviceID FROM Win32_DiskDrive");
         using var results = searcher.Get();
@@ -30,17 +29,17 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             var model = item["Model"]?.ToString()?.Trim() ?? "Unknown";
             var serial = item["SerialNumber"]?.ToString()?.Trim() ?? string.Empty;
             var iface = item["InterfaceType"]?.ToString()?.Trim() ?? "Unknown";
+            var deviceId = item["DeviceID"]?.ToString() ?? string.Empty;
             var diskId = CreateStableId(model, serial, iface);
 
-            // WMI SMART fields are vendor-specific; baseline defaults are conservative.
-            var reallocated = 0;
-            var pending = 0;
-            var uncorrectable = 0;
+            var diskCapacity = ResolvePhysicalDiskCapacity(item, size);
+            var smart = ResolveSmartAttributes(smartSnapshot, model, serial);
+
+            var reallocated = smart.ReallocatedSectors;
+            var pending = smart.PendingSectors;
+            var uncorrectable = smart.UncorrectableErrors;
             var health = EstimateHealth(reallocated, pending, uncorrectable);
             var status = CalculateStatus(reallocated, pending, uncorrectable);
-
-            var driveAggregate = freeByDeviceId.Values.Aggregate((total: 0L, free: 0L), (acc, cur) =>
-                (acc.total + cur.total, acc.free + cur.free));
 
             disks.Add(new Disk
             {
@@ -48,12 +47,12 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                 Model = model,
                 Serial = serial,
                 Interface = iface,
-                SizeTotalBytes = size > 0 ? size : driveAggregate.total,
-                SizeFreeBytes = driveAggregate.free,
-                TemperatureCelsius = 0,
+                SizeTotalBytes = diskCapacity.total > 0 ? diskCapacity.total : size,
+                SizeFreeBytes = diskCapacity.free,
+                TemperatureCelsius = smart.TemperatureCelsius,
                 HealthPercent = health,
-                PowerOnHours = 0,
-                PowerCycleCount = 0,
+                PowerOnHours = smart.PowerOnHours,
+                PowerCycleCount = smart.PowerCycleCount,
                 ReallocatedSectors = reallocated,
                 PendingSectors = pending,
                 UncorrectableErrors = uncorrectable,
@@ -63,6 +62,117 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         }
 
         return Task.FromResult<IReadOnlyCollection<Disk>>(disks);
+    }
+
+    private static (long total, long free) ResolvePhysicalDiskCapacity(ManagementObject diskDrive, long fallbackTotal)
+    {
+        var total = 0L;
+        var free = 0L;
+
+        foreach (var partitionObject in diskDrive.GetRelated("Win32_DiskPartition").OfType<ManagementObject>())
+        {
+            foreach (var logicalDisk in partitionObject.GetRelated("Win32_LogicalDisk").OfType<ManagementObject>())
+            {
+                total += TryParseLong(logicalDisk["Size"]);
+                free += TryParseLong(logicalDisk["FreeSpace"]);
+            }
+        }
+
+        if (total == 0)
+        {
+            total = fallbackTotal;
+        }
+
+        return (total, free);
+    }
+
+    private static Dictionary<string, SmartAttributes> ReadSmartSnapshot()
+    {
+        var snapshot = new Dictionary<string, SmartAttributes>(StringComparer.OrdinalIgnoreCase);
+
+        using var statusSearcher = new ManagementObjectSearcher(@"root\WMI", "SELECT InstanceName, PredictFailure FROM MSStorageDriver_FailurePredictStatus");
+        using var dataSearcher = new ManagementObjectSearcher(@"root\WMI", "SELECT InstanceName, VendorSpecific FROM MSStorageDriver_ATAPISmartData");
+
+        var statusByInstance = statusSearcher.Get()
+            .OfType<ManagementObject>()
+            .ToDictionary(
+                s => NormalizeInstanceName(s["InstanceName"]?.ToString()),
+                s => s["PredictFailure"] is true,
+                StringComparer.OrdinalIgnoreCase);
+
+        foreach (var row in dataSearcher.Get().OfType<ManagementObject>())
+        {
+            var instance = NormalizeInstanceName(row["InstanceName"]?.ToString());
+            var vendorSpecific = row["VendorSpecific"] as byte[] ?? Array.Empty<byte>();
+            var parsed = ParseAtaSmartAttributes(vendorSpecific);
+            if (statusByInstance.TryGetValue(instance, out var predictFailure) && predictFailure)
+            {
+                parsed.PendingSectors = Math.Max(parsed.PendingSectors, 1);
+            }
+
+            snapshot[instance] = parsed;
+        }
+
+        return snapshot;
+    }
+
+    private static SmartAttributes ResolveSmartAttributes(Dictionary<string, SmartAttributes> snapshot, string model, string serial)
+    {
+        var match = snapshot.FirstOrDefault(pair =>
+            pair.Key.Contains(model, StringComparison.OrdinalIgnoreCase) ||
+            (!string.IsNullOrWhiteSpace(serial) && pair.Key.Contains(serial, StringComparison.OrdinalIgnoreCase)));
+
+        return match.Equals(default(KeyValuePair<string, SmartAttributes>))
+            ? SmartAttributes.Empty
+            : match.Value;
+    }
+
+    private static SmartAttributes ParseAtaSmartAttributes(byte[] data)
+    {
+        if (data.Length < 362)
+        {
+            return SmartAttributes.Empty;
+        }
+
+        var attributes = SmartAttributes.Empty;
+        for (var i = 2; i + 11 < 362; i += 12)
+        {
+            var id = data[i];
+            if (id == 0)
+            {
+                continue;
+            }
+
+            var raw = BitConverter.ToInt64([data[i + 5], data[i + 6], data[i + 7], data[i + 8], data[i + 9], data[i + 10], 0, 0], 0);
+            switch (id)
+            {
+                case 5:
+                    attributes.ReallocatedSectors = (int)raw;
+                    break;
+                case 9:
+                    attributes.PowerOnHours = raw;
+                    break;
+                case 12:
+                    attributes.PowerCycleCount = raw;
+                    break;
+                case 194:
+                    attributes.TemperatureCelsius = (int)Math.Clamp(raw & 0xFF, 0, 120);
+                    break;
+                case 197:
+                    attributes.PendingSectors = (int)raw;
+                    break;
+                case 198:
+                    attributes.UncorrectableErrors = (int)raw;
+                    break;
+            }
+        }
+
+        return attributes;
+    }
+
+    private static string NormalizeInstanceName(string? value)
+    {
+        return (value ?? string.Empty).Replace("_0", string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
     private static Guid CreateStableId(string model, string serial, string iface)
@@ -96,5 +206,16 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         }
 
         return DiskHealthStatus.Ok;
+    }
+
+    private sealed record SmartAttributes
+    {
+        public static readonly SmartAttributes Empty = new();
+        public int TemperatureCelsius { get; set; }
+        public long PowerOnHours { get; set; }
+        public long PowerCycleCount { get; set; }
+        public int ReallocatedSectors { get; set; }
+        public int PendingSectors { get; set; }
+        public int UncorrectableErrors { get; set; }
     }
 }

@@ -11,6 +11,18 @@
         MinHeight="600"
         MinWidth="900">
     <Grid Margin="16">
+        <Grid.Resources>
+            <Style TargetType="TextBlock">
+                <Setter Property="Foreground" Value="#212121" />
+                <Setter Property="FontSize" Value="13" />
+            </Style>
+            <Style TargetType="Button">
+                <Setter Property="Background" Value="#2F6FED" />
+                <Setter Property="Foreground" Value="White" />
+                <Setter Property="BorderBrush" Value="#2F6FED" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+            </Style>
+        </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -25,10 +37,10 @@
             FontWeight="SemiBold"
             Text="AriaSignature — Панель управления" />
 
-        <DockPanel Grid.Row="1" Margin="0,0,0,12">
+        <DockPanel Grid.Row="1" Margin="0,0,0,12" LastChildFill="False">
             <Button
                 DockPanel.Dock="Right"
-                MinWidth="120"
+                MinWidth="140"
                 Padding="10,4"
                 Command="{Binding RefreshCommand}"
                 Content="Обновить" />
@@ -46,8 +58,15 @@
                             <DataGridTextColumn Header="Модель" Binding="{Binding Model}" Width="2*" />
                             <DataGridTextColumn Header="Серийный №" Binding="{Binding Serial}" Width="2*" />
                             <DataGridTextColumn Header="Интерфейс" Binding="{Binding Interface}" Width="*" />
+                            <DataGridTextColumn Header="Всего (bytes)" Binding="{Binding SizeTotalBytes}" Width="*" />
+                            <DataGridTextColumn Header="Свободно (bytes)" Binding="{Binding SizeFreeBytes}" Width="*" />
                             <DataGridTextColumn Header="Здоровье (%)" Binding="{Binding HealthPercent}" Width="*" />
                             <DataGridTextColumn Header="Температура (C)" Binding="{Binding TemperatureCelsius}" Width="*" />
+                            <DataGridTextColumn Header="PowerOnHours" Binding="{Binding PowerOnHours}" Width="*" />
+                            <DataGridTextColumn Header="PowerCycleCount" Binding="{Binding PowerCycleCount}" Width="*" />
+                            <DataGridTextColumn Header="Reallocated" Binding="{Binding ReallocatedSectors}" Width="*" />
+                            <DataGridTextColumn Header="Pending" Binding="{Binding PendingSectors}" Width="*" />
+                            <DataGridTextColumn Header="Uncorrectable" Binding="{Binding UncorrectableErrors}" Width="*" />
                             <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="*" />
                         </DataGrid.Columns>
                     </DataGrid>
@@ -72,6 +91,7 @@
                                 <ColumnDefinition Width="2*" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
@@ -80,17 +100,19 @@
                             </Grid.RowDefinitions>
 
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Имя задачи" Margin="0,0,8,4" />
-                            <TextBlock Grid.Row="0" Grid.Column="1" Text="Источник (.1CD)" Margin="0,0,8,4" />
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SourceFieldLabel}" Margin="0,0,8,4" />
                             <TextBlock Grid.Row="0" Grid.Column="2" Text="Назначение" Margin="0,0,8,4" />
-                            <TextBlock Grid.Row="0" Grid.Column="3" Text="Периодичность" Margin="0,0,8,4" />
-                            <TextBlock Grid.Row="0" Grid.Column="4" Text="Хранить копий" Margin="0,0,8,4" />
+                            <TextBlock Grid.Row="0" Grid.Column="3" Text="Тип" Margin="0,0,8,4" />
+                            <TextBlock Grid.Row="0" Grid.Column="4" Text="Периодичность" Margin="0,0,8,4" />
+                            <TextBlock Grid.Row="0" Grid.Column="5" Text="Хранить копий" Margin="0,0,8,4" />
 
                             <TextBox Grid.Row="1" Grid.Column="0" Margin="0,0,8,0" Text="{Binding NewBackupName, UpdateSourceTrigger=PropertyChanged}" />
-                            <TextBox Grid.Row="1" Grid.Column="1" Margin="0,0,8,0" Text="{Binding NewBackupSource, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Grid.Row="1" Grid.Column="1" Margin="0,0,8,0" Text="{Binding NewBackupSource, UpdateSourceTrigger=PropertyChanged}" ToolTip="{Binding SourceFieldHint}" />
                             <TextBox Grid.Row="1" Grid.Column="2" Margin="0,0,8,0" Text="{Binding NewBackupDestination, UpdateSourceTrigger=PropertyChanged}" />
-                            <ComboBox Grid.Row="1" Grid.Column="3" Margin="0,0,8,0" ItemsSource="{Binding SchedulePresets}" SelectedItem="{Binding SelectedSchedulePreset}" />
-                            <TextBox Grid.Row="1" Grid.Column="4" Margin="0,0,8,0" Text="{Binding NewBackupRetention, UpdateSourceTrigger=PropertyChanged}" />
-                            <Button Grid.Row="1" Grid.Column="5" Padding="14,4" Content="Создать" Command="{Binding CreateBackupCommand}" />
+                            <ComboBox Grid.Row="1" Grid.Column="3" Margin="0,0,8,0" ItemsSource="{Binding BackupTypes}" SelectedItem="{Binding NewBackupType}" />
+                            <ComboBox Grid.Row="1" Grid.Column="4" Margin="0,0,8,0" ItemsSource="{Binding SchedulePresets}" SelectedItem="{Binding SelectedSchedulePreset}" />
+                            <TextBox Grid.Row="1" Grid.Column="5" Margin="0,0,8,0" Text="{Binding NewBackupRetention, UpdateSourceTrigger=PropertyChanged}" />
+                            <Button Grid.Row="1" Grid.Column="6" Padding="14,4" Content="Создать" Command="{Binding CreateBackupCommand}" />
                         </Grid>
                     </Border>
 
@@ -139,7 +161,7 @@
                     </Grid.RowDefinitions>
 
                     <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Базовый URL API:" />
-                    <TextBox Grid.Row="0" Grid.Column="2" Text="{Binding ApiBaseUrl, UpdateSourceTrigger=PropertyChanged}" />
+                    <TextBlock Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" Text="{Binding ApiBaseUrl}" />
 
                     <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Интервал SMART (сек):" />
                     <TextBox Grid.Row="2" Grid.Column="2" Text="{Binding SmartIntervalSeconds, UpdateSourceTrigger=PropertyChanged}" />

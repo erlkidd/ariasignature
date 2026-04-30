@@ -22,10 +22,10 @@
 - API exposes baseline endpoints for disks, SMART, backups, logs, and status.
 - Swagger/OpenAPI endpoint is enabled for local integration testing.
 
-## SMART module baseline
+## SMART module
 
 - `IDiskTelemetryCollector` collects physical disk inventory.
-- `WmiDiskTelemetryCollector` reads Win32 disk metadata via WMI on Windows.
+- `WmiDiskTelemetryCollector` reads Win32 disk metadata, SMART ATA attributes, and per-physical-disk volume mapping via WMI on Windows.
 - `DiskTelemetryService` orchestrates refresh and query operations.
 - `SqliteDiskTelemetryRepository` stores disk snapshots and SMART history.
 
@@ -50,6 +50,8 @@
 - No business logic is implemented in `code-behind`.
 - Root `icon.png` is linked as UI resource (`Assets/icon.png`).
 - UI pulls live data from local API via `AriaApiClient` and manual refresh command.
+- UI does not use direct local disk probing anymore; disk data source is only the service API.
+- Backup creation UI supports task type selection (`File` / `MsSql`) with source semantics per type.
 
 ## Icon asset policy
 
@@ -76,6 +78,7 @@
 - Installer runs with admin elevation and configures service recovery.
 - Application supports startup in tray mode via `--tray`.
 - Window close action minimizes to tray; hard exit is tray-menu driven.
+- Service executes telemetry warmup on startup to avoid empty first API response.
 
 ## Testing baseline
 
