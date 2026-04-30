@@ -3,6 +3,7 @@ namespace AriaSignature.Service;
 public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
+    private readonly TimeSpan _heartbeatInterval = TimeSpan.FromSeconds(30);
 
     public Worker(ILogger<Worker> logger)
     {
@@ -13,11 +14,8 @@ public class Worker : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            if (_logger.IsEnabled(LogLevel.Information))
-            {
-                _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
-            }
-            await Task.Delay(1000, stoppingToken);
+            _logger.LogInformation("Core service heartbeat at {TimeUtc}", DateTimeOffset.UtcNow);
+            await Task.Delay(_heartbeatInterval, stoppingToken);
         }
     }
 }
