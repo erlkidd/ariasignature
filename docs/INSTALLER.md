@@ -21,11 +21,23 @@ dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj 
 - Build the installer.
 - Output package appears in `artifacts/installer`.
 
+## Elevation and permissions
+
+- Installer requires administrator rights (`PrivilegesRequired=admin`).
+- Service is installed with auto-start and restart-on-failure policy.
+- Uninstaller removes service and installed files.
+
 ## Service behavior during install
 
 - Installer registers `AriaSignatureService` as Windows Service.
 - Service is configured for auto-start.
 - Service starts immediately after installation.
+
+## Tray autostart behavior
+
+- Installer can add a startup shortcut in `commonstartup`.
+- Startup shortcut launches UI with `--tray`.
+- Closing window sends app to tray; full exit is available from tray menu.
 
 ## Icon notes
 

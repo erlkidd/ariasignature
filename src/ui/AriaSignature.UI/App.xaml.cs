@@ -13,10 +13,25 @@ public partial class App : System.Windows.Application
     private Forms.NotifyIcon? _trayIcon;
     private Drawing.Icon? _trayDrawingIcon;
     private nint _trayIconHandle;
+    private bool _isExitRequested;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var mainWindow = new MainWindow(this)
+        {
+            DataContext = Current.Resources["MainViewModel"]
+        };
+        MainWindow = mainWindow;
+
+        var startInTray = e.Args.Any(arg => string.Equals(arg, "--tray", StringComparison.OrdinalIgnoreCase));
+        if (!startInTray)
+        {
+            mainWindow.Show();
+        }
+
         InitializeTrayIcon();
     }
 
@@ -52,9 +67,10 @@ public partial class App : System.Windows.Application
         menu.Items.Add("Открыть", null, (_, _) =>
         {
             MainWindow?.Show();
+            MainWindow!.WindowState = WindowState.Normal;
             MainWindow?.Activate();
         });
-        menu.Items.Add("Выход", null, (_, _) => Shutdown());
+        menu.Items.Add("Выход", null, (_, _) => ExitApplication());
 
         _trayIcon = new Forms.NotifyIcon
         {
@@ -67,8 +83,21 @@ public partial class App : System.Windows.Application
         _trayIcon.DoubleClick += (_, _) =>
         {
             MainWindow?.Show();
+            MainWindow!.WindowState = WindowState.Normal;
             MainWindow?.Activate();
         };
+    }
+
+    public bool CanCloseToTray()
+    {
+        return !_isExitRequested;
+    }
+
+    public void ExitApplication()
+    {
+        _isExitRequested = true;
+        MainWindow?.Close();
+        Shutdown();
     }
 
     [DllImport("user32.dll", SetLastError = true)]

@@ -21,6 +21,9 @@ SolidCompression=yes
 WizardStyle=modern
 LanguageDetectionMethod=uilanguage
 ShowLanguageDialog=no
+PrivilegesRequired=admin
+ArchitecturesInstallIn64BitMode=x64
+UninstallDisplayIcon={app}\ui\{#MyAppExeName}
 ; SetupIconFile can point to icon.ico once converted from root icon.png.
 
 [Languages]
@@ -33,6 +36,7 @@ russian.StopServiceOnUninstall=Остановка службы AriaSignature
 
 [Tasks]
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Дополнительные задачи:"
+Name: "autostarttray"; Description: "Запускать AriaSignature при входе в Windows (в трее)"; GroupDescription: "Автозапуск:"
 
 [Files]
 Source: "..\..\publish\ui\*"; DestDir: "{app}\ui"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -41,10 +45,13 @@ Source: "..\..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdi
 [Icons]
 Name: "{group}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"
 Name: "{autodesktop}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{commonstartup}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Parameters: "--tray"; Tasks: autostarttray
 
 [Run]
 Filename: "sc.exe"; Parameters: "create AriaSignatureService binPath= ""{app}\service\{#MyServiceExeName}"" start= auto"; Flags: runhidden
+Filename: "sc.exe"; Parameters: "failure AriaSignatureService reset= 86400 actions= restart/5000/restart/5000/restart/5000"; Flags: runhidden
 Filename: "sc.exe"; Parameters: "start AriaSignatureService"; Flags: runhidden
+Filename: "{app}\ui\{#MyAppExeName}"; Parameters: "--tray"; Description: "{cm:LaunchProgram}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "sc.exe"; Parameters: "stop AriaSignatureService"; Flags: runhidden

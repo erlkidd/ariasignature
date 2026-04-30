@@ -71,6 +71,12 @@
 - Mandatory language for installer, uninstaller, and UI runtime text is Russian.
 - Any newly added user-facing strings must be introduced in Russian by default.
 
+## Production readiness checkpoints
+
+- Installer runs with admin elevation and configures service recovery.
+- Application supports startup in tray mode via `--tray`.
+- Window close action minimizes to tray; hard exit is tray-menu driven.
+
 ## Testing baseline
 
 - API integration tests run via `WebApplicationFactory`.

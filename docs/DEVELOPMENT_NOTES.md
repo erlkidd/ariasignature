@@ -28,4 +28,5 @@
 - API integration tests added for system status and disk endpoints.
 - Russian localization baseline enforced for installer, uninstaller, and UI texts.
 - Automatic cron-driven backup scheduler and UI API synchronization added.
+- Installer elevation, service recovery, tray autostart, and close-to-tray behavior added.
 - Build verification is green for all projects.
