@@ -25,13 +25,19 @@ dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj 
 
 - Installer requires administrator rights (`PrivilegesRequired=admin`).
 - Service is installed with auto-start and restart-on-failure policy.
-- Uninstaller removes service and installed files.
+- Uninstaller stops/deletes service and removes installed files.
 
 ## Service behavior during install
 
-- Installer registers `AriaSignatureService` as Windows Service.
-- Service is configured for auto-start.
-- Service starts immediately after installation.
+- Installer performs deterministic stop/delete of old `AriaSignatureService` instance before re-registering (upgrade-safe idempotent flow).
+- Service is re-created with auto-start and recovery policy (`restart`).
+- Service starts immediately after installation; setup stops with an explicit error if service registration/start fails.
+
+## Service behavior during uninstall
+
+- Uninstall executes best-effort stop/delete for `AriaSignatureService`.
+- Missing-service and already-stopped states are treated as acceptable (idempotent uninstall path).
+- Runtime SQLite/log data inside installation directory is removed together with `{app}`.
 
 ## Tray autostart behavior
 

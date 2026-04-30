@@ -48,11 +48,79 @@ Name: "{autodesktop}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Tasks
 Name: "{commonstartup}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Parameters: "--tray"; Tasks: autostarttray; IconFilename: "{app}\ui\Assets\icon.ico"
 
 [Run]
-Filename: "sc.exe"; Parameters: "create AriaSignatureService binPath= ""{app}\service\{#MyServiceExeName}"" start= auto"; Flags: runhidden
-Filename: "sc.exe"; Parameters: "failure AriaSignatureService reset= 86400 actions= restart/5000/restart/5000/restart/5000"; Flags: runhidden
-Filename: "sc.exe"; Parameters: "start AriaSignatureService"; Flags: runhidden
 Filename: "{app}\ui\{#MyAppExeName}"; Parameters: "--tray"; Description: "{cm:LaunchProgram}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "sc.exe"; Parameters: "stop AriaSignatureService"; Flags: runhidden
-Filename: "sc.exe"; Parameters: "delete AriaSignatureService"; Flags: runhidden
+
+[Code]
+const
+  ServiceName = 'AriaSignatureService';
+  SC_ACCEPTABLE_NOT_FOUND = 1060;
+  SC_ACCEPTABLE_NOT_ACTIVE = 1062;
+  SC_ACCEPTABLE_ALREADY_RUNNING = 1056;
+
+function ExecSc(const Params: string; const AcceptableCodeA: Integer; const AcceptableCodeB: Integer): Boolean;
+var
+  ExitCode: Integer;
+begin
+  Result := Exec(ExpandConstant('{sys}\sc.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  if not Result then
+  begin
+    Log(Format('Failed to execute sc.exe with params: %s', [Params]));
+    Exit;
+  end;
+
+  if (ExitCode <> 0) and (ExitCode <> AcceptableCodeA) and (ExitCode <> AcceptableCodeB) then
+  begin
+    Log(Format('sc.exe failed. Params=%s ExitCode=%d', [Params, ExitCode]));
+    Result := False;
+    Exit;
+  end;
+
+  Result := True;
+end;
+
+procedure StopAndDeleteServiceBestEffort();
+begin
+  ExecSc(Format('stop %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
+  ExecSc(Format('delete %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_FOUND);
+end;
+
+procedure InstallServiceOrAbort();
+var
+  BinPath: string;
+begin
+  StopAndDeleteServiceBestEffort();
+  BinPath := ExpandConstant('{app}\service\{#MyServiceExeName}');
+
+  if not ExecSc(Format('create %s binPath= "%s" start= auto', [ServiceName, BinPath]), 0, -1) then
+  begin
+    RaiseException('Не удалось зарегистрировать службу AriaSignatureService');
+  end;
+
+  if not ExecSc(Format('failure %s reset= 86400 actions= restart/5000/restart/5000/restart/5000', [ServiceName]), 0, -1) then
+  begin
+    RaiseException('Не удалось настроить recovery policy службы AriaSignatureService');
+  end;
+
+  if not ExecSc(Format('start %s', [ServiceName]), 0, SC_ACCEPTABLE_ALREADY_RUNNING) then
+  begin
+    RaiseException('Не удалось запустить службу AriaSignatureService');
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    InstallServiceOrAbort();
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then
+  begin
+    StopAndDeleteServiceBestEffort();
+  end;
+end;
