@@ -19,9 +19,11 @@ AriaSignature is a local Windows service and desktop application for:
 - Service process skeleton is operational.
 - Local API base path is `/api/v1`.
 - Core status endpoint is available at `/api/v1/status`.
+- Disk inventory endpoint is available at `/api/v1/disks`.
+- SMART history endpoint is available at `/api/v1/disks/{id}/smart`.
 
 ## Planned next capabilities
 
-- SMART collection and health evaluation.
+- Expanded SMART attributes (temperature, hours, cycles, vendor-specific details).
 - File-based and MSSQL backup execution module.
 - Retention policy and backup logs in persistent storage.

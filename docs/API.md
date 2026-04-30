@@ -14,12 +14,12 @@
 
 ### Disks
 
-- `GET /disks` - list disks
-- `GET /disks/{id}` - get disk by ID
+- `GET /disks` - list collected disks
+- `GET /disks/{id}` - get disk by ID (404 if missing)
 
 ### SMART
 
-- `GET /disks/{id}/smart` - get SMART metrics by disk ID
+- `GET /disks/{id}/smart` - get stored SMART metric history by disk ID
 
 ### Backups
 
@@ -37,3 +37,8 @@
 
 - Swagger UI is available at `/swagger`.
 - OpenAPI JSON is available via Swagger endpoint set.
+
+## Notes
+
+- Current SMART refresh schedule is managed in service via Quartz cron (`SmartMonitoring:Cron`).
+- API is local-only and designed for service-hosted runtime on Windows.

@@ -1,4 +1,6 @@
 using AriaSignature.Api;
+using AriaSignature.Application;
+using AriaSignature.Infrastructure;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -25,6 +27,8 @@ public sealed class LocalApiHostedService : IHostedService
 
         var webBuilder = WebApplication.CreateSlimBuilder();
         webBuilder.WebHost.UseUrls($"http://127.0.0.1:{port}");
+        webBuilder.Services.AddApplication();
+        webBuilder.Services.AddInfrastructure();
         webBuilder.Services.AddAriaApi();
 
         _webApp = webBuilder.Build();

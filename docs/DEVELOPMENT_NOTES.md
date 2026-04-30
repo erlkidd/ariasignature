@@ -19,4 +19,6 @@
 
 - Clean Architecture solution scaffold created.
 - Domain entities and enums created as baseline for disk and backup modules.
+- Service-hosted local API is running with `/api/v1` endpoints.
+- SMART baseline implemented (WMI collector + in-memory history + Quartz refresh job).
 - Build verification is green for all projects.

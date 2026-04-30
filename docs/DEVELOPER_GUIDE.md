@@ -18,8 +18,16 @@
 
 - Service runs heartbeat background worker.
 - Service starts and stops local API lifecycle as hosted service.
+- SMART refresh is scheduled with Quartz job (`SmartRefreshJob`) using cron from config.
 - API exposes baseline endpoints for disks, SMART, backups, logs, and status.
 - Swagger/OpenAPI endpoint is enabled for local integration testing.
+
+## SMART module baseline
+
+- `IDiskTelemetryCollector` collects physical disk inventory.
+- `WmiDiskTelemetryCollector` reads Win32 disk metadata via WMI on Windows.
+- `DiskTelemetryService` orchestrates refresh and query operations.
+- `InMemoryDiskTelemetryRepository` stores latest disk snapshots and SMART history.
 
 ## Icon asset policy
 

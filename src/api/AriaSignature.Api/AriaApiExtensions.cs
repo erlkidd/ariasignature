@@ -1,3 +1,4 @@
+using AriaSignature.Application.Abstractions;
 using AriaSignature.Domain.Entities;
 
 namespace AriaSignature.Api;
@@ -27,15 +28,21 @@ public static class AriaApiExtensions
         .WithName("GetSystemStatus")
         .WithOpenApi();
 
-        api.MapGet("/disks", () => Results.Ok(Array.Empty<Disk>()))
+        api.MapGet("/disks", async (IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
+            Results.Ok(await telemetry.GetDisksAsync(cancellationToken)))
             .WithName("GetDisks")
             .WithOpenApi();
 
-        api.MapGet("/disks/{id:guid}", (Guid id) => Results.Ok(new { id }))
+        api.MapGet("/disks/{id:guid}", async (Guid id, IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
+        {
+            var disk = await telemetry.GetDiskByIdAsync(id, cancellationToken);
+            return disk is null ? Results.NotFound() : Results.Ok(disk);
+        })
             .WithName("GetDiskById")
             .WithOpenApi();
 
-        api.MapGet("/disks/{id:guid}/smart", (Guid id) => Results.Ok(new { id, metrics = Array.Empty<object>() }))
+        api.MapGet("/disks/{id:guid}/smart", async (Guid id, IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
+            Results.Ok(await telemetry.GetSmartMetricsAsync(id, cancellationToken)))
             .WithName("GetDiskSmart")
             .WithOpenApi();
 
