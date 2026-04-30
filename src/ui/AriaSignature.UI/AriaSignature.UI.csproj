@@ -2,6 +2,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\core\AriaSignature.Application\AriaSignature.Application.csproj" />
+    <ProjectReference Include="..\..\core\AriaSignature.Domain\AriaSignature.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="..\..\..\icon.png" Link="Assets\icon.png" />
   </ItemGroup>
 
   <PropertyGroup>

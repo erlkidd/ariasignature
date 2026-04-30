@@ -42,6 +42,13 @@
 - Schema is initialized on service startup by `DatabaseInitializationHostedService`.
 - Repositories for disks/SMART and backup jobs/logs are backed by SQLite tables.
 
+## UI baseline (MVVM)
+
+- WPF shell now uses MVVM data binding with `MainViewModel`.
+- Main window includes required tabs: Disks, Backup, Settings.
+- No business logic is implemented in `code-behind`.
+- Root `icon.png` is linked as UI resource (`Assets/icon.png`).
+
 ## Icon asset policy
 
 - Source icon file is tracked in repository root as `icon.png`.

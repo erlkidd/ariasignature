@@ -23,4 +23,5 @@
 - SMART baseline implemented (WMI collector + in-memory history + Quartz refresh job).
 - Backup baseline implemented (job CRUD + run + retry + retention + logs).
 - SQLite persistence and schema initialization added for disks, metrics, jobs, and logs.
+- WPF MVVM shell added with required operational tabs and linked icon resource.
 - Build verification is green for all projects.

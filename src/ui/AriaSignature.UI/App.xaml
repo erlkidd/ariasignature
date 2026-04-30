@@ -1,9 +1,9 @@
 ﻿<Application x:Class="AriaSignature.UI.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:AriaSignature.UI"
+             xmlns:viewModels="clr-namespace:AriaSignature.UI.ViewModels"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
-         
+        <viewModels:MainViewModel x:Key="MainViewModel" />
     </Application.Resources>
 </Application>

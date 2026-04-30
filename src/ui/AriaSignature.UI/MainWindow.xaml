@@ -3,10 +3,106 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:AriaSignature.UI"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
+        DataContext="{StaticResource MainViewModel}"
+        Title="AriaSignature"
+        Height="700"
+        Width="1100"
+        MinHeight="600"
+        MinWidth="900"
+        Icon="Assets/icon.png">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
 
+        <TextBlock
+            Grid.Row="0"
+            Margin="0,0,0,12"
+            FontSize="24"
+            FontWeight="SemiBold"
+            Text="AriaSignature Control Panel" />
+
+        <TabControl Grid.Row="1">
+            <TabItem Header="Накопители">
+                <Grid Margin="12">
+                    <DataGrid
+                        AutoGenerateColumns="False"
+                        CanUserAddRows="False"
+                        IsReadOnly="True"
+                        ItemsSource="{Binding Disks}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Модель" Binding="{Binding Model}" Width="2*" />
+                            <DataGridTextColumn Header="Серийный №" Binding="{Binding Serial}" Width="2*" />
+                            <DataGridTextColumn Header="Интерфейс" Binding="{Binding Interface}" Width="*" />
+                            <DataGridTextColumn Header="Здоровье (%)" Binding="{Binding HealthPercent}" Width="*" />
+                            <DataGridTextColumn Header="Температура (C)" Binding="{Binding TemperatureCelsius}" Width="*" />
+                            <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Архивация">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="2*" />
+                        <RowDefinition Height="12" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <DataGrid
+                        Grid.Row="0"
+                        AutoGenerateColumns="False"
+                        CanUserAddRows="False"
+                        IsReadOnly="True"
+                        ItemsSource="{Binding BackupJobs}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Имя задачи" Binding="{Binding Name}" Width="2*" />
+                            <DataGridTextColumn Header="Тип" Binding="{Binding Type}" Width="*" />
+                            <DataGridTextColumn Header="Источник" Binding="{Binding Source}" Width="2*" />
+                            <DataGridTextColumn Header="Назначение" Binding="{Binding Destination}" Width="2*" />
+                            <DataGridTextColumn Header="Cron" Binding="{Binding ScheduleCron}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <DataGrid
+                        Grid.Row="2"
+                        AutoGenerateColumns="False"
+                        CanUserAddRows="False"
+                        IsReadOnly="True"
+                        ItemsSource="{Binding BackupLogs}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="*" />
+                            <DataGridTextColumn Header="Начало (UTC)" Binding="{Binding StartTimeUtc}" Width="2*" />
+                            <DataGridTextColumn Header="Окончание (UTC)" Binding="{Binding EndTimeUtc}" Width="2*" />
+                            <DataGridTextColumn Header="Сообщение" Binding="{Binding Message}" Width="3*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Настройки">
+                <Grid Margin="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="16" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="API Base URL:" />
+                    <TextBox Grid.Row="0" Grid.Column="2" Text="{Binding ApiBaseUrl, UpdateSourceTrigger=PropertyChanged}" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Интервал SMART (сек):" />
+                    <TextBox Grid.Row="2" Grid.Column="2" Text="{Binding SmartIntervalSeconds, UpdateSourceTrigger=PropertyChanged}" />
+                </Grid>
+            </TabItem>
+        </TabControl>
     </Grid>
 </Window>
