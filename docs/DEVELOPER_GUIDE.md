@@ -27,7 +27,7 @@
 - `IDiskTelemetryCollector` collects physical disk inventory.
 - `WmiDiskTelemetryCollector` reads Win32 disk metadata via WMI on Windows.
 - `DiskTelemetryService` orchestrates refresh and query operations.
-- `InMemoryDiskTelemetryRepository` stores latest disk snapshots and SMART history.
+- `SqliteDiskTelemetryRepository` stores disk snapshots and SMART history.
 
 ## Backup module baseline
 
@@ -53,6 +53,12 @@
 
 - Source icon file is tracked in repository root as `icon.png`.
 - The same icon will be propagated to:
-  - Desktop UI executable metadata.
+  - Desktop UI executable and resources.
   - Tray icon.
   - Installer branding.
+
+## Installer baseline
+
+- Inno Setup script is available at `installer/inno/AriaSignature.iss`.
+- Script installs UI and service binaries from publish folders.
+- Script registers Windows service and starts it after installation.

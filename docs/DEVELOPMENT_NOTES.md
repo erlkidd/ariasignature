@@ -24,4 +24,5 @@
 - Backup baseline implemented (job CRUD + run + retry + retention + logs).
 - SQLite persistence and schema initialization added for disks, metrics, jobs, and logs.
 - WPF MVVM shell added with required operational tabs and linked icon resource.
+- Tray icon baseline and installer script baseline added.
 - Build verification is green for all projects.
