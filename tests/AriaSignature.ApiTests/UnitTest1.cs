@@ -1,4 +1,8 @@
 using System.Net;
+using System.Net.Http.Json;
+using AriaSignature.Api.Contracts;
+using AriaSignature.Domain.Entities;
+using AriaSignature.Domain.Enums;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace AriaSignature.ApiTests;
@@ -26,5 +30,53 @@ public sealed class ApiEndpointsTests : IClassFixture<WebApplicationFactory<Prog
         var response = await _client.GetAsync("/api/v1/disks");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task BackupCrudAndRunFlow_Works()
+    {
+        var request = new UpsertBackupJobRequest
+        {
+            Name = "Тестовая задача",
+            Type = BackupType.File,
+            Source = "C:\\temp\\source.1CD",
+            Destination = "C:\\temp\\backups",
+            ScheduleCron = "0 */5 * * * ?",
+            RetentionCount = 3,
+            IsEnabled = true
+        };
+
+        var createResponse = await _client.PostAsJsonAsync("/api/v1/backups", request);
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+
+        var createdJob = await createResponse.Content.ReadFromJsonAsync<BackupJob>();
+        Assert.NotNull(createdJob);
+
+        var getAllResponse = await _client.GetAsync("/api/v1/backups");
+        Assert.Equal(HttpStatusCode.OK, getAllResponse.StatusCode);
+
+        var runResponse = await _client.PostAsync($"/api/v1/backups/{createdJob!.Id}/run", content: null);
+        Assert.Equal(HttpStatusCode.Accepted, runResponse.StatusCode);
+
+        var logsResponse = await _client.GetAsync("/api/v1/backups/logs");
+        Assert.Equal(HttpStatusCode.OK, logsResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateBackup_WithInvalidCron_ReturnsBadRequest()
+    {
+        var request = new UpsertBackupJobRequest
+        {
+            Name = "Некорректная задача",
+            Type = BackupType.File,
+            Source = "C:\\temp\\source.1CD",
+            Destination = "C:\\temp\\backups",
+            ScheduleCron = "bad cron",
+            RetentionCount = 1,
+            IsEnabled = true
+        };
+
+        var response = await _client.PostAsJsonAsync("/api/v1/backups", request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 }

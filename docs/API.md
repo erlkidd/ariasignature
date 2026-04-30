@@ -24,8 +24,8 @@
 ### Backups
 
 - `GET /backups` - list backup jobs
-- `POST /backups` - create backup job
-- `PUT /backups/{id}` - update backup job
+- `POST /backups` - create backup job (validates cron, name, source, destination, retention)
+- `PUT /backups/{id}` - update backup job (same validation rules)
 - `DELETE /backups/{id}` - delete backup job (404 if missing)
 - `POST /backups/{id}/run` - run backup job immediately (with retry policy)
 

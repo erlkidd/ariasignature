@@ -1,6 +1,8 @@
 using AriaSignature.Application.Abstractions;
+using AriaSignature.Api.Contracts;
 using AriaSignature.Domain.Entities;
 using AriaSignature.Domain.Enums;
+using Quartz;
 
 namespace AriaSignature.Api;
 
@@ -52,16 +54,30 @@ public static class AriaApiExtensions
             .WithName("GetBackups")
             .WithOpenApi();
 
-        api.MapPost("/backups", async (BackupJob job, IBackupService backups, CancellationToken cancellationToken) =>
+        api.MapPost("/backups", async (UpsertBackupJobRequest request, IBackupService backups, CancellationToken cancellationToken) =>
         {
+            var validationError = ValidateBackupRequest(request);
+            if (validationError is not null)
+            {
+                return Results.ValidationProblem(validationError);
+            }
+
+            var job = MapRequestToJob(request);
             var created = await backups.CreateJobAsync(job, cancellationToken);
             return Results.Created($"/api/v1/backups/{created.Id}", created);
         })
             .WithName("CreateBackup")
             .WithOpenApi();
 
-        api.MapPut("/backups/{id:guid}", async (Guid id, BackupJob job, IBackupService backups, CancellationToken cancellationToken) =>
+        api.MapPut("/backups/{id:guid}", async (Guid id, UpsertBackupJobRequest request, IBackupService backups, CancellationToken cancellationToken) =>
         {
+            var validationError = ValidateBackupRequest(request);
+            if (validationError is not null)
+            {
+                return Results.ValidationProblem(validationError);
+            }
+
+            var job = MapRequestToJob(request);
             var updated = await backups.UpdateJobAsync(id, job, cancellationToken);
             return updated is null ? Results.NotFound() : Results.Ok(updated);
         })
@@ -95,5 +111,50 @@ public static class AriaApiExtensions
             .WithOpenApi();
 
         return app;
+    }
+
+    private static Dictionary<string, string[]>? ValidateBackupRequest(UpsertBackupJobRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (string.IsNullOrWhiteSpace(request.Name))
+        {
+            errors["name"] = ["Имя задачи обязательно"];
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Source))
+        {
+            errors["source"] = ["Источник обязателен"];
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Destination))
+        {
+            errors["destination"] = ["Назначение обязательно"];
+        }
+
+        if (request.RetentionCount <= 0)
+        {
+            errors["retentionCount"] = ["RetentionCount должен быть больше 0"];
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ScheduleCron) || !CronExpression.IsValidExpression(request.ScheduleCron))
+        {
+            errors["scheduleCron"] = ["Некорректное cron-выражение"];
+        }
+
+        return errors.Count > 0 ? errors : null;
+    }
+
+    private static BackupJob MapRequestToJob(UpsertBackupJobRequest request)
+    {
+        return new BackupJob
+        {
+            Name = request.Name,
+            Type = request.Type,
+            Source = request.Source,
+            Destination = request.Destination,
+            ScheduleCron = request.ScheduleCron,
+            RetentionCount = request.RetentionCount,
+            IsEnabled = request.IsEnabled
+        };
     }
 }
