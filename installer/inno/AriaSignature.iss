@@ -19,10 +19,17 @@ OutputBaseFilename=AriaSignature-Setup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+LanguageDetectionMethod=uilanguage
+ShowLanguageDialog=no
 ; SetupIconFile can point to icon.ico once converted from root icon.png.
 
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
+
+[CustomMessages]
+russian.LaunchProgram=Запустить AriaSignature
+russian.OpenProgramGroup=Открыть папку программы
+russian.StopServiceOnUninstall=Остановка службы AriaSignature
 
 [Tasks]
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Дополнительные задачи:"

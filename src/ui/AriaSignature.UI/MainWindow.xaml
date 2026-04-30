@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         DataContext="{StaticResource MainViewModel}"
-        Title="AriaSignature"
+        Title="AriaSignature — Панель управления"
         Height="700"
         Width="1100"
         MinHeight="600"
@@ -22,7 +22,7 @@
             Margin="0,0,0,12"
             FontSize="24"
             FontWeight="SemiBold"
-            Text="AriaSignature Control Panel" />
+            Text="AriaSignature — Панель управления" />
 
         <TabControl Grid.Row="1">
             <TabItem Header="Накопители">
@@ -63,7 +63,7 @@
                             <DataGridTextColumn Header="Тип" Binding="{Binding Type}" Width="*" />
                             <DataGridTextColumn Header="Источник" Binding="{Binding Source}" Width="2*" />
                             <DataGridTextColumn Header="Назначение" Binding="{Binding Destination}" Width="2*" />
-                            <DataGridTextColumn Header="Cron" Binding="{Binding ScheduleCron}" Width="*" />
+                            <DataGridTextColumn Header="Расписание (Cron)" Binding="{Binding ScheduleCron}" Width="*" />
                         </DataGrid.Columns>
                     </DataGrid>
 
@@ -96,7 +96,7 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="API Base URL:" />
+                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Базовый URL API:" />
                     <TextBox Grid.Row="0" Grid.Column="2" Text="{Binding ApiBaseUrl, UpdateSourceTrigger=PropertyChanged}" />
 
                     <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Интервал SMART (сек):" />

@@ -49,12 +49,12 @@ public partial class App : System.Windows.Application
         _trayDrawingIcon = Drawing.Icon.FromHandle(_trayIconHandle);
 
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("Open", null, (_, _) =>
+        menu.Items.Add("Открыть", null, (_, _) =>
         {
             MainWindow?.Show();
             MainWindow?.Activate();
         });
-        menu.Items.Add("Exit", null, (_, _) => Shutdown());
+        menu.Items.Add("Выход", null, (_, _) => Shutdown());
 
         _trayIcon = new Forms.NotifyIcon
         {

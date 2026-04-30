@@ -26,4 +26,5 @@
 - WPF MVVM shell added with required operational tabs and linked icon resource.
 - Tray icon baseline and installer script baseline added.
 - API integration tests added for system status and disk endpoints.
+- Russian localization baseline enforced for installer, uninstaller, and UI texts.
 - Build verification is green for all projects.

@@ -62,6 +62,12 @@
 - Inno Setup script is available at `installer/inno/AriaSignature.iss`.
 - Script installs UI and service binaries from publish folders.
 - Script registers Windows service and starts it after installation.
+- Installer and uninstaller UX language is fixed to Russian.
+
+## Localization requirement
+
+- Mandatory language for installer, uninstaller, and UI runtime text is Russian.
+- Any newly added user-facing strings must be introduced in Russian by default.
 
 ## Testing baseline
 
