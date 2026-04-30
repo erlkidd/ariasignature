@@ -2,6 +2,7 @@ using AriaSignature.Application.Abstractions;
 using AriaSignature.Api.Contracts;
 using AriaSignature.Domain.Entities;
 using AriaSignature.Domain.Enums;
+using Microsoft.Data.SqlClient;
 using Quartz;
 
 namespace AriaSignature.Api;
@@ -93,7 +94,7 @@ public static class AriaApiExtensions
 
         api.MapPost("/backups", async (UpsertBackupJobRequest request, IBackupService backups, CancellationToken cancellationToken) =>
         {
-            var validationError = ValidateBackupRequest(request);
+            var validationError = await ValidateBackupRequestAsync(request, cancellationToken);
             if (validationError is not null)
             {
                 return Results.ValidationProblem(validationError);
@@ -108,7 +109,7 @@ public static class AriaApiExtensions
 
         api.MapPut("/backups/{id:guid}", async (Guid id, UpsertBackupJobRequest request, IBackupService backups, CancellationToken cancellationToken) =>
         {
-            var validationError = ValidateBackupRequest(request);
+            var validationError = await ValidateBackupRequestAsync(request, cancellationToken);
             if (validationError is not null)
             {
                 return Results.ValidationProblem(validationError);
@@ -160,7 +161,7 @@ public static class AriaApiExtensions
         return app;
     }
 
-    private static Dictionary<string, string[]>? ValidateBackupRequest(UpsertBackupJobRequest request)
+    private static async Task<Dictionary<string, string[]>?> ValidateBackupRequestAsync(UpsertBackupJobRequest request, CancellationToken cancellationToken)
     {
         var errors = new Dictionary<string, string[]>();
         if (string.IsNullOrWhiteSpace(request.Name))
@@ -176,6 +177,10 @@ public static class AriaApiExtensions
         {
             errors["source"] = ["Для File-архивации путь источника должен быть абсолютным"];
         }
+        else if (request.Type == BackupType.File && !File.Exists(request.Source))
+        {
+            errors["source"] = [$"Файл базы не найден: {request.Source}"];
+        }
         else if (request.Type == BackupType.MsSql)
         {
             if (!request.Source.Contains("Server=", StringComparison.OrdinalIgnoreCase))
@@ -188,6 +193,10 @@ public static class AriaApiExtensions
             {
                 errors["source"] = ["Для MsSql требуется Database или Initial Catalog"];
             }
+            else if (!await CanConnectToMsSqlAsync(request.Source, cancellationToken))
+            {
+                errors["source"] = ["Подключение к MSSQL не установлено или база недоступна"];
+            }
         }
 
         if (string.IsNullOrWhiteSpace(request.Destination))
@@ -197,6 +206,10 @@ public static class AriaApiExtensions
         else if (!Path.IsPathRooted(request.Destination))
         {
             errors["destination"] = ["Путь назначения должен быть абсолютным"];
+        }
+        else if (!CanAccessDestination(request.Destination, out var destinationError))
+        {
+            errors["destination"] = [destinationError];
         }
         else if (request.Type == BackupType.File &&
                  string.Equals(Path.GetFullPath(request.Source), Path.GetFullPath(request.Destination), StringComparison.OrdinalIgnoreCase))
@@ -215,6 +228,40 @@ public static class AriaApiExtensions
         }
 
         return errors.Count > 0 ? errors : null;
+    }
+
+    private static bool CanAccessDestination(string destination, out string error)
+    {
+        try
+        {
+            Directory.CreateDirectory(destination);
+            var probe = Path.Combine(destination, $".probe_{Guid.NewGuid():N}.tmp");
+            File.WriteAllText(probe, "probe");
+            File.Delete(probe);
+            error = string.Empty;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"Нет доступа к папке назначения: {ex.Message}";
+            return false;
+        }
+    }
+
+    private static async Task<bool> CanConnectToMsSqlAsync(string connectionString, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new SqlCommand("SELECT DB_NAME()", connection);
+            var dbName = await command.ExecuteScalarAsync(cancellationToken);
+            return dbName is not null and not DBNull;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static BackupJob MapRequestToJob(UpsertBackupJobRequest request)

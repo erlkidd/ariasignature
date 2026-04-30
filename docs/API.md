@@ -31,11 +31,12 @@
 
 `Type` in backup contract supports:
 - `File` - `Source` is path to `.1CD` (or source folder/file), `Destination` is target directory.
-- `MsSql` - `Source` is SQL connection string, `Destination` is target directory for `.bak`.
+- `MsSql` - `Source` is SQL connection string, `Destination` is target directory for generated backup archive.
 
 Validation details:
 - `Source` and `Destination` must be absolute paths for file-oriented operations.
 - `MsSql` source must contain `Server` and `Database`/`Initial Catalog`.
+- `MsSql` connection is validated online before job creation/update.
 - `Source` and `Destination` cannot resolve to the same path for `File` mode.
 
 ### Logs
@@ -54,3 +55,4 @@ Validation details:
 - API data is persisted to local SQLite database (`ConnectionStrings:AriaSignature`).
 - Unhandled API exceptions are returned as `application/problem+json` with trace identifier.
 - Not-found domain cases are also returned as `application/problem+json`.
+- Backup artifacts are produced as `.rar` archives; missing archiver is returned as execution error.

@@ -13,13 +13,13 @@
     <Grid Margin="16">
         <Grid.Resources>
             <Style TargetType="TextBlock">
-                <Setter Property="Foreground" Value="#212121" />
+                <Setter Property="Foreground" Value="{DynamicResource AriaForegroundBrush}" />
                 <Setter Property="FontSize" Value="13" />
             </Style>
             <Style TargetType="Button">
-                <Setter Property="Background" Value="#2F6FED" />
+                <Setter Property="Background" Value="{DynamicResource AriaPrimaryBrush}" />
                 <Setter Property="Foreground" Value="White" />
-                <Setter Property="BorderBrush" Value="#2F6FED" />
+                <Setter Property="BorderBrush" Value="{DynamicResource AriaPrimaryBrush}" />
                 <Setter Property="FontWeight" Value="SemiBold" />
             </Style>
         </Grid.Resources>
@@ -107,8 +107,14 @@
                             <TextBlock Grid.Row="0" Grid.Column="5" Text="Хранить копий" Margin="0,0,8,4" />
 
                             <TextBox Grid.Row="1" Grid.Column="0" Margin="0,0,8,0" Text="{Binding NewBackupName, UpdateSourceTrigger=PropertyChanged}" />
-                            <TextBox Grid.Row="1" Grid.Column="1" Margin="0,0,8,0" Text="{Binding NewBackupSource, UpdateSourceTrigger=PropertyChanged}" ToolTip="{Binding SourceFieldHint}" />
-                            <TextBox Grid.Row="1" Grid.Column="2" Margin="0,0,8,0" Text="{Binding NewBackupDestination, UpdateSourceTrigger=PropertyChanged}" />
+                            <DockPanel Grid.Row="1" Grid.Column="1" Margin="0,0,8,0" LastChildFill="True">
+                                <Button DockPanel.Dock="Right" Margin="8,0,0,0" Padding="8,2" Content="..." Click="OnPickSourceClicked" />
+                                <TextBox Text="{Binding NewBackupSource, UpdateSourceTrigger=PropertyChanged}" ToolTip="{Binding SourceFieldHint}" />
+                            </DockPanel>
+                            <DockPanel Grid.Row="1" Grid.Column="2" Margin="0,0,8,0" LastChildFill="True">
+                                <Button DockPanel.Dock="Right" Margin="8,0,0,0" Padding="8,2" Content="..." Click="OnPickDestinationClicked" />
+                                <TextBox Text="{Binding NewBackupDestination, UpdateSourceTrigger=PropertyChanged}" />
+                            </DockPanel>
                             <ComboBox Grid.Row="1" Grid.Column="3" Margin="0,0,8,0" ItemsSource="{Binding BackupTypes}" SelectedItem="{Binding NewBackupType}" />
                             <ComboBox Grid.Row="1" Grid.Column="4" Margin="0,0,8,0" ItemsSource="{Binding SchedulePresets}" SelectedItem="{Binding SelectedSchedulePreset}" />
                             <TextBox Grid.Row="1" Grid.Column="5" Margin="0,0,8,0" Text="{Binding NewBackupRetention, UpdateSourceTrigger=PropertyChanged}" />
@@ -167,6 +173,10 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="16" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="16" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="16" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Базовый URL API:" />
@@ -174,6 +184,15 @@
 
                     <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Интервал SMART (сек):" />
                     <TextBox Grid.Row="2" Grid.Column="2" Text="{Binding SmartIntervalSeconds, UpdateSourceTrigger=PropertyChanged}" />
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Text="Тема:" />
+                    <ComboBox Grid.Row="4" Grid.Column="2" ItemsSource="{Binding ThemeOptions}" SelectedItem="{Binding SelectedTheme}" />
+
+                    <TextBlock Grid.Row="6" Grid.Column="0" VerticalAlignment="Center" Text="Автозапуск:" />
+                    <DockPanel Grid.Row="6" Grid.Column="2" LastChildFill="False">
+                        <CheckBox Margin="0,0,10,0" VerticalAlignment="Center" IsChecked="{Binding LaunchAtStartup}" Content="Запускать при входе в Windows" />
+                        <Button Padding="12,4" Content="Применить" Command="{Binding SaveSettingsCommand}" />
+                    </DockPanel>
                 </Grid>
             </TabItem>
         </TabControl>

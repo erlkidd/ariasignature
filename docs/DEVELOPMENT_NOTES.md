@@ -35,7 +35,11 @@
 - Backup creation form now supports both `.1CD` file mode and `MSSQL` mode.
 - Service warmup now performs initial telemetry refresh on startup.
 - Backup lifecycle in UI expanded: inline edit, enable/disable, run-now, delete.
+- Added interactive source/destination pickers for backup task creation.
+- Added UI settings for runtime theme switching and autostart management.
 - API not-found cases moved to explicit `application/problem+json` semantics.
+- Added strict backup request preflight checks (file existence, destination access, live MSSQL connectivity).
+- Backup executor now prevents empty MSSQL artifacts and produces `.rar` archives.
 - Added release gate assets: `scripts/release-gate.ps1` and `docs/RELEASE_GATE.md`.
 - Installer branding now uses `SetupIconFile` with shared `icon.ico`.
 - Build verification is green for all projects.

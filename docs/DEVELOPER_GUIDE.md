@@ -34,6 +34,7 @@
 - `IBackupService` provides backup job CRUD and execution APIs.
 - `BackupService` applies retry policy (3 attempts) and writes execution logs.
 - `BackupExecutor` supports file copy backups and MSSQL `BACKUP DATABASE` flow.
+- Final backup artifacts are packaged into `.rar`; temporary raw files are removed.
 - Retention policy is applied after each successful backup run.
 - `BackupSchedulerHostedService` polls due cron jobs and runs them automatically.
 - API validation now includes type-specific checks for `File` vs `MsSql`.
@@ -55,6 +56,8 @@
 - Backup creation UI supports task type selection (`File` / `MsSql`) with source semantics per type.
 - Backup jobs in UI support inline update, enable/disable toggle, manual run, and delete.
 - App resources include `Themes/AriaTheme.xaml` as a shared visual dictionary.
+- Theme switching (`Светлая`/`Тёмная`) is available at runtime from settings.
+- Startup behavior is user-configurable in settings (HKCU Run registration).
 
 ## Icon asset policy
 

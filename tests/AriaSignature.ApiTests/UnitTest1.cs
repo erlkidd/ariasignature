@@ -43,12 +43,17 @@ public sealed class ApiEndpointsTests : IClassFixture<WebApplicationFactory<Prog
     [Fact]
     public async Task BackupCrudAndRunFlow_Works()
     {
+        var sourceFile = Path.Combine(Path.GetTempPath(), $"aria_test_{Guid.NewGuid():N}.1CD");
+        var destinationDir = Path.Combine(Path.GetTempPath(), $"aria_backups_{Guid.NewGuid():N}");
+        await File.WriteAllTextAsync(sourceFile, "test");
+        Directory.CreateDirectory(destinationDir);
+
         var request = new UpsertBackupJobRequest
         {
             Name = "Тестовая задача",
             Type = BackupType.File,
-            Source = "C:\\temp\\source.1CD",
-            Destination = "C:\\temp\\backups",
+            Source = sourceFile,
+            Destination = destinationDir,
             ScheduleCron = "0 */5 * * * ?",
             RetentionCount = 3,
             IsEnabled = true
@@ -68,6 +73,16 @@ public sealed class ApiEndpointsTests : IClassFixture<WebApplicationFactory<Prog
 
         var logsResponse = await _client.GetAsync("/api/v1/backups/logs");
         Assert.Equal(HttpStatusCode.OK, logsResponse.StatusCode);
+
+        if (File.Exists(sourceFile))
+        {
+            File.Delete(sourceFile);
+        }
+
+        if (Directory.Exists(destinationDir))
+        {
+            Directory.Delete(destinationDir, recursive: true);
+        }
     }
 
     [Fact]

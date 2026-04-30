@@ -10,16 +10,19 @@ namespace AriaSignature.UI.ViewModels;
 public sealed class MainViewModel : ObservableObject
 {
     private readonly AriaApiClient _apiClient = new();
+    private readonly StartupRegistrationService _startupRegistrationService = new();
     public ICommand RefreshCommand { get; }
     public ICommand CreateBackupCommand { get; }
     public ICommand SaveBackupCommand { get; }
     public ICommand DeleteBackupCommand { get; }
     public ICommand RunBackupCommand { get; }
     public ICommand ToggleBackupCommand { get; }
+    public ICommand SaveSettingsCommand { get; }
 
     public ObservableCollection<Disk> Disks { get; } = [];
     public ObservableCollection<BackupJob> BackupJobs { get; } = [];
     public ObservableCollection<BackupLog> BackupLogs { get; } = [];
+    public ObservableCollection<string> ThemeOptions { get; } = [..ThemeService.Themes];
 
     private string _apiBaseUrl = "http://127.0.0.1:5160/api/v1";
     public string ApiBaseUrl
@@ -178,6 +181,38 @@ public sealed class MainViewModel : ObservableObject
         ? @"Пример: C:\Bases\Accounting\1Cv8.1CD"
         : "Пример: Server=HOST;Database=DB;User Id=sa;Password=***;";
 
+    private string _selectedTheme = "Светлая";
+    public string SelectedTheme
+    {
+        get => _selectedTheme;
+        set
+        {
+            if (_selectedTheme == value)
+            {
+                return;
+            }
+
+            _selectedTheme = value;
+            OnPropertyChanged();
+        }
+    }
+
+    private bool _launchAtStartup;
+    public bool LaunchAtStartup
+    {
+        get => _launchAtStartup;
+        set
+        {
+            if (_launchAtStartup == value)
+            {
+                return;
+            }
+
+            _launchAtStartup = value;
+            OnPropertyChanged();
+        }
+    }
+
     private BackupJob? _selectedBackupJob;
     public BackupJob? SelectedBackupJob
     {
@@ -205,6 +240,8 @@ public sealed class MainViewModel : ObservableObject
         DeleteBackupCommand = new AsyncRelayCommand(DeleteBackupAsync);
         RunBackupCommand = new AsyncRelayCommand(RunBackupAsync);
         ToggleBackupCommand = new AsyncRelayCommand(ToggleBackupStateAsync);
+        SaveSettingsCommand = new AsyncRelayCommand(SaveSettingsAsync);
+        LaunchAtStartup = _startupRegistrationService.IsEnabled();
         _ = RefreshAsync();
     }
 
@@ -220,11 +257,11 @@ public sealed class MainViewModel : ObservableObject
             ReplaceCollection(Disks, disks);
             ReplaceCollection(BackupJobs, jobs);
             ReplaceCollection(BackupLogs, logs);
-            OperationStatus = $"Данные обновлены: {DateTime.Now:dd.MM.yyyy HH:mm:ss}";
+            SetStatus($"Данные обновлены: {DateTime.Now:dd.MM.yyyy HH:mm:ss}", isError: false);
         }
         catch (Exception ex)
         {
-            OperationStatus = $"Сервис недоступен: {ex.Message}";
+            SetStatus($"Сервис недоступен: {ex.Message}", isError: true);
         }
     }
 
@@ -234,7 +271,7 @@ public sealed class MainViewModel : ObservableObject
             string.IsNullOrWhiteSpace(NewBackupSource) ||
             string.IsNullOrWhiteSpace(NewBackupDestination))
         {
-            OperationStatus = "Заполните имя, источник и назначение архивации";
+            SetStatus("Заполните имя, источник и назначение архивации", isError: true);
             return;
         }
 
@@ -255,11 +292,11 @@ public sealed class MainViewModel : ObservableObject
             var created = await _apiClient.CreateBackupJobAsync(ApiBaseUrl, request, cts.Token);
             if (created is null)
             {
-                OperationStatus = "Не удалось создать задачу архивации";
+                SetStatus("Не удалось создать задачу архивации. Проверьте поля и доступы.", isError: true);
                 return;
             }
 
-            OperationStatus = $"Задача \"{created.Name}\" создана";
+            SetStatus($"Задача \"{created.Name}\" создана", isError: false);
             NewBackupName = string.Empty;
             NewBackupSource = string.Empty;
             NewBackupDestination = string.Empty;
@@ -267,7 +304,7 @@ public sealed class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            OperationStatus = $"Ошибка создания задачи: {ex.Message}";
+            SetStatus($"Ошибка создания задачи: {ex.Message}", isError: true);
         }
     }
 
@@ -275,7 +312,7 @@ public sealed class MainViewModel : ObservableObject
     {
         if (SelectedBackupJob is null)
         {
-            OperationStatus = "Выберите задачу для редактирования";
+            SetStatus("Выберите задачу для редактирования", isError: true);
             return;
         }
 
@@ -292,9 +329,9 @@ public sealed class MainViewModel : ObservableObject
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var updated = await _apiClient.UpdateBackupJobAsync(ApiBaseUrl, SelectedBackupJob.Id, request, cts.Token);
-        OperationStatus = updated is null
+        SetStatus(updated is null
             ? "Не удалось сохранить изменения задачи"
-            : $"Задача \"{updated.Name}\" обновлена";
+            : $"Задача \"{updated.Name}\" обновлена", isError: updated is null);
         await RefreshAsync();
     }
 
@@ -302,13 +339,13 @@ public sealed class MainViewModel : ObservableObject
     {
         if (SelectedBackupJob is null)
         {
-            OperationStatus = "Выберите задачу для удаления";
+            SetStatus("Выберите задачу для удаления", isError: true);
             return;
         }
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var deleted = await _apiClient.DeleteBackupJobAsync(ApiBaseUrl, SelectedBackupJob.Id, cts.Token);
-        OperationStatus = deleted ? "Задача удалена" : "Не удалось удалить задачу";
+        SetStatus(deleted ? "Задача удалена" : "Не удалось удалить задачу", isError: !deleted);
         await RefreshAsync();
     }
 
@@ -316,13 +353,13 @@ public sealed class MainViewModel : ObservableObject
     {
         if (SelectedBackupJob is null)
         {
-            OperationStatus = "Выберите задачу для запуска";
+            SetStatus("Выберите задачу для запуска", isError: true);
             return;
         }
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var log = await _apiClient.RunBackupJobAsync(ApiBaseUrl, SelectedBackupJob.Id, cts.Token);
-        OperationStatus = log is null ? "Не удалось запустить задачу" : $"Запуск завершен: {log.Status}";
+        SetStatus(log is null ? "Не удалось запустить задачу" : $"Запуск завершен: {log.Status}", isError: log is null);
         await RefreshAsync();
     }
 
@@ -330,12 +367,37 @@ public sealed class MainViewModel : ObservableObject
     {
         if (SelectedBackupJob is null)
         {
-            OperationStatus = "Выберите задачу для включения/выключения";
+            SetStatus("Выберите задачу для включения/выключения", isError: true);
             return;
         }
 
         SelectedBackupJob.IsEnabled = !SelectedBackupJob.IsEnabled;
         await SaveBackupAsync();
+    }
+
+    public Task SaveSettingsAsync()
+    {
+        try
+        {
+            _startupRegistrationService.SetEnabled(LaunchAtStartup);
+            ThemeService.Apply(SelectedTheme);
+            SetStatus("Настройки применены", isError: false);
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Ошибка сохранения настроек: {ex.Message}", isError: true);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void SetStatus(string message, bool isError)
+    {
+        OperationStatus = message;
+        if (isError)
+        {
+            System.Windows.MessageBox.Show(message, "AriaSignature", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+        }
     }
 
     private static string MapCronPreset(string preset)

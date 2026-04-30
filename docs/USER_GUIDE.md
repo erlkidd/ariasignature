@@ -30,11 +30,13 @@ AriaSignature is a local Windows service and desktop application for:
 - UI can refresh operational data from local API with status of last sync.
 - Disk table shows SMART-oriented fields (health, temperature, power-on hours, power cycles, sector error counters).
 - In backup form you can select backup type: `.1CD` file copy or `MSSQL` backup mode.
+- Для `.1CD` доступен выбор файла и папки назначения через интерактивные диалоги.
 - In backup grid you can edit task fields, toggle enable/disable, run task immediately, and delete task.
 - Not-found and validation API errors are returned as structured problem responses.
+- В настройках есть переключение темы (светлая/тёмная) и управление автозапуском.
+- Ошибки валидации и запуска показываются сразу в интерфейсе.
 
 ## Planned next capabilities
 
 - Expand hardware diagnostics depth further toward HDS-level detail (vendor-specific nuances).
-- Improve backup UX with path pickers and presets.
 - Add richer disk details panel with SMART attribute timeline visualization.
