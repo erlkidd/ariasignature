@@ -25,4 +25,5 @@
 - SQLite persistence and schema initialization added for disks, metrics, jobs, and logs.
 - WPF MVVM shell added with required operational tabs and linked icon resource.
 - Tray icon baseline and installer script baseline added.
+- API integration tests added for system status and disk endpoints.
 - Build verification is green for all projects.

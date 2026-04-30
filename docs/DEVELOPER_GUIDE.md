@@ -62,3 +62,8 @@
 - Inno Setup script is available at `installer/inno/AriaSignature.iss`.
 - Script installs UI and service binaries from publish folders.
 - Script registers Windows service and starts it after installation.
+
+## Testing baseline
+
+- API integration tests run via `WebApplicationFactory`.
+- Current tests validate `/api/v1/status` and `/api/v1/disks` availability.
