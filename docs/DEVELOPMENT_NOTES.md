@@ -22,4 +22,5 @@
 - Service-hosted local API is running with `/api/v1` endpoints.
 - SMART baseline implemented (WMI collector + in-memory history + Quartz refresh job).
 - Backup baseline implemented (job CRUD + run + retry + retention + logs).
+- SQLite persistence and schema initialization added for disks, metrics, jobs, and logs.
 - Build verification is green for all projects.

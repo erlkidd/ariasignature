@@ -42,3 +42,4 @@
 
 - Current SMART refresh schedule is managed in service via Quartz cron (`SmartMonitoring:Cron`).
 - API is local-only and designed for service-hosted runtime on Windows.
+- API data is persisted to local SQLite database (`ConnectionStrings:AriaSignature`).

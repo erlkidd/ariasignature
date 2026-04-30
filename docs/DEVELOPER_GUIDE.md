@@ -36,6 +36,12 @@
 - `BackupExecutor` supports file copy backups and MSSQL `BACKUP DATABASE` flow.
 - Retention policy is applied after each successful backup run.
 
+## Data persistence
+
+- SQLite is used as the primary local storage engine.
+- Schema is initialized on service startup by `DatabaseInitializationHostedService`.
+- Repositories for disks/SMART and backup jobs/logs are backed by SQLite tables.
+
 ## Icon asset policy
 
 - Source icon file is tracked in repository root as `icon.png`.

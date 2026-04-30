@@ -24,6 +24,7 @@ AriaSignature is a local Windows service and desktop application for:
 - Backup tasks can be created/updated/deleted from API.
 - Manual backup run endpoint is available at `/api/v1/backups/{id}/run`.
 - Backup execution logs are available at `/api/v1/backups/logs`.
+- Configuration and operational data are persisted in local SQLite storage.
 
 ## Planned next capabilities
 
