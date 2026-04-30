@@ -1,0 +1,64 @@
+---
+name: agent-context-protocol
+description: Протокол сохранения и восстановления контекста сабагента между запусками.
+---
+
+# Протокол контекста агента
+
+> Каждый сабагент MUST сохранять контекст перед завершением и MUST читать его при старте.
+
+## Первый шаг при старте
+
+Каждый сабагент MUST как **первый шаг**: проверить `{role}-context.md` в `task_dir`, прочитать его и продолжить работу, не повторяя выполненные шаги.
+
+| Агент | Файл контекста |
+|-------|----------------|
+| analyst | `analyst-context.md` |
+| architect | `architect-context.md` |
+| scenario-author | `scenario-author-context.md` |
+| developer-tests | `developer-tests-context.md` |
+| developer-code | `developer-code-context.md` |
+| tester | `tester-context.md` |
+| reviewer | `reviewer-context-{scope}.md` |
+
+## Последний шаг перед завершением
+
+Каждый сабагент MUST записать `{role}-context.md` в `task_dir` **перед любым завершением**: `completed`, `clarification_needed`, `implementation_error`.
+
+## Структура файла контекста
+
+```markdown
+# {Role} Context
+
+## Status
+{completed | clarification_needed | implementation_error}
+
+## Completed Steps
+- {файлы, инструменты, артефакты — достаточно чтобы не повторять работу}
+
+## Findings
+- {модули, паттерны, структуры данных, зависимости}
+
+## Assumptions
+- {допущения при неопределённости}
+
+## Pending Questions
+- {только при clarification_needed, все вопросы одним блоком}
+
+## User Answers
+- {заполняет оркестратор}
+```
+
+## Что НЕ включать
+
+- Полное содержимое файлов — только выводы и пути
+- Промежуточные рассуждения — только финальные находки
+- Информацию из других артефактов `task_dir`
+
+## Механизм resume
+
+`{role}-context.md` — основной механизм. `resume agentId` — оптимизация в рамках одной сессии. При `resume` контекст-файл всё равно MUST быть записан.
+
+---
+depends_on: []
+---
