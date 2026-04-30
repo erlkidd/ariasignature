@@ -10,6 +10,7 @@ public static class AriaApiExtensions
 {
     public static IServiceCollection AddAriaApi(this IServiceCollection services)
     {
+        services.AddProblemDetails();
         services.AddEndpointsApiExplorer();
         services.AddSwaggerGen();
         return services;
@@ -17,6 +18,26 @@ public static class AriaApiExtensions
 
     public static WebApplication UseAriaApi(this WebApplication app)
     {
+        app.UseExceptionHandler(exceptionApp =>
+        {
+            exceptionApp.Run(async context =>
+            {
+                var feature = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>();
+                var exception = feature?.Error;
+
+                context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                context.Response.ContentType = "application/problem+json";
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    type = "https://httpstatuses.com/500",
+                    title = "Внутренняя ошибка сервера",
+                    status = 500,
+                    detail = exception?.Message ?? "Необработанная ошибка",
+                    traceId = context.TraceIdentifier
+                });
+            });
+        });
+
         app.UseSwagger();
         app.UseSwaggerUI();
 
