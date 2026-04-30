@@ -24,7 +24,7 @@ ShowLanguageDialog=no
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64
 UninstallDisplayIcon={app}\ui\{#MyAppExeName}
-; SetupIconFile can point to icon.ico once converted from root icon.png.
+; SetupIconFile can be enabled after providing a multi-size valid ICO.
 
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"

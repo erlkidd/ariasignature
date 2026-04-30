@@ -1,5 +1,4 @@
 ﻿using System.Windows;
-using System.Runtime.InteropServices;
 using Forms = System.Windows.Forms;
 using Drawing = System.Drawing;
 
@@ -12,7 +11,6 @@ public partial class App : System.Windows.Application
 {
     private Forms.NotifyIcon? _trayIcon;
     private Drawing.Icon? _trayDrawingIcon;
-    private nint _trayIconHandle;
     private bool _isExitRequested;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -44,24 +42,18 @@ public partial class App : System.Windows.Application
         }
 
         _trayDrawingIcon?.Dispose();
-        if (_trayIconHandle != 0)
-        {
-            DestroyIcon(_trayIconHandle);
-        }
         base.OnExit(e);
     }
 
     private void InitializeTrayIcon()
     {
-        var imagePath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icon.png");
-        if (!System.IO.File.Exists(imagePath))
+        var iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icon.ico");
+        if (!System.IO.File.Exists(iconPath))
         {
             return;
         }
 
-        using var bitmap = new Drawing.Bitmap(imagePath);
-        _trayIconHandle = bitmap.GetHicon();
-        _trayDrawingIcon = Drawing.Icon.FromHandle(_trayIconHandle);
+        _trayDrawingIcon = new Drawing.Icon(iconPath);
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Открыть", null, (_, _) =>
@@ -99,8 +91,5 @@ public partial class App : System.Windows.Application
         MainWindow?.Close();
         Shutdown();
     }
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool DestroyIcon(nint hIcon);
 }
 

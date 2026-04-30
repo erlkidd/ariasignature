@@ -16,4 +16,9 @@
     <ProjectReference Include="..\..\core\AriaSignature.Infrastructure\AriaSignature.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Update="appsettings.json" CopyToPublishDirectory="Never" />
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
 </Project>

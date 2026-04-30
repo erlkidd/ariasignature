@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
 using AriaSignature.Domain.Entities;
+using AriaSignature.UI.Models;
 
 namespace AriaSignature.UI.Services;
 
@@ -29,5 +30,16 @@ public sealed class AriaApiClient
     {
         var logs = await _httpClient.GetFromJsonAsync<List<BackupLog>>($"{apiBaseUrl.TrimEnd('/')}/backups/logs", _jsonOptions, cancellationToken);
         return logs ?? [];
+    }
+
+    public async Task<BackupJob?> CreateBackupJobAsync(string apiBaseUrl, BackupJobUpsertModel request, CancellationToken cancellationToken)
+    {
+        using var response = await _httpClient.PostAsJsonAsync($"{apiBaseUrl.TrimEnd('/')}/backups", request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        return await response.Content.ReadFromJsonAsync<BackupJob>(_jsonOptions, cancellationToken);
     }
 }
