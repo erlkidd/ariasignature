@@ -17,6 +17,11 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+        await using (var pragma = connection.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA busy_timeout = 5000;";
+            await pragma.ExecuteNonQueryAsync(cancellationToken);
+        }
 
         var sql = """
             CREATE TABLE IF NOT EXISTS Disks (
@@ -172,7 +177,7 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
                 UpdatedAtUtc TEXT NOT NULL
             );
 
-            INSERT INTO Disks_New (
+            INSERT OR REPLACE INTO Disks_New (
                 Id, Model, Serial, Interface, MediaType, SizeTotalBytes, SizeFreeBytes, SsdLifeRemaining,
                 TemperatureCelsius, HealthPercent, PowerOnHours, PowerCycleCount, ReallocatedSectors, PendingSectors,
                 UncorrectableErrors, SmartCtlUsed, WmiUsed, StorageReliabilityUsed, TelemetryConfidence,
@@ -183,13 +188,13 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
                 NULLIF(TemperatureCelsius, 0), HealthPercent, PowerOnHours, PowerCycleCount, ReallocatedSectors, PendingSectors,
                 UncorrectableErrors, COALESCE(SmartCtlUsed, 0), COALESCE(WmiUsed, 0), COALESCE(StorageReliabilityUsed, 0),
                 COALESCE(TelemetryConfidence, 0), COALESCE(TelemetryDegradationReason, ''), Status, UpdatedAtUtc
-            FROM Disks;
+            FROM Disks
+            ORDER BY UpdatedAtUtc;
 
             DROP TABLE Disks;
             ALTER TABLE Disks_New RENAME TO Disks;
             """;
-        await using var cmd = new SqliteCommand(sql, connection);
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        await ExecuteWithBusyRetryAsync(connection, sql, cancellationToken);
     }
 
     private static async Task RebuildSmartMetricsTableWithNullableTemperature(SqliteConnection connection, CancellationToken cancellationToken)
@@ -214,8 +219,25 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
             DROP TABLE SmartMetrics;
             ALTER TABLE SmartMetrics_New RENAME TO SmartMetrics;
             """;
-        await using var cmd = new SqliteCommand(sql, connection);
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        await ExecuteWithBusyRetryAsync(connection, sql, cancellationToken);
+    }
+
+    private static async Task ExecuteWithBusyRetryAsync(SqliteConnection connection, string sql, CancellationToken cancellationToken)
+    {
+        const int maxAttempts = 5;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                await using var cmd = new SqliteCommand(sql, connection);
+                await cmd.ExecuteNonQueryAsync(cancellationToken);
+                return;
+            }
+            catch (SqliteException ex) when ((ex.SqliteErrorCode == 5 || ex.SqliteErrorCode == 6) && attempt < maxAttempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
+            }
+        }
     }
 
     private static async Task MigrateHealthPercentColumnsToNullableAsync(SqliteConnection connection, CancellationToken cancellationToken)

@@ -2,7 +2,6 @@ using AriaSignature.Api;
 using AriaSignature.Application;
 using AriaSignature.Application.Abstractions;
 using AriaSignature.Infrastructure;
-using AriaSignature.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -31,11 +30,6 @@ public sealed class LocalApiHostedService : IHostedService
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        await using (var scope = _serviceProvider.CreateAsyncScope())
-        {
-            await scope.ServiceProvider.GetRequiredService<ISqliteDatabaseInitializer>().InitializeAsync(cancellationToken);
-        }
-
         var port = await ResolveApiPortAsync(cancellationToken);
         var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
         var webRootExists = Directory.Exists(webRoot);
