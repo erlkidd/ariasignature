@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Management;
 using System.Runtime.Versioning;
@@ -26,6 +27,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         }
 
         var smartSnapshot = ReadSmartSnapshotSafe();
+        var storageReliability = ReadStorageReliabilityByPhysicalDriveIndexSafe();
         var disks = new List<Disk>();
 
         try
@@ -47,9 +49,11 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                         var mediaType = item["MediaType"]?.ToString()?.Trim() ?? string.Empty;
                         var iface = ResolveInterfaceType(item);
                         var diskId = CreateStableId(model, serial, iface);
+                        var physicalIndex = TryParsePhysicalDriveIndex(item["DeviceID"]?.ToString());
 
                         var diskCapacity = ResolvePhysicalDiskCapacitySafe(item, size);
-                        var smart = ResolveSmartAttributes(smartSnapshot, model, serial);
+                        var smart = CopySmartAttributes(ResolveSmartAttributes(smartSnapshot, model, serial));
+                        MergeStorageReliability(physicalIndex, storageReliability, smart);
 
                         var reallocated = smart.ReallocatedSectors;
                         var pending = smart.PendingSectors;
@@ -174,6 +178,169 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         {
             _logger.LogWarning(ex, "Запасной перечень логических томов не удался.");
         }
+    }
+
+    /// <summary>
+    /// Счётчики из root\Microsoft\Windows\Storage (как у Get-StorageReliabilityCounter): износ SSD (Wear), температура.
+    /// Для многих NVMe/SSD даёт достовернее оценку, чем только MSStorageDriver ATAPI SMART.
+    /// </summary>
+    private Dictionary<int, SmartAttributes> ReadStorageReliabilityByPhysicalDriveIndexSafe()
+    {
+        var map = new Dictionary<int, SmartAttributes>();
+        try
+        {
+            const string ns = @"root\Microsoft\Windows\Storage";
+            using var searcher = new ManagementObjectSearcher(ns, "SELECT * FROM MSFT_StorageReliabilityCounter");
+            using var results = searcher.Get();
+            foreach (ManagementObject row in results)
+            {
+                using (row)
+                {
+                    var oid = row["ObjectId"]?.ToString();
+                    var idx = TryParsePhysicalDriveIndex(oid);
+                    if (idx is null)
+                    {
+                        continue;
+                    }
+
+                    if (!map.TryGetValue(idx.Value, out var agg))
+                    {
+                        agg = new SmartAttributes();
+                        map[idx.Value] = agg;
+                    }
+
+                    var wear = TryGetUInt16(row["Wear"]);
+                    if (wear is ushort wWear && wWear is > 0 and <= 100)
+                    {
+                        var remaining = (int)Math.Clamp(100 - wWear, 0, 100);
+                        agg.SsdLifeRemainingPercent = agg.SsdLifeRemainingPercent is int prev
+                            ? Math.Min(prev, remaining)
+                            : remaining;
+                    }
+
+                    var temp = TryGetUInt16(row["Temperature"]);
+                    if (temp is ushort tC && tC is > 0 and < 125)
+                    {
+                        agg.TemperatureCelsius = Math.Max(agg.TemperatureCelsius, tC);
+                    }
+
+                    var cycles = TryGetUInt64(row["LoadUnloadCycleCount"]);
+                    if (cycles is ulong lc && lc > 0)
+                    {
+                        var c = (long)Math.Min(lc, long.MaxValue);
+                        agg.PowerCycleCount = Math.Max(agg.PowerCycleCount, c);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "WMI MSFT_StorageReliabilityCounter недоступен (возможна старая ОС или политика).");
+        }
+
+        return map;
+    }
+
+    private static void MergeStorageReliability(int? physicalIndex, Dictionary<int, SmartAttributes> storage, SmartAttributes target)
+    {
+        if (physicalIndex is not int idx || !storage.TryGetValue(idx, out var extra))
+        {
+            return;
+        }
+
+        if (extra.TemperatureCelsius > 0)
+        {
+            target.TemperatureCelsius = Math.Max(target.TemperatureCelsius, extra.TemperatureCelsius);
+        }
+
+        if (extra.SsdLifeRemainingPercent is int storageLife)
+        {
+            target.SsdLifeRemainingPercent = target.SsdLifeRemainingPercent is int smartLife
+                ? Math.Min(smartLife, storageLife)
+                : storageLife;
+        }
+
+        if (extra.PowerCycleCount > target.PowerCycleCount)
+        {
+            target.PowerCycleCount = extra.PowerCycleCount;
+        }
+    }
+
+    private static SmartAttributes CopySmartAttributes(SmartAttributes s) =>
+        new()
+        {
+            TemperatureCelsius = s.TemperatureCelsius,
+            PowerOnHours = s.PowerOnHours,
+            PowerCycleCount = s.PowerCycleCount,
+            ReallocatedSectors = s.ReallocatedSectors,
+            PendingSectors = s.PendingSectors,
+            UncorrectableErrors = s.UncorrectableErrors,
+            SsdLifeRemainingPercent = s.SsdLifeRemainingPercent,
+        };
+
+    /// <summary>Ищет номер физического диска в строке (DeviceID Win32 или ObjectId Storage WMI).</summary>
+    private static int? TryParsePhysicalDriveIndex(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var u = text.ToUpperInvariant();
+        const string key = "PHYSICALDRIVE";
+        var i = u.IndexOf(key, StringComparison.Ordinal);
+        if (i < 0)
+        {
+            return null;
+        }
+
+        var start = i + key.Length;
+        var end = start;
+        while (end < u.Length && char.IsDigit(u[end]))
+        {
+            end++;
+        }
+
+        if (end == start)
+        {
+            return null;
+        }
+
+        return int.Parse(u.AsSpan(start, end - start), CultureInfo.InvariantCulture);
+    }
+
+    private static ushort? TryGetUInt16(object? o)
+    {
+        if (o is null)
+        {
+            return null;
+        }
+
+        if (o is ushort u)
+        {
+            return u;
+        }
+
+        return ushort.TryParse(Convert.ToString(o, CultureInfo.InvariantCulture), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v)
+            ? v
+            : null;
+    }
+
+    private static ulong? TryGetUInt64(object? o)
+    {
+        if (o is null)
+        {
+            return null;
+        }
+
+        if (o is ulong ul)
+        {
+            return ul;
+        }
+
+        return ulong.TryParse(Convert.ToString(o, CultureInfo.InvariantCulture), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v)
+            ? v
+            : null;
     }
 
     private static string InferMediaType(string iface, string model)

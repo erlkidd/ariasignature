@@ -1,6 +1,6 @@
 # Руководство разработчика AriaSignature
 
-**Версия релиза в репозитории:** 0.2.1.
+**Версия релиза в репозитории:** 0.2.2.
 
 ## Версионирование релиза (обязательная синхронизация)
 
@@ -37,7 +37,8 @@
 - `IDiskTelemetryCollector` отвечает за сбор телеметрии.
 - `WmiDiskTelemetryCollector` читает:
   - сведения о физических дисках (в т.ч. `MediaType`, уточнение USB/NVMe по PNPDeviceID);
-  - SMART-атрибуты (в т.ч. атрибуты износа SSD 231/233 при наличии);
+  - SMART через `root\WMI` (`MSStorageDriver_*`) при доступности;
+  - **счётчики надёжности** `MSFT_StorageReliabilityCounter` в `root\Microsoft\Windows\Storage` (поле **Wear** — процент использованного ресурса носителя; температура и циклы) — ближе к данным, которые использует система и утилиты уровня Hard Disk Sentinel;
   - привязку логических томов к физическим накопителям.
 - `DiskTelemetryService` управляет refresh/query сценариями.
 - `SqliteDiskTelemetryRepository` хранит срезы дисков и историю SMART.

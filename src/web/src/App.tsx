@@ -92,20 +92,6 @@ function buildCron(
   return `0 ${m} ${h} ${dom} * ?`;
 }
 
-function describeCron(
-  preset: "daily" | "weekly" | "monthly",
-  hour: number,
-  minute: number,
-  dayOfWeek: string,
-  dayOfMonth: number
-): string {
-  const d = quartzDays.find((x) => x.v === dayOfWeek)?.label ?? dayOfWeek;
-  if (preset === "daily") return `Каждый день в ${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
-  if (preset === "weekly")
-    return `Раз в неделю (${d}) в ${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
-  return `Раз в месяц (${dayOfMonth}-е число) в ${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
-}
-
 function postToHost(payload: unknown) {
   const w = window as unknown as { chrome?: { webview?: { postMessage: (m: string) => void } } };
   if (w.chrome?.webview) {
@@ -157,10 +143,11 @@ export default function App() {
     return buildCron(preset, schHour, schMinute, schDow, schDom);
   }, [useAdvancedCron, advancedCron, preset, schHour, schMinute, schDow, schDom]);
 
-  const cronHint = useMemo(() => {
-    if (useAdvancedCron) return "Расширенный режим: выражение Quartz (сек мин час …)";
-    return describeCron(preset, schHour, schMinute, schDow, schDom);
-  }, [useAdvancedCron, preset, schHour, schMinute, schDow, schDom]);
+  const advancedCronHelp = useMemo(
+    () =>
+      "Формат Quartz — шесть полей через пробел: секунда, минута, час, день месяца, месяц, день недели (и при необходимости год). В заданные моменты планировщик ставит запуск задачи в очередь. Ниже — точная строка, которая будет сохранена.",
+    []
+  );
 
   const applyTheme = useCallback((t: "light" | "dark") => {
     document.documentElement.dataset.theme = t;
@@ -383,10 +370,15 @@ export default function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>AriaSignature</h1>
-        <p className="subtitle">
-          Диагностика накопителей и архивация 1С. Локальная панель управления; HTTP API для внешних систем (например 1С).
-        </p>
+        <div className="header-row">
+          <img className="app-logo" src="./logo.png" width={40} height={40} alt="" />
+          <div className="header-titles">
+            <h1>AriaSignature</h1>
+            <p className="subtitle">
+              Диагностика накопителей и резервное копирование. Локальная панель управления; HTTP API для внешних систем.
+            </p>
+          </div>
+        </div>
         <nav className="tabs">
           <button className={tab === "disks" ? "active" : ""} onClick={() => setTab("disks")}>
             Накопители
@@ -419,7 +411,8 @@ export default function App() {
               Обновить данные
             </button>
             <span className="hint">
-              Данные собирает служба Windows (WMI/SMART). SQLite хранит историю и задания, не вашу базу 1С.
+              Данные собирает служба Windows: WMI SMART и счётчики надёжности хранилища (как у системного стека дисков). SQLite
+              хранит историю опросов и задания архивации.
             </span>
           </div>
           <div className="grid2">
@@ -668,9 +661,7 @@ export default function App() {
                   <input value={advancedCron} onChange={(e) => setAdvancedCron(e.target.value)} placeholder="0 0 2 * * ?" />
                 </label>
               )}
-              <p className="cron-hint">
-                <strong>Как это читать:</strong> {cronHint}
-              </p>
+              {useAdvancedCron && <p className="cron-hint">{advancedCronHelp}</p>}
               <p className="muted mono small">Quartz: {cronValue}</p>
               <button type="button" onClick={() => void createJob()}>
                 Создать задачу

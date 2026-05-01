@@ -1,6 +1,6 @@
 # Руководство по установщику AriaSignature
 
-**Версия установщика** задаётся `#define MyAppVersion` в `AriaSignature.iss` и должна совпадать с `Directory.Build.props` (сейчас **0.2.1**).
+**Версия установщика** задаётся `#define MyAppVersion` в `AriaSignature.iss` и должна совпадать с `Directory.Build.props` (сейчас **0.2.2**).
 
 ## Требования
 

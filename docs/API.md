@@ -1,6 +1,6 @@
 # Документация API AriaSignature
 
-**Версия продукта (релиз):** 0.2.1 — совпадает с `Directory.Build.props`, установщиком (`MyAppVersion`) и `package.json` веб-панели.
+**Версия продукта (релиз):** 0.2.2 — совпадает с `Directory.Build.props`, установщиком (`MyAppVersion`) и `package.json` веб-панели.
 
 Версия контракта: **v1**. Текущая сборка API также отражается в `GET /api/v1/status` (поле `version`).
 
