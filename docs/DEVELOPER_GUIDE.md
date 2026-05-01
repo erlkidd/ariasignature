@@ -2,16 +2,16 @@
 
 Версия документа: 0.2.3.
 
-## 1. Цель системы
+## 1. Цель и принцип работы
 
 AriaSignature реализует `service-first` модель:
 - локальный сервис выполняет сбор телеметрии, backup и журналирование;
 - desktop UI является локальной панелью администрирования;
-- API публикует состояние и результаты работы сервиса.
+- API публикует состояние и результаты работы сервиса для UI и внешних интеграций.
 
 Система должна работать автономно после настройки: автозапуск, плановое выполнение, API-доступность.
 
-## 2. Архитектурные границы
+## 2. Архитектурные границы и ответственность
 
 - `AriaSignature.Domain` — сущности и бизнес-перечисления.
 - `AriaSignature.Application` — use-case сервисы и абстракции.
@@ -27,10 +27,11 @@ AriaSignature реализует `service-first` модель:
 
 Точка входа: `IDiskTelemetryCollector`.
 
-Текущая реализация агрегирует:
+Источники данных (в порядке приоритета):
+- `smartctl` (primary);
 - WMI (`Win32_DiskDrive`, `MSStorageDriver_*`);
 - Storage counters (`MSFT_StorageReliabilityCounter`);
-- low-level SMART/NVMe через `smartctl` (если доступен).
+- fallback-каналы при недоступности или неполноте primary.
 
 Правило слияния: выбираются наиболее информативные значения, идентификация выполняется по model/serial и физическим индексам, где возможно.
 
@@ -52,7 +53,7 @@ AriaSignature реализует `service-first` модель:
 - журналирование;
 - валидация входных параметров и окружения.
 
-## 5. UI и host взаимодействие
+## 5. UI и host-взаимодействие
 
 - SPA (`src/web`) отображает данные из API сервиса и инициирует локальные операторские действия.
 - WPF host реализует:
@@ -92,10 +93,11 @@ AriaSignature реализует `service-first` модель:
 Основной gate:
 - `.\scripts\release-gate.ps1`
 
-Gate выполняет:
+Release-gate выполняет:
 - сборку SPA;
 - build/test .NET решения;
 - publish UI/service;
+- проверку runtime-зависимостей (`WebView2`, `smartctl`, `drivedb.h`);
 - сборку Inno Setup installer.
 
 Артефакт: `artifacts/installer/AriaSignature-Setup.exe`.

@@ -2,42 +2,43 @@
 
 ## Release 0.2.3
 
-### Telemetry reliability
-- Switched disk telemetry strategy to smartctl-first with explicit retry matrix by device type (`sat`, `nvme`, `scsi`, USB bridges) and autodetect fallback.
-- Added stronger disk mapping by `PhysicalDriveN`, model/serial and controller hints to reduce unmatched devices.
-- Added telemetry observability fields in disk model/API: `smartCtlUsed`, `wmiUsed`, `storageReliabilityUsed`, `telemetryConfidence`, `telemetryDegradationReason`.
-- Migrated `TemperatureCelsius` to nullable in domain/storage/API/UI to avoid "0 = unknown" ambiguity.
+### Надежность телеметрии
+- Реализована стратегия `smartctl-first` с повторными попытками по типам устройств (`sat`, `nvme`, `scsi`, USB-мосты) и autodetect fallback.
+- Усилено сопоставление дисков по `PhysicalDriveN`, `model/serial` и признакам контроллера.
+- В модель/API добавлены поля наблюдаемости: `smartCtlUsed`, `wmiUsed`, `storageReliabilityUsed`, `telemetryConfidence`, `telemetryDegradationReason`.
+- Поле `TemperatureCelsius` переведено в nullable по домену/хранилищу/API/UI.
 
-### Packaging
-- Hardened release-gate: verifies `installer/smartctl/smartctl.exe` and `installer/smartctl/drivedb.h` existence and non-zero size before Inno build.
-- Inno installer continues bundling smartctl runtime to `{app}\service\smartctl` for out-of-box telemetry after install.
+### Поставка и installer
+- В release-gate добавлены проверки целостности `installer/smartctl/smartctl.exe` и `installer/smartctl/drivedb.h` (наличие + размер > 0).
+- Runtime `smartctl` включается в installer и доставляется в `{app}\service\smartctl`.
 
-### Startup reliability
-- Fixed UI startup behavior to avoid white/black empty window when local API is not yet ready.
-- Added explicit fallback screen with diagnostics and automatic recovery loop to open UI when service/API becomes available.
+### Стабильность запуска
+- Устранен сценарий пустого черного/белого экрана при старте UI.
+- Добавлен диагностический fallback-экран и автоматическое восстановление при позднем старте локального API.
+- Исправлен сбой миграции SQLite при обновлении с дубликатами (`UNIQUE constraint failed: Disks_New.Id`) и конкурентной блокировке таблиц.
 
 ## Release 0.2.2
 
-### Functional changes
-- Added low-level disk telemetry channel via `smartctl` (ATA/NVMe JSON), merged with WMI and Storage Reliability counters.
-- Improved SMART/health/temperature coverage for devices where WMI alone is incomplete.
-- Added physical-drive mapping (`PhysicalDriveN`) and stronger collector warnings when telemetry signals are missing.
-- Added user-facing schedule presets for SMART polling in Settings (interval/daily/custom Quartz).
-- Improved form validation UX for backup task creation (field-level errors + human-readable messages).
-- Fixed backup log filter side effect: changing status filter no longer triggers disk refresh.
+### Функциональные изменения
+- Добавлен low-level канал телеметрии через `smartctl` (ATA/NVMe JSON) с объединением данных WMI и Storage Reliability.
+- Улучшено покрытие SMART/health/temperature на оборудовании, где WMI возвращает неполные данные.
+- Добавлен mapping по `PhysicalDriveN` и диагностические предупреждения при отсутствии SMART-сигналов.
+- В Settings добавлены пресеты расписания SMART (interval/daily/custom Quartz).
+- Улучшена валидация формы создания задач архивирования (field-level ошибки и понятные сообщения).
+- Устранен побочный эффект фильтра журнала: смена фильтра больше не запускает refresh дисков.
 
-### Runtime and shell
-- Fixed tray restore crash caused by invalid WPF state combination (`ShowActivated=false` + `WindowState=Maximized`).
-- Kept single-instance behavior with foreground activation of existing process.
+### Runtime и shell
+- Исправлен crash при восстановлении окна из трея (некорректная комбинация `ShowActivated=false` + `WindowState=Maximized`).
+- Сохранено single-instance поведение с активацией существующего процесса.
 
-### UI and consistency
-- Normalized service status presentation in Russian.
-- Unified visual style for panels/controls and tightened section hierarchy.
-- Title bar controls aligned to right side and drag behavior from maximized state made closer to system window behavior.
+### UI и консистентность
+- Нормализовано отображение статусов службы на русском языке.
+- Унифицирован стиль панелей/контролов и иерархия разделов.
+- Кнопки title bar выровнены вправо; drag из maximized приближен к системному поведению окна.
 
-### Documentation
-- Rewritten user/API/developer/installer/release-gate docs in a uniform technical style.
-- Clarified system purpose: autonomous service operation + API publication for external consumption.
+### Документация
+- Документация user/API/developer/installer/release-gate приведена к единому техническому стилю.
+- Уточнена целевая модель: автономная работа службы + публикация данных через API.
 
 ## Release 0.2.1
 

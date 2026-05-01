@@ -32,16 +32,6 @@ public partial class MainWindow : Window
     private async void OnLoadedAsync(object sender, RoutedEventArgs e)
     {
         var serviceExePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "service", "AriaSignature.Service.exe"));
-        WindowsServiceEnsure.TryStartOrFallback(serviceExePath, TimeSpan.FromSeconds(60), out var warning);
-        if (!string.IsNullOrEmpty(warning))
-        {
-            System.Windows.MessageBox.Show(
-                warning,
-                "AriaSignature",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
-        }
-
         var baseUrl = await ResolveApiBaseAsync() ?? DefaultApiBase;
 
         try
@@ -101,6 +91,24 @@ public partial class MainWindow : Window
                 // ignore
             }
         };
+
+        // Не блокируем UI на старте: WebView2/fallback должны отрисоваться сразу,
+        // даже если служба запускается долго.
+        _ = Task.Run(() =>
+        {
+            WindowsServiceEnsure.TryStartOrFallback(serviceExePath, TimeSpan.FromSeconds(15), out var warning);
+            if (!string.IsNullOrEmpty(warning))
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    System.Windows.MessageBox.Show(
+                        warning,
+                        "AriaSignature",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                });
+            }
+        });
 
         var apiReady = await WaitApiReadyAsync(baseUrl, TimeSpan.FromSeconds(20));
         if (!apiReady)

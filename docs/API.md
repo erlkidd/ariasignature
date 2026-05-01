@@ -1,10 +1,10 @@
-# AriaSignature API (v1)
+# AriaSignature — спецификация API (v1)
 
 Версия документа: 0.2.3.
 
 ## 1. Общие параметры
 
-- Base URL: `http://127.0.0.1:{port}/api/v1`
+- Базовый URL: `http://127.0.0.1:{port}/api/v1`
 - Порт по умолчанию: `5160`
 - Формат: `application/json`
 - OpenAPI/Swagger: `/swagger`
@@ -20,15 +20,15 @@ API публикует результат работы службы и огра�
 - `404 Not Found` — отсутствующий ресурс, `application/problem+json`
 - `500 Internal Server Error` — непредвиденная ошибка, `application/problem+json` + `traceId`
 
-## 3. Endpoints
+## 3. Эндпоинты
 
-### 3.1 Service status
+### 3.1 Статус сервиса
 
 - `GET /status`
   - Назначение: проверка доступности и версии сервиса.
   - Ответ: `status`, `timestampUtc`, `version`.
 
-### 3.2 Settings
+### 3.2 Настройки
 
 - `GET /settings`
   - Назначение: чтение текущих параметров (`apiPort`, `smartMonitoringCron`, `note`).
@@ -37,10 +37,10 @@ API публикует результат работы службы и огра�
   - Назначение: обновление параметров.
   - Примечание: локальная операторская операция для панели администрирования.
   - Тело:
-    - `apiPort` (optional, `1..65535`)
-    - `smartMonitoringCron` (optional, Quartz expression)
+    - `apiPort` (необязательно, `1..65535`)
+    - `smartMonitoringCron` (необязательно, Quartz-выражение)
 
-### 3.3 Disk telemetry
+### 3.3 Телеметрия дисков
 
 - `GET /disks`
   - Назначение: список диагностируемых дисков.
@@ -60,7 +60,7 @@ API публикует результат работы службы и огра�
   - Назначение: история SMART-метрик (последние записи).
   - `404`, если диск не найден.
 
-### 3.4 Backup jobs
+### 3.4 Задачи архивации
 
 - `GET /backups`
   - Назначение: список задач.
@@ -84,11 +84,11 @@ API публикует результат работы службы и огра�
 - `POST /backups/test-mssql`
   - Назначение: проверка подключения к MSSQL без сохранения задачи.
 
-### 3.5 Backup logs
+### 3.5 Журнал архивации
 
 - `GET /backups/logs`
   - Назначение: журнал выполнения задач.
-  - Query:
+  - Параметры запроса:
     - `status` (`Succeeded` | `Failed`)
     - `from` (ISO-8601)
     - `to` (ISO-8601)
@@ -111,7 +111,7 @@ API публикует результат работы службы и огра�
   - `database`
   - `auth` (`sql` | `windows`)
   - при `sql`: `user`, `password`
-  - `trustServerCertificate` (optional)
+  - `trustServerCertificate` (необязательно)
 
 ## 5. Валидация
 

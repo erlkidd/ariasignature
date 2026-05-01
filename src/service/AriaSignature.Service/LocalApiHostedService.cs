@@ -69,12 +69,21 @@ public sealed class LocalApiHostedService : IHostedService
     private async Task<int> ResolveApiPortAsync(CancellationToken cancellationToken)
     {
         var fallback = _configuration.GetValue<int?>("Api:Port") ?? 5160;
-        await using var scope = _serviceProvider.CreateAsyncScope();
-        var settings = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-        var fromDb = await settings.GetAsync("Api:Port", cancellationToken);
-        if (int.TryParse(fromDb, out var p) && p is > 0 and < 65536)
+        try
         {
-            return p;
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+            await using var scope = _serviceProvider.CreateAsyncScope();
+            var settings = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
+            var fromDb = await settings.GetAsync("Api:Port", linkedCts.Token);
+            if (int.TryParse(fromDb, out var p) && p is > 0 and < 65536)
+            {
+                return p;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read API port from DB; fallback port {FallbackPort} will be used", fallback);
         }
 
         return fallback;

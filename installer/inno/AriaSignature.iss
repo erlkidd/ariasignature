@@ -26,6 +26,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
 UninstallDisplayIcon={app}\ui\{#MyAppExeName}
 SetupIconFile=..\..\icon.ico
+CloseApplications=yes
+CloseApplicationsFilter=*.exe,*.dll
+RestartApplications=no
 
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
@@ -52,9 +55,11 @@ Name: "{commonstartup}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Par
 
 [Run]
 Filename: "{tmp}\MicrosoftEdgeWebView2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Установка Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated skipifsilent; Check: NeedsWebView2Runtime()
-Filename: "{app}\ui\{#MyAppExeName}"; Parameters: "--tray"; Description: "{cm:LaunchProgram}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}"
 
 [Code]
 const
@@ -62,7 +67,13 @@ const
   SC_ACCEPTABLE_NOT_FOUND = 1060;
   SC_ACCEPTABLE_NOT_ACTIVE = 1062;
   SC_ACCEPTABLE_ALREADY_RUNNING = 1056;
+  SC_MARKED_FOR_DELETE = 1072;
+  SC_ALREADY_EXISTS = 1073;
+  SC_ACCESS_DENIED = 5;
   WebView2ClientGuid = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+
+var
+  LastScExitCode: Integer;
 
 function ScExePath: string;
 begin
@@ -78,7 +89,9 @@ function ExecSc(const Params: string; const AcceptableCodeA: Integer; const Acce
 var
   ExitCode: Integer;
 begin
+  LastScExitCode := -1;
   Result := Exec(ScExePath, Params, '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  LastScExitCode := ExitCode;
   if not Result then
   begin
     Log(Format('Failed to execute sc.exe (%s) with params: %s', [ScExePath, Params]));
@@ -93,6 +106,30 @@ begin
   end;
 
   Result := True;
+end;
+
+function WaitServiceAbsent(const TimeoutSeconds: Integer): Boolean;
+var
+  ExitCode: Integer;
+  I: Integer;
+begin
+  for I := 1 to TimeoutSeconds do
+  begin
+    if not Exec(ScExePath, 'query ' + ServiceName, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+    begin
+      ExitCode := -1;
+    end;
+
+    if ExitCode = SC_ACCEPTABLE_NOT_FOUND then
+    begin
+      Result := True;
+      Exit;
+    end;
+
+    Sleep(1000);
+  end;
+
+  Result := False;
 end;
 
 function ServiceIsRegistered: Boolean;
@@ -125,10 +162,21 @@ begin
   ExecSc(Format('delete %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_FOUND);
 end;
 
+procedure KillServiceProcessBestEffort();
+var
+  ExitCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyServiceExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM AriaSignature.Api.exe', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyAppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+end;
+
 procedure InstallServiceOrAbort();
 var
   BinPath: string;
   CreateParams: string;
+  Attempt: Integer;
+  Created: Boolean;
 begin
   if not IsAdminInstallMode then
   begin
@@ -136,6 +184,11 @@ begin
   end;
 
   StopAndDeleteServiceBestEffort();
+  if not WaitServiceAbsent(25) then
+  begin
+    Log('Service still exists after delete wait timeout; will continue with create retries.');
+  end;
+
   BinPath := ExpandConstant('{app}\service\{#MyServiceExeName}');
   if not FileExists(BinPath) then
   begin
@@ -145,9 +198,31 @@ begin
   { binPath в кавычках (AddQuotes): иначе "Program Files" ломает sc create и служба не регистрируется }
   CreateParams := 'create ' + ServiceName + ' binPath= ' + AddQuotes(BinPath) + ' start= auto DisplayName= "AriaSignature" obj= LocalSystem';
 
-  if not ExecSc(CreateParams, 0, -1) then
+  Created := False;
+  for Attempt := 1 to 8 do
   begin
-    RaiseException('Не удалось зарегистрировать службу AriaSignatureService (sc create). См. лог установщика.');
+    if ExecSc(CreateParams, 0, -1) then
+    begin
+      Created := True;
+      Break;
+    end;
+
+    Log(Format('sc create retry %d failed with code %d', [Attempt, LastScExitCode]));
+    if (LastScExitCode <> SC_MARKED_FOR_DELETE) and
+       (LastScExitCode <> SC_ALREADY_EXISTS) and
+       (LastScExitCode <> SC_ACCESS_DENIED) then
+    begin
+      Break;
+    end;
+
+    Sleep(1500);
+  end;
+
+  if not Created then
+  begin
+    RaiseException(
+      'Не удалось зарегистрировать службу AriaSignatureService (sc create). Код sc.exe: ' +
+      IntToStr(LastScExitCode) + '. См. лог установщика.');
   end;
 
   if not ServiceIsRegistered then
@@ -168,6 +243,16 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  if CurStep = ssInstall then
+  begin
+    StopAndDeleteServiceBestEffort();
+    KillServiceProcessBestEffort();
+    if not WaitServiceAbsent(25) then
+    begin
+      Log('Service still exists before file copy; installer continues and will retry create later.');
+    end;
+  end;
+
   if CurStep = ssPostInstall then
   begin
     InstallServiceOrAbort();
@@ -179,5 +264,6 @@ begin
   if CurUninstallStep = usUninstall then
   begin
     StopAndDeleteServiceBestEffort();
+    KillServiceProcessBestEffort();
   end;
 end;

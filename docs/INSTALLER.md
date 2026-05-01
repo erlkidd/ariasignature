@@ -1,4 +1,4 @@
-# AriaSignature installer guide
+# AriaSignature — руководство по installer
 
 Версия документа: 0.2.3.
 
@@ -28,7 +28,7 @@ dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c Release -o .
 dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c Release -o .\publish\service
 ```
 
-## 4. Сборка установщика
+## 4. Сборка installer
 
 Стандартный способ:
 

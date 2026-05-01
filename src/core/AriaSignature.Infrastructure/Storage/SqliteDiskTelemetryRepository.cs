@@ -19,6 +19,8 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
     {
         await using var connection = _connectionFactory.Create();
         await connection.OpenAsync(cancellationToken);
+        var disksTemperatureNotNull = await IsColumnNotNullAsync(connection, "Disks", "TemperatureCelsius", cancellationToken);
+        var metricsTemperatureNotNull = await IsColumnNotNullAsync(connection, "SmartMetrics", "TemperatureCelsius", cancellationToken);
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
 
         foreach (var disk in disks)
@@ -51,7 +53,7 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
                     Status = excluded.Status,
                     UpdatedAtUtc = excluded.UpdatedAtUtc;
                 """;
-            BindDisk(upsert, disk);
+            BindDisk(upsert, disk, disksTemperatureNotNull);
             await upsert.ExecuteNonQueryAsync(cancellationToken);
 
             var metric = connection.CreateCommand();
@@ -61,7 +63,11 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
                 VALUES ($DiskId, $TemperatureCelsius, $HealthPercent, $ReallocatedSectors, $PendingSectors, $UncorrectableErrors, $Status, $TimestampUtc);
                 """;
             metric.Parameters.AddWithValue("$DiskId", disk.Id.ToString());
-            metric.Parameters.AddWithValue("$TemperatureCelsius", disk.TemperatureCelsius.HasValue ? disk.TemperatureCelsius.Value : (object)DBNull.Value);
+            metric.Parameters.AddWithValue(
+                "$TemperatureCelsius",
+                disk.TemperatureCelsius.HasValue
+                    ? disk.TemperatureCelsius.Value
+                    : metricsTemperatureNotNull ? 0 : (object)DBNull.Value);
             metric.Parameters.AddWithValue("$HealthPercent", disk.HealthPercent.HasValue ? disk.HealthPercent.Value : (object)DBNull.Value);
             metric.Parameters.AddWithValue("$ReallocatedSectors", disk.ReallocatedSectors);
             metric.Parameters.AddWithValue("$PendingSectors", disk.PendingSectors);
@@ -158,7 +164,7 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
         return metrics;
     }
 
-    private static void BindDisk(SqliteCommand command, Disk disk)
+    private static void BindDisk(SqliteCommand command, Disk disk, bool temperatureNotNull)
     {
         command.Parameters.AddWithValue("$Id", disk.Id.ToString());
         command.Parameters.AddWithValue("$Model", disk.Model);
@@ -168,7 +174,11 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
         command.Parameters.AddWithValue("$SizeTotalBytes", disk.SizeTotalBytes);
         command.Parameters.AddWithValue("$SizeFreeBytes", disk.SizeFreeBytes);
         command.Parameters.AddWithValue("$SsdLifeRemaining", disk.SsdLifeRemainingPercent.HasValue ? disk.SsdLifeRemainingPercent.Value : (object)DBNull.Value);
-        command.Parameters.AddWithValue("$TemperatureCelsius", disk.TemperatureCelsius.HasValue ? disk.TemperatureCelsius.Value : (object)DBNull.Value);
+        command.Parameters.AddWithValue(
+            "$TemperatureCelsius",
+            disk.TemperatureCelsius.HasValue
+                ? disk.TemperatureCelsius.Value
+                : temperatureNotNull ? 0 : (object)DBNull.Value);
         command.Parameters.AddWithValue("$HealthPercent", disk.HealthPercent.HasValue ? disk.HealthPercent.Value : (object)DBNull.Value);
         command.Parameters.AddWithValue("$PowerOnHours", disk.PowerOnHours);
         command.Parameters.AddWithValue("$PowerCycleCount", disk.PowerCycleCount);
@@ -211,5 +221,27 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
             Status = (DiskHealthStatus)reader.GetInt32(20),
             UpdatedAtUtc = DateTimeOffset.Parse(reader.GetString(21))
         };
+    }
+
+    private static async Task<bool> IsColumnNotNullAsync(
+        SqliteConnection connection,
+        string table,
+        string column,
+        CancellationToken cancellationToken)
+    {
+        await using var pragma = connection.CreateCommand();
+        pragma.CommandText = $"PRAGMA table_info({table});";
+        await using var reader = await pragma.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (!string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return reader.GetInt32(3) != 0;
+        }
+
+        return false;
     }
 }

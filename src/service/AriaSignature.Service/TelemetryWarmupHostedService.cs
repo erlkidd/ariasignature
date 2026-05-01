@@ -13,17 +13,28 @@ public sealed class TelemetryWarmupHostedService : IHostedService
         _logger = logger;
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+    public Task StartAsync(CancellationToken cancellationToken)
     {
-        try
+        _ = Task.Run(async () =>
         {
-            await _diskTelemetryService.RefreshAsync(cancellationToken);
-            _logger.LogInformation("Initial disk telemetry warmup completed");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Initial disk telemetry warmup failed");
-        }
+            using var warmupTimeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, warmupTimeoutCts.Token);
+            try
+            {
+                await _diskTelemetryService.RefreshAsync(linkedCts.Token);
+                _logger.LogInformation("Initial disk telemetry warmup completed");
+            }
+            catch (OperationCanceledException) when (warmupTimeoutCts.IsCancellationRequested)
+            {
+                _logger.LogWarning("Initial disk telemetry warmup timed out after 30 seconds; API startup is not blocked");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Initial disk telemetry warmup failed");
+            }
+        }, CancellationToken.None);
+
+        return Task.CompletedTask;
     }
 
     public Task StopAsync(CancellationToken cancellationToken)

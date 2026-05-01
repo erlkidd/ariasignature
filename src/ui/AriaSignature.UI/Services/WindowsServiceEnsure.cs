@@ -16,6 +16,7 @@ public static class WindowsServiceEnsure
         warningMessage = null;
         try
         {
+            KillOrphanServiceProcessesBestEffort();
             using var sc = new ServiceController(ServiceName);
             if (sc.Status == ServiceControllerStatus.Running)
             {
@@ -34,18 +35,14 @@ public static class WindowsServiceEnsure
         }
         catch (InvalidOperationException ex)
         {
-            if (TryStartServiceProcess(serviceExePath, out var processError))
+            if (TryInstallAndStartWindowsService(serviceExePath, out var installError))
             {
-                warningMessage =
-                    "Фоновая работа идёт через локальный процесс AriaSignature (запись в журнал и API на этом ПК). " +
-                    "Служба Windows с именем AriaSignatureService на этом компьютере не зарегистрирована — обычно так бывает, " +
-                    "если установка выполнялась без прав администратора или файлы скопированы вручную. " +
-                    "Чтобы после перезагрузки всё поднималось автоматически, переустановите приложение из установщика (он запросит права администратора и зарегистрирует службу).";
+                warningMessage = null;
                 return;
             }
 
             warningMessage =
-                $"Не удалось запустить фоновой сервис. Ни служба, ни fallback-процесс не стартовали.\n{ex.Message}\n{processError}";
+                $"Не удалось запустить фоновую службу.\n{ex.Message}\n{installError}";
         }
         catch (System.ServiceProcess.TimeoutException)
         {
@@ -57,7 +54,41 @@ public static class WindowsServiceEnsure
         }
     }
 
-    private static bool TryStartServiceProcess(string serviceExePath, out string? error)
+    private static void KillOrphanServiceProcessesBestEffort()
+    {
+        try
+        {
+            var activeServicePid = TryGetServiceProcessId();
+            var currentPid = Process.GetCurrentProcess().Id;
+            foreach (var process in Process.GetProcessesByName("AriaSignature.Service"))
+            {
+                try
+                {
+                    if (process.Id == currentPid)
+                    {
+                        continue;
+                    }
+
+                    if (activeServicePid.HasValue && process.Id == activeServicePid.Value)
+                    {
+                        continue;
+                    }
+
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // best-effort
+                }
+            }
+        }
+        catch
+        {
+            // best-effort
+        }
+    }
+
+    private static bool TryInstallAndStartWindowsService(string serviceExePath, out string? error)
     {
         error = null;
         try
@@ -68,20 +99,34 @@ public static class WindowsServiceEnsure
                 return false;
             }
 
-            var psi = new ProcessStartInfo
+            var scPath = GetScExePath();
+            if (string.IsNullOrEmpty(scPath))
             {
-                FileName = serviceExePath,
-                WorkingDirectory = Path.GetDirectoryName(serviceExePath) ?? AppContext.BaseDirectory,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            var process = Process.Start(psi);
-            if (process is null)
-            {
-                error = "Process.Start вернул null";
+                error = "Не найден sc.exe";
                 return false;
             }
 
+            RunScBestEffort(scPath, $"stop {ServiceName}");
+            RunScBestEffort(scPath, $"delete {ServiceName}");
+            Thread.Sleep(1000);
+
+            var createArgs =
+                $"create {ServiceName} binPath= \"{serviceExePath}\" start= auto DisplayName= \"AriaSignature\" obj= LocalSystem";
+            if (!RunSc(scPath, createArgs, out var createExit, out var createStdErr) && createExit != 1073)
+            {
+                error = $"sc create failed ({createExit}): {createStdErr}";
+                return false;
+            }
+
+            RunScBestEffort(scPath, $"failure {ServiceName} reset= 86400 actions= restart/5000/restart/5000/restart/5000");
+            if (!RunSc(scPath, $"start {ServiceName}", out var startExit, out var startStdErr) && startExit != 1056)
+            {
+                error = $"sc start failed ({startExit}): {startStdErr}";
+                return false;
+            }
+
+            using var sc = new ServiceController(ServiceName);
+            sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
             return true;
         }
         catch (Exception ex)
@@ -89,5 +134,109 @@ public static class WindowsServiceEnsure
             error = ex.Message;
             return false;
         }
+    }
+
+    private static string? GetScExePath()
+    {
+        var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        var candidates = new[]
+        {
+            Path.Combine(winDir, "System32", "sc.exe"),
+            Path.Combine(winDir, "Sysnative", "sc.exe")
+        };
+
+        foreach (var path in candidates)
+        {
+            if (File.Exists(path))
+            {
+                return path;
+            }
+        }
+
+        return null;
+    }
+
+    private static void RunScBestEffort(string scPath, string args)
+    {
+        RunSc(scPath, args, out _, out _);
+    }
+
+    private static int? TryGetServiceProcessId()
+    {
+        try
+        {
+            var scPath = GetScExePath();
+            if (string.IsNullOrEmpty(scPath))
+            {
+                return null;
+            }
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = scPath,
+                Arguments = "queryex " + ServiceName,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc is null)
+            {
+                return null;
+            }
+
+            var output = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit(5000);
+            foreach (var rawLine in output.Split('\n'))
+            {
+                var line = rawLine.Trim();
+                if (!line.StartsWith("PID", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var idx = line.IndexOf(':');
+                if (idx < 0)
+                {
+                    continue;
+                }
+
+                var pidText = line[(idx + 1)..].Trim();
+                if (int.TryParse(pidText, out var pid) && pid > 0)
+                {
+                    return pid;
+                }
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        return null;
+    }
+
+    private static bool RunSc(string scPath, string args, out int exitCode, out string stdErr)
+    {
+        stdErr = string.Empty;
+        var psi = new ProcessStartInfo
+        {
+            FileName = scPath,
+            Arguments = args,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardError = true
+        };
+        using var proc = Process.Start(psi);
+        if (proc is null)
+        {
+            exitCode = -1;
+            return false;
+        }
+
+        proc.WaitForExit(20000);
+        exitCode = proc.ExitCode;
+        stdErr = proc.StandardError.ReadToEnd();
+        return exitCode == 0;
     }
 }
