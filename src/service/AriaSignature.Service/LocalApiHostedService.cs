@@ -46,7 +46,8 @@ public sealed class LocalApiHostedService : IHostedService
             WebRootPath = webRootExists ? webRoot : null
         };
 
-        var webBuilder = WebApplication.CreateSlimBuilder(options);
+        // CreateSlimBuilder не регистрирует regex route constraints; Swashbuckle (UseSwagger) падает при старте.
+        var webBuilder = WebApplication.CreateBuilder(options);
         webBuilder.WebHost.UseUrls($"http://127.0.0.1:{port}");
         webBuilder.Services.AddApplication();
         webBuilder.Services.AddInfrastructure();
