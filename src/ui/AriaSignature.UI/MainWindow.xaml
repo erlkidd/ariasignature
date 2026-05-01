@@ -38,6 +38,15 @@
             Text="AriaSignature — Панель управления" />
 
         <DockPanel Grid.Row="1" Margin="0,0,0,12" LastChildFill="False">
+            <Border DockPanel.Dock="Left" Background="#1A2F6FED" CornerRadius="10" Padding="10,6" Margin="0,0,10,0">
+                <TextBlock Text="{Binding DiskCount, StringFormat=Диски: {0}}" FontWeight="SemiBold" />
+            </Border>
+            <Border DockPanel.Dock="Left" Background="#1A2F6FED" CornerRadius="10" Padding="10,6" Margin="0,0,10,0">
+                <TextBlock Text="{Binding BackupJobCount, StringFormat=Задачи: {0}}" FontWeight="SemiBold" />
+            </Border>
+            <Border DockPanel.Dock="Left" Background="#1A2F6FED" CornerRadius="10" Padding="10,6">
+                <TextBlock Text="{Binding FailedBackupCount, StringFormat=Ошибки: {0}}" FontWeight="SemiBold" />
+            </Border>
             <Button
                 DockPanel.Dock="Right"
                 MinWidth="140"
@@ -117,7 +126,10 @@
                             </DockPanel>
                             <ComboBox Grid.Row="1" Grid.Column="3" Margin="0,0,8,0" ItemsSource="{Binding BackupTypes}" SelectedItem="{Binding NewBackupType}" />
                             <ComboBox Grid.Row="1" Grid.Column="4" Margin="0,0,8,0" ItemsSource="{Binding SchedulePresets}" SelectedItem="{Binding SelectedSchedulePreset}" />
-                            <TextBox Grid.Row="1" Grid.Column="5" Margin="0,0,8,0" Text="{Binding NewBackupRetention, UpdateSourceTrigger=PropertyChanged}" />
+                            <StackPanel Grid.Row="1" Grid.Column="5" Orientation="Vertical" Margin="0,0,8,0">
+                                <TextBox Margin="0,0,0,6" Text="{Binding NewBackupRetention, UpdateSourceTrigger=PropertyChanged}" ToolTip="Количество архивов для хранения" />
+                                <TextBox Text="{Binding NewBackupCron, UpdateSourceTrigger=PropertyChanged}" ToolTip="Cron для пользовательского расписания" />
+                            </StackPanel>
                             <Button Grid.Row="1" Grid.Column="6" Padding="14,4" Content="Создать" Command="{Binding CreateBackupCommand}" />
                         </Grid>
                     </Border>
@@ -197,7 +209,7 @@
             </TabItem>
         </TabControl>
 
-        <Border Grid.Row="3" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,8,0,0" Background="#F2F2F2" BorderBrush="#D0D0D0" BorderThickness="1" Padding="8,4">
+        <Border Grid.Row="3" HorizontalAlignment="Stretch" VerticalAlignment="Bottom" Margin="0,8,0,0" Background="#F2F2F2" BorderBrush="#D0D0D0" BorderThickness="1" Padding="10,6">
             <TextBlock Text="{Binding OperationStatus}" />
         </Border>
     </Grid>

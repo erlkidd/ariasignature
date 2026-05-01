@@ -37,6 +37,7 @@
 - Backup lifecycle in UI expanded: inline edit, enable/disable, run-now, delete.
 - Added interactive source/destination pickers for backup task creation.
 - Added UI settings for runtime theme switching and autostart management.
+- Added dashboard counters and custom cron input in backup creation flow.
 - API not-found cases moved to explicit `application/problem+json` semantics.
 - Added strict backup request preflight checks (file existence, destination access, live MSSQL connectivity).
 - Backup executor now prevents empty MSSQL artifacts and produces `.rar` archives.

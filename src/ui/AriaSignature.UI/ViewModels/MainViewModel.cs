@@ -72,7 +72,7 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    public ObservableCollection<string> SchedulePresets { get; } = ["Ежедневно", "Еженедельно", "Ежемесячно"];
+    public ObservableCollection<string> SchedulePresets { get; } = ["Ежедневно", "Еженедельно", "Ежемесячно", "Пользовательский"];
     public ObservableCollection<BackupType> BackupTypes { get; } = [BackupType.File, BackupType.MsSql];
 
     private string _selectedSchedulePreset = "Ежедневно";
@@ -87,6 +87,22 @@ public sealed class MainViewModel : ObservableObject
             }
 
             _selectedSchedulePreset = value;
+            OnPropertyChanged();
+        }
+    }
+
+    private string _newBackupCron = "0 0 2 * * ?";
+    public string NewBackupCron
+    {
+        get => _newBackupCron;
+        set
+        {
+            if (_newBackupCron == value)
+            {
+                return;
+            }
+
+            _newBackupCron = value;
             OnPropertyChanged();
         }
     }
@@ -231,6 +247,9 @@ public sealed class MainViewModel : ObservableObject
     }
 
     public bool CanEditSelectedBackup => SelectedBackupJob is not null;
+    public int DiskCount => Disks.Count;
+    public int BackupJobCount => BackupJobs.Count;
+    public int FailedBackupCount => BackupLogs.Count(x => x.Status == BackupExecutionStatus.Failed);
 
     public MainViewModel()
     {
@@ -257,6 +276,9 @@ public sealed class MainViewModel : ObservableObject
             ReplaceCollection(Disks, disks);
             ReplaceCollection(BackupJobs, jobs);
             ReplaceCollection(BackupLogs, logs);
+            OnPropertyChanged(nameof(DiskCount));
+            OnPropertyChanged(nameof(BackupJobCount));
+            OnPropertyChanged(nameof(FailedBackupCount));
             SetStatus($"Данные обновлены: {DateTime.Now:dd.MM.yyyy HH:mm:ss}", isError: false);
         }
         catch (Exception ex)
@@ -281,7 +303,7 @@ public sealed class MainViewModel : ObservableObject
             Type = NewBackupType,
             Source = NewBackupSource,
             Destination = NewBackupDestination,
-            ScheduleCron = MapCronPreset(SelectedSchedulePreset),
+            ScheduleCron = MapCronPreset(SelectedSchedulePreset, NewBackupCron),
             RetentionCount = Math.Max(NewBackupRetention, 1),
             IsEnabled = true
         };
@@ -400,13 +422,14 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    private static string MapCronPreset(string preset)
+    private static string MapCronPreset(string preset, string customCron)
     {
         return preset switch
         {
             "Ежедневно" => "0 0 2 * * ?",
             "Еженедельно" => "0 0 2 ? * MON",
             "Ежемесячно" => "0 0 2 1 * ?",
+            "Пользовательский" when !string.IsNullOrWhiteSpace(customCron) => customCron,
             _ => "0 0 2 * * ?"
         };
     }
