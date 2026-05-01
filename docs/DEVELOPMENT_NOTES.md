@@ -1,5 +1,21 @@
 # AriaSignature — development notes
 
+## Release 0.2.4
+
+### Восстановление запуска (root-cause fix-forward)
+- Закреплен единый runtime-контур запуска через `AriaSignatureService` без альтернативного локального fallback-процесса.
+- Усилен self-heal регистрации/старта службы и диагностика ошибок `sc.exe` при запуске из UI.
+- Для API readiness в UI добавлен двойной критерий готовности: `GET /api/v1/status` и `GET /` должны отвечать успешно перед выходом из fallback-экрана.
+
+### Стабильность старта при блокировках SQLite
+- Инициализация SQLite переведена в неблокирующий путь startup с таймаутом и безопасной деградацией без остановки host.
+- В `HostOptions` закреплено игнорирование secondary background-service исключений, чтобы service host не падал из-за непервичных ошибок запуска.
+- Подтвержден runtime-smoke: API поднимается и отдает `200` по `/api/v1/status` и `/`.
+
+### Установка/переустановка
+- Installer/uninstaller доведен до deterministic stop/delete службы с cleanup процессов перед копированием бинарников.
+- Зафиксировано удаление каталога установки целиком на uninstall для исключения «устаревших» EXE/DLL после reinstall.
+
 ## Release 0.2.3
 
 ### Надежность телеметрии

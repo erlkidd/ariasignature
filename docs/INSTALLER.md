@@ -1,6 +1,6 @@
 # AriaSignature — руководство по installer
 
-Версия документа: 0.2.3.
+Версия документа: 0.2.4.
 
 ## 1. Назначение
 
@@ -53,7 +53,7 @@ dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj 
 ## 6. Поведение установки/обновления
 
 - `PrivilegesRequired=admin`, архитектура `x64compatible`;
-- перед регистрацией службы выполняется stop/delete предыдущей инсталляции;
+- перед копированием файлов выполняется stop/delete предыдущей службы и best-effort завершение процессов `AriaSignature.*`;
 - регистрация выполняется через корректно экранированный путь (`AddQuotes`);
 - после регистрации выполняется проверка существования службы;
 - применяется политика автозапуска и recovery.
@@ -64,7 +64,8 @@ dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj 
 
 - best-effort stop/delete `AriaSignatureService`;
 - допустимые состояния: служба отсутствует / уже остановлена;
-- удаляется каталог установки и локальные данные в `{app}`.
+- дополнительно выполняется завершение процессов `AriaSignature.*`;
+- удаляется каталог установки целиком (`{app}`), чтобы reinstall не наследовал старые бинарники.
 
 ## 8. Автозапуск UI и трей
 

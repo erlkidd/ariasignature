@@ -110,13 +110,15 @@ public partial class MainWindow : Window
             }
         });
 
-        var apiReady = await WaitApiReadyAsync(baseUrl, TimeSpan.FromSeconds(20));
+        var (apiReady, apiDetail) = await WaitApiReadyAsync(baseUrl, TimeSpan.FromSeconds(20));
         if (!apiReady)
         {
             RenderFallbackPage(
                 "Сервис еще запускается",
                 "Локальный API пока не готов. Окно не будет пустым: приложение продолжит ожидание и автоматически откроет интерфейс.",
-                baseUrl);
+                baseUrl,
+                null,
+                apiDetail);
             StartApiRecoveryLoop(baseUrl);
             return;
         }
@@ -134,7 +136,8 @@ public partial class MainWindow : Window
         {
             while (!token.IsCancellationRequested)
             {
-                if (await WaitApiReadyAsync(baseUrl, TimeSpan.FromSeconds(3)))
+                var (ready, detail) = await WaitApiReadyAsync(baseUrl, TimeSpan.FromSeconds(3));
+                if (ready)
                 {
                     await Dispatcher.InvokeAsync(() =>
                     {
@@ -143,12 +146,22 @@ public partial class MainWindow : Window
                     return;
                 }
 
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    RenderFallbackPage(
+                        "Сервис еще запускается",
+                        "Локальный API пока не готов. Приложение продолжает автоматическое восстановление.",
+                        baseUrl,
+                        null,
+                        detail);
+                });
+
                 await Task.Delay(2000, token);
             }
         }, token);
     }
 
-    private void RenderFallbackPage(string title, string details, string baseUrl, int? code = null, string? codeName = null)
+    private void RenderFallbackPage(string title, string details, string baseUrl, int? code = null, string? codeName = null, string? probeDetail = null)
     {
         if (Browser.CoreWebView2 is null)
         {
@@ -158,6 +171,9 @@ public partial class MainWindow : Window
         var errorCodeText = code is int c
             ? $"<p>Код ошибки WebView2: <strong>{c}</strong> ({System.Net.WebUtility.HtmlEncode(codeName ?? "unknown")})</p>"
             : string.Empty;
+        var probeText = string.IsNullOrWhiteSpace(probeDetail)
+            ? string.Empty
+            : "<p>Диагностика запуска API: <code>" + System.Net.WebUtility.HtmlEncode(probeDetail) + "</code></p>";
         var html =
             "<!DOCTYPE html><html lang=\"ru\"><head><meta charset=\"utf-8\"/><title>AriaSignature</title>" +
             "<style>body{font-family:Segoe UI,sans-serif;padding:24px;background:#111;color:#eee;max-width:760px}" +
@@ -166,33 +182,45 @@ public partial class MainWindow : Window
             "<p>" + System.Net.WebUtility.HtmlEncode(details) + "</p>" +
             "<p>Ожидаемый адрес: <code>" + System.Net.WebUtility.HtmlEncode($"{baseUrl.TrimEnd('/')}/") + "</code></p>" +
             errorCodeText +
+            probeText +
             "<p class=\"muted\">Проверьте службу AriaSignatureService и доступность localhost. " +
             "После восстановления сервиса окно автоматически загрузит интерфейс.</p></body></html>";
         Browser.CoreWebView2.NavigateToString(html);
     }
 
-    private static async Task<bool> WaitApiReadyAsync(string baseUrl, TimeSpan timeout)
+    private static async Task<(bool Ready, string Detail)> WaitApiReadyAsync(string baseUrl, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
+        var lastDetail = "таймаут ожидания API";
         while (DateTime.UtcNow < deadline)
         {
             try
             {
-                using var response = await Http.GetAsync($"{baseUrl.TrimEnd('/')}/api/v1/status");
-                if (response.IsSuccessStatusCode)
+                using var statusResponse = await Http.GetAsync($"{baseUrl.TrimEnd('/')}/api/v1/status");
+                if (!statusResponse.IsSuccessStatusCode)
                 {
-                    return true;
+                    lastDetail = $"/api/v1/status => {(int)statusResponse.StatusCode}";
+                    await Task.Delay(1000);
+                    continue;
                 }
+
+                using var rootResponse = await Http.GetAsync($"{baseUrl.TrimEnd('/')}/");
+                if (rootResponse.IsSuccessStatusCode)
+                {
+                    return (true, "ready");
+                }
+
+                lastDetail = $"/ => {(int)rootResponse.StatusCode}";
             }
-            catch
+            catch (Exception ex)
             {
-                // retry
+                lastDetail = ex.Message;
             }
 
             await Task.Delay(1000);
         }
 
-        return false;
+        return (false, lastDetail);
     }
 
     private static async Task<string?> ResolveApiBaseAsync()

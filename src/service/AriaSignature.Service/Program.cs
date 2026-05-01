@@ -7,7 +7,11 @@ using Serilog;
 using Microsoft.Extensions.Hosting;
 
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services.Configure<HostOptions>(options => options.ServicesStartConcurrently = true);
+builder.Services.Configure<HostOptions>(options =>
+{
+    options.ServicesStartConcurrently = true;
+    options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
+});
 builder.Services.AddWindowsService(options =>
 {
     options.ServiceName = "AriaSignatureService";
