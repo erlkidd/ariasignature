@@ -1,14 +1,23 @@
+using System.IO;
 using System.Management;
 using System.Runtime.Versioning;
 using AriaSignature.Application.Abstractions;
 using AriaSignature.Domain.Entities;
 using AriaSignature.Domain.Enums;
+using Microsoft.Extensions.Logging;
 
 namespace AriaSignature.Infrastructure.Monitoring;
 
 [SupportedOSPlatform("windows")]
 public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
 {
+    private readonly ILogger<WmiDiskTelemetryCollector> _logger;
+
+    public WmiDiskTelemetryCollector(ILogger<WmiDiskTelemetryCollector> logger)
+    {
+        _logger = logger;
+    }
+
     public Task<IReadOnlyCollection<Disk>> CollectAsync(CancellationToken cancellationToken)
     {
         if (!OperatingSystem.IsWindows())
@@ -16,56 +25,155 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             return Task.FromResult<IReadOnlyCollection<Disk>>(Array.Empty<Disk>());
         }
 
-        var smartSnapshot = ReadSmartSnapshot();
+        var smartSnapshot = ReadSmartSnapshotSafe();
         var disks = new List<Disk>();
-        using var searcher = new ManagementObjectSearcher(
-            "SELECT Model, SerialNumber, InterfaceType, Size, DeviceID, MediaType, PNPDeviceID FROM Win32_DiskDrive");
-        using var results = searcher.Get();
 
-        foreach (var item in results.OfType<ManagementObject>())
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT Model, SerialNumber, InterfaceType, Size, DeviceID, MediaType, PNPDeviceID FROM Win32_DiskDrive");
+            using var results = searcher.Get();
 
-            var size = TryParseLong(item["Size"]);
-            var model = item["Model"]?.ToString()?.Trim() ?? "Unknown";
-            var serial = item["SerialNumber"]?.ToString()?.Trim() ?? string.Empty;
-            var mediaType = item["MediaType"]?.ToString()?.Trim() ?? string.Empty;
-            var iface = ResolveInterfaceType(item);
-            var diskId = CreateStableId(model, serial, iface);
-
-            var diskCapacity = ResolvePhysicalDiskCapacity(item, size);
-            var smart = ResolveSmartAttributes(smartSnapshot, model, serial);
-
-            var reallocated = smart.ReallocatedSectors;
-            var pending = smart.PendingSectors;
-            var uncorrectable = smart.UncorrectableErrors;
-            var ssdLife = smart.SsdLifeRemainingPercent;
-            var health = EstimateHealth(reallocated, pending, uncorrectable, ssdLife);
-            var status = CalculateStatus(reallocated, pending, uncorrectable, ssdLife);
-
-            disks.Add(new Disk
+            foreach (var item in results.OfType<ManagementObject>())
             {
-                Id = diskId,
-                Model = model,
-                Serial = serial,
-                Interface = iface,
-                MediaType = string.IsNullOrWhiteSpace(mediaType) ? InferMediaType(iface, model) : mediaType,
-                SizeTotalBytes = diskCapacity.total > 0 ? diskCapacity.total : size,
-                SizeFreeBytes = diskCapacity.free,
-                SsdLifeRemainingPercent = ssdLife,
-                TemperatureCelsius = smart.TemperatureCelsius,
-                HealthPercent = health,
-                PowerOnHours = smart.PowerOnHours,
-                PowerCycleCount = smart.PowerCycleCount,
-                ReallocatedSectors = reallocated,
-                PendingSectors = pending,
-                UncorrectableErrors = uncorrectable,
-                Status = status,
-                UpdatedAtUtc = DateTimeOffset.UtcNow
-            });
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    using (item)
+                    {
+                        var size = TryParseLong(item["Size"]);
+                        var model = item["Model"]?.ToString()?.Trim() ?? "Unknown";
+                        var serial = item["SerialNumber"]?.ToString()?.Trim() ?? string.Empty;
+                        var mediaType = item["MediaType"]?.ToString()?.Trim() ?? string.Empty;
+                        var iface = ResolveInterfaceType(item);
+                        var diskId = CreateStableId(model, serial, iface);
+
+                        var diskCapacity = ResolvePhysicalDiskCapacitySafe(item, size);
+                        var smart = ResolveSmartAttributes(smartSnapshot, model, serial);
+
+                        var reallocated = smart.ReallocatedSectors;
+                        var pending = smart.PendingSectors;
+                        var uncorrectable = smart.UncorrectableErrors;
+                        var ssdLife = smart.SsdLifeRemainingPercent;
+                        var health = EstimateHealth(reallocated, pending, uncorrectable, ssdLife);
+                        var status = CalculateStatus(reallocated, pending, uncorrectable, ssdLife);
+
+                        disks.Add(new Disk
+                        {
+                            Id = diskId,
+                            Model = model,
+                            Serial = serial,
+                            Interface = iface,
+                            MediaType = string.IsNullOrWhiteSpace(mediaType) ? InferMediaType(iface, model) : mediaType,
+                            SizeTotalBytes = diskCapacity.total > 0 ? diskCapacity.total : size,
+                            SizeFreeBytes = diskCapacity.free,
+                            SsdLifeRemainingPercent = ssdLife,
+                            TemperatureCelsius = smart.TemperatureCelsius,
+                            HealthPercent = health,
+                            PowerOnHours = smart.PowerOnHours,
+                            PowerCycleCount = smart.PowerCycleCount,
+                            ReallocatedSectors = reallocated,
+                            PendingSectors = pending,
+                            UncorrectableErrors = uncorrectable,
+                            Status = status,
+                            UpdatedAtUtc = DateTimeOffset.UtcNow
+                        });
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "WMI Win32_DiskDrive: не удалось прочитать один из накопителей, пропуск.");
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "WMI Win32_DiskDrive: общий сбой запроса, будет использован запасной способ.");
+        }
+
+        if (disks.Count == 0)
+        {
+            AppendLogicalDriveFallback(disks, smartSnapshot, cancellationToken);
         }
 
         return Task.FromResult<IReadOnlyCollection<Disk>>(disks);
+    }
+
+    private void AppendLogicalDriveFallback(
+        List<Disk> disks,
+        Dictionary<string, SmartAttributes> smartSnapshot,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            foreach (var drive in DriveInfo.GetDrives())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (drive.DriveType != DriveType.Fixed)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if (!drive.IsReady)
+                    {
+                        continue;
+                    }
+
+                    var label = string.IsNullOrWhiteSpace(drive.VolumeLabel) ? drive.Name.TrimEnd('\\') : drive.VolumeLabel.Trim();
+                    var root = drive.RootDirectory.FullName.TrimEnd('\\');
+                    var fmt = string.IsNullOrWhiteSpace(drive.DriveFormat) ? "том" : drive.DriveFormat;
+                    var model = $"{root} ({fmt})";
+                    var iface = "Логический том";
+                    var diskId = CreateStableId(model, root, iface);
+                    var smart = ResolveSmartAttributes(smartSnapshot, model, label);
+                    var reallocated = smart.ReallocatedSectors;
+                    var pending = smart.PendingSectors;
+                    var uncorrectable = smart.UncorrectableErrors;
+                    var ssdLife = smart.SsdLifeRemainingPercent;
+                    var health = EstimateHealth(reallocated, pending, uncorrectable, ssdLife);
+                    var status = CalculateStatus(reallocated, pending, uncorrectable, ssdLife);
+
+                    disks.Add(new Disk
+                    {
+                        Id = diskId,
+                        Model = model,
+                        Serial = label,
+                        Interface = iface,
+                        MediaType = InferMediaType(iface, model),
+                        SizeTotalBytes = drive.TotalSize,
+                        SizeFreeBytes = drive.AvailableFreeSpace,
+                        SsdLifeRemainingPercent = ssdLife,
+                        TemperatureCelsius = smart.TemperatureCelsius,
+                        HealthPercent = health,
+                        PowerOnHours = smart.PowerOnHours,
+                        PowerCycleCount = smart.PowerCycleCount,
+                        ReallocatedSectors = reallocated,
+                        PendingSectors = pending,
+                        UncorrectableErrors = uncorrectable,
+                        Status = status,
+                        UpdatedAtUtc = DateTimeOffset.UtcNow
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Запасной обход: пропуск тома {Drive}", drive.Name);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Запасной перечень логических томов не удался.");
+        }
     }
 
     private static string InferMediaType(string iface, string model)
@@ -102,26 +210,55 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         };
     }
 
-    private static (long total, long free) ResolvePhysicalDiskCapacity(ManagementObject diskDrive, long fallbackTotal)
+    private (long total, long free) ResolvePhysicalDiskCapacitySafe(ManagementObject diskDrive, long fallbackTotal)
     {
-        var total = 0L;
-        var free = 0L;
-
-        foreach (var partitionObject in diskDrive.GetRelated("Win32_DiskPartition").OfType<ManagementObject>())
+        try
         {
-            foreach (var logicalDisk in partitionObject.GetRelated("Win32_LogicalDisk").OfType<ManagementObject>())
+            var total = 0L;
+            var free = 0L;
+
+            foreach (var partitionObject in diskDrive.GetRelated("Win32_DiskPartition").OfType<ManagementObject>())
             {
-                total += TryParseLong(logicalDisk["Size"]);
-                free += TryParseLong(logicalDisk["FreeSpace"]);
+                using (partitionObject)
+                {
+                    foreach (var logicalDisk in partitionObject.GetRelated("Win32_LogicalDisk").OfType<ManagementObject>())
+                    {
+                        using (logicalDisk)
+                        {
+                            total += TryParseLong(logicalDisk["Size"]);
+                            free += TryParseLong(logicalDisk["FreeSpace"]);
+                        }
+                    }
+                }
             }
-        }
 
-        if (total == 0)
+            if (total == 0)
+            {
+                total = fallbackTotal;
+            }
+
+            return (total, free);
+        }
+        catch (Exception ex)
         {
-            total = fallbackTotal;
+            _logger.LogDebug(ex, "WMI: не удалось сопоставить разделы накопителю, используется ёмкость из Win32_DiskDrive.");
+            return (fallbackTotal, 0);
         }
+    }
 
-        return (total, free);
+    private Dictionary<string, SmartAttributes> ReadSmartSnapshotSafe()
+    {
+        try
+        {
+            return ReadSmartSnapshot();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "WMI root\\MSStorageDriver: SMART недоступен. Показываются объёмы и модель; детальные атрибуты SMART могут отсутствовать.");
+            return new Dictionary<string, SmartAttributes>(StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     private static Dictionary<string, SmartAttributes> ReadSmartSnapshot()
@@ -140,15 +277,18 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
 
         foreach (var row in dataSearcher.Get().OfType<ManagementObject>())
         {
-            var instance = NormalizeInstanceName(row["InstanceName"]?.ToString());
-            var vendorSpecific = row["VendorSpecific"] as byte[] ?? Array.Empty<byte>();
-            var parsed = ParseAtaSmartAttributes(vendorSpecific);
-            if (statusByInstance.TryGetValue(instance, out var predictFailure) && predictFailure)
+            using (row)
             {
-                parsed.PendingSectors = Math.Max(parsed.PendingSectors, 1);
-            }
+                var instance = NormalizeInstanceName(row["InstanceName"]?.ToString());
+                var vendorSpecific = row["VendorSpecific"] as byte[] ?? Array.Empty<byte>();
+                var parsed = ParseAtaSmartAttributes(vendorSpecific);
+                if (statusByInstance.TryGetValue(instance, out var predictFailure) && predictFailure)
+                {
+                    parsed.PendingSectors = Math.Max(parsed.PendingSectors, 1);
+                }
 
-            snapshot[instance] = parsed;
+                snapshot[instance] = parsed;
+            }
         }
 
         return snapshot;
@@ -169,10 +309,10 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
     {
         if (data.Length < 362)
         {
-            return SmartAttributes.Empty;
+            return new SmartAttributes();
         }
 
-        var attributes = SmartAttributes.Empty;
+        var attributes = new SmartAttributes();
         for (var i = 2; i + 11 < 362; i += 12)
         {
             var id = data[i];

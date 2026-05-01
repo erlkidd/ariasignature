@@ -177,7 +177,7 @@ export default function App() {
   const refreshDisks = useCallback(async () => {
     setError(null);
     try {
-      const d = await apiGet<DiskRow[]>("/disks");
+      const d = await apiSend<DiskRow[]>("/disks/refresh", "POST");
       setDisks(d);
       setStatus(`Накопители обновлены: ${d.length}`);
     } catch (e) {

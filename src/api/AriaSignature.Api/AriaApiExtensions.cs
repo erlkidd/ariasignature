@@ -152,6 +152,14 @@ public static class AriaApiExtensions
             .WithName("GetDisks")
             .WithOpenApi();
 
+        api.MapPost("/disks/refresh", async (IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
+            {
+                await telemetry.RefreshAsync(cancellationToken);
+                return Results.Ok(await telemetry.GetDisksAsync(cancellationToken));
+            })
+            .WithName("RefreshDisks")
+            .WithOpenApi();
+
         api.MapGet("/disks/{id:guid}", async (Guid id, IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
         {
             var disk = await telemetry.GetDiskByIdAsync(id, cancellationToken);

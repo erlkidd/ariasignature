@@ -41,6 +41,14 @@ public sealed class ApiEndpointsTests : IClassFixture<WebApplicationFactory<Prog
     }
 
     [Fact]
+    public async Task DisksRefresh_ReturnsOk()
+    {
+        var response = await _client.PostAsync("/api/v1/disks/refresh", content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
     public async Task DiskByUnknownId_ReturnsProblemNotFound()
     {
         var response = await _client.GetAsync($"/api/v1/disks/{Guid.NewGuid()}");
