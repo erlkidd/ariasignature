@@ -22,7 +22,8 @@ WizardStyle=modern
 LanguageDetectionMethod=uilanguage
 ShowLanguageDialog=no
 PrivilegesRequired=admin
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed=x64compatible
 UninstallDisplayIcon={app}\ui\{#MyAppExeName}
 SetupIconFile=..\..\icon.ico
 
@@ -41,6 +42,7 @@ Name: "autostarttray"; Description: "Запускать AriaSignature при в�
 [Files]
 Source: "..\..\publish\ui\*"; DestDir: "{app}\ui"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "..\webview2\MicrosoftEdgeWebView2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall ignoreversion
 
 [Icons]
 Name: "{group}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; IconFilename: "{app}\ui\Assets\icon.ico"
@@ -48,6 +50,7 @@ Name: "{autodesktop}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Tasks
 Name: "{commonstartup}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Parameters: "--tray"; Tasks: autostarttray; IconFilename: "{app}\ui\Assets\icon.ico"
 
 [Run]
+Filename: "{tmp}\MicrosoftEdgeWebView2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Установка Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated skipifsilent; Check: NeedsWebView2Runtime()
 Filename: "{app}\ui\{#MyAppExeName}"; Parameters: "--tray"; Description: "{cm:LaunchProgram}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
@@ -58,15 +61,26 @@ const
   SC_ACCEPTABLE_NOT_FOUND = 1060;
   SC_ACCEPTABLE_NOT_ACTIVE = 1062;
   SC_ACCEPTABLE_ALREADY_RUNNING = 1056;
+  WebView2ClientGuid = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+
+function ScExePath: string;
+begin
+  // 64-битный sc.exe: при 32-битном установщике {sys} может указывать на SysWOW64
+  Result := ExpandConstant('{sysnative}\sc.exe');
+  if not FileExists(Result) then
+    Result := ExpandConstant('{win}\System32\sc.exe');
+  if not FileExists(Result) then
+    Result := ExpandConstant('{sys}\sc.exe');
+end;
 
 function ExecSc(const Params: string; const AcceptableCodeA: Integer; const AcceptableCodeB: Integer): Boolean;
 var
   ExitCode: Integer;
 begin
-  Result := Exec(ExpandConstant('{sys}\sc.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  Result := Exec(ScExePath, Params, '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
   if not Result then
   begin
-    Log(Format('Failed to execute sc.exe with params: %s', [Params]));
+    Log(Format('Failed to execute sc.exe (%s) with params: %s', [ScExePath, Params]));
     Exit;
   end;
 
@@ -80,6 +94,30 @@ begin
   Result := True;
 end;
 
+function ServiceIsRegistered: Boolean;
+var
+  ExitCode: Integer;
+begin
+  Result := Exec(ScExePath, 'query ' + ServiceName, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0);
+end;
+
+function IsWebView2InstalledInRoot(const Root: Integer): Boolean;
+var
+  Version: string;
+begin
+  Result := RegQueryStringValue(Root,
+    'SOFTWARE\Microsoft\EdgeUpdate\Clients\' + WebView2ClientGuid,
+    'pv',
+    Version) and (Trim(Version) <> '');
+end;
+
+function NeedsWebView2Runtime(): Boolean;
+begin
+  Result := not IsWebView2InstalledInRoot(HKLM64) and
+            not IsWebView2InstalledInRoot(HKLM) and
+            not IsWebView2InstalledInRoot(HKCU);
+end;
+
 procedure StopAndDeleteServiceBestEffort();
 begin
   ExecSc(Format('stop %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
@@ -89,13 +127,31 @@ end;
 procedure InstallServiceOrAbort();
 var
   BinPath: string;
+  CreateParams: string;
 begin
+  if not IsAdminInstallMode then
+  begin
+    RaiseException('Установка требует прав администратора: без них служба Windows не может быть зарегистрирована. Запустите установщик от имени администратора.');
+  end;
+
   StopAndDeleteServiceBestEffort();
   BinPath := ExpandConstant('{app}\service\{#MyServiceExeName}');
-
-  if not ExecSc(Format('create %s binPath= "%s" start= auto', [ServiceName, BinPath]), 0, -1) then
+  if not FileExists(BinPath) then
   begin
-    RaiseException('Не удалось зарегистрировать службу AriaSignatureService');
+    RaiseException('Не найден файл службы: ' + BinPath);
+  end;
+
+  { binPath в кавычках (AddQuotes): иначе "Program Files" ломает sc create и служба не регистрируется }
+  CreateParams := 'create ' + ServiceName + ' binPath= ' + AddQuotes(BinPath) + ' start= auto DisplayName= "AriaSignature" obj= LocalSystem';
+
+  if not ExecSc(CreateParams, 0, -1) then
+  begin
+    RaiseException('Не удалось зарегистрировать службу AriaSignatureService (sc create). См. лог установщика.');
+  end;
+
+  if not ServiceIsRegistered then
+  begin
+    RaiseException('Служба AriaSignatureService не найдена в системе сразу после регистрации. Проверьте антивирус и политики (запрет изменения служб).');
   end;
 
   if not ExecSc(Format('failure %s reset= 86400 actions= restart/5000/restart/5000/restart/5000', [ServiceName]), 0, -1) then
