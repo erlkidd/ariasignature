@@ -1,31 +1,56 @@
-# Release Gate (RC) AriaSignature
+# AriaSignature release gate
 
-**Версия:** номер релиза должен совпадать во всех артефактах (см. таблицу в `docs/DEVELOPER_GUIDE.md` → «Версионирование релиза»).
+Версия документа: 0.2.2.
 
-Перед выпуском нового `installer` каждый пункт должен быть выполнен успешно.
+## 1. Цель
 
-## Автоматические шаги (скрипт)
+Release gate подтверждает, что релизный инсталлятор:
+- собирается без ошибок;
+- проходит тестовый набор;
+- устанавливается и работает в целевом сценарии эксплуатации.
 
-Скрипт `scripts/release-gate.ps1` выполняет:
+## 2. Автоматический gate
 
-1. `npm ci` и `npm run build` в `src/web` (сборка SPA в `wwwroot` службы)
+Команда:
+
+```powershell
+.\scripts\release-gate.ps1 -Configuration Release
+```
+
+Pipeline выполняет:
+1. `npm ci` + `npm run build` (`src/web`)
 2. `dotnet build .\AriaSignature.slnx -c Release`
 3. `dotnet test .\AriaSignature.slnx -c Release`
-4. `dotnet publish` UI и Service в `publish\ui` и `publish\service`
-5. `iscc .\installer\inno\AriaSignature.iss`
+4. `dotnet publish` UI и Service
+5. `ISCC` сборку `installer/inno/AriaSignature.iss`
 
-Единый запуск:
+Выходной артефакт:
+- `artifacts/installer/AriaSignature-Setup.exe`
 
-- `powershell -ExecutionPolicy Bypass -File .\scripts\release-gate.ps1`
+## 3. Требования к build-агенту
 
-Требования на машине сборки: **Node.js LTS**, **.NET 8 SDK**, **Inno Setup 6**.
+- Node.js LTS;
+- .NET 8 SDK;
+- Inno Setup 6;
+- доступ к интернету для загрузки WebView2 bootstrapper (если отсутствует локально).
 
-## Ручной приемочный чеклист
+## 4. Ручной acceptance-checklist
 
-- Установщик полностью русскоязычный и запрашивает права администратора.
-- После установки служба `AriaSignatureService` существует и запущена (имя без пробела, как в коде установщика).
-- На ПК пользователя установлен **WebView2 Runtime**; окно панели открывается без ошибки инициализации WebView2.
-- Панель загружает интерфейс с `http://127.0.0.1:{порт}/` (по умолчанию 5160); диски и журнал отображаются.
-- Закрытие окна сворачивает приложение в трей, пункт «Выход» завершает приложение.
-- Архивация: файловая и MSSQL, проверка подключения MSSQL, расписание и журнал с фильтром.
-- Удаление приложения корректно останавливает и удаляет службу.
+После установки инсталлятора:
+
+- служба `AriaSignatureService` зарегистрирована и в состоянии `Running`;
+- UI запускается без ошибок и доступен в трее;
+- API отвечает на `GET /api/v1/status`;
+- `POST /api/v1/disks/refresh` возвращает срез;
+- создание и запуск backup-задачи проходят штатно;
+- записи появляются в `/api/v1/backups/logs`;
+- после перезагрузки ОС служба запускается автоматически;
+- uninstall корректно удаляет службу и компоненты.
+
+## 5. Критерии блокировки релиза
+
+Релиз запрещен при любом из условий:
+- падение gate-скрипта;
+- несоответствие версий между артефактами;
+- неуспешные smoke-check сценарии после установки;
+- деградация API-контракта без обновления документации.

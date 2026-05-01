@@ -21,6 +21,11 @@ public sealed class BackupService : IBackupService
         return _repository.GetJobsAsync(cancellationToken);
     }
 
+    public Task<BackupJob?> GetJobAsync(Guid id, CancellationToken cancellationToken)
+    {
+        return _repository.GetJobAsync(id, cancellationToken);
+    }
+
     public Task<BackupJob> CreateJobAsync(BackupJob job, CancellationToken cancellationToken)
     {
         return _repository.CreateJobAsync(job, cancellationToken);

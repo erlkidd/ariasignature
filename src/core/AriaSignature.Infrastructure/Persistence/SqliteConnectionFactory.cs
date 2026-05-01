@@ -9,11 +9,28 @@ public sealed class SqliteConnectionFactory
 
     public SqliteConnectionFactory(IConfiguration configuration)
     {
-        _connectionString = configuration.GetConnectionString("AriaSignature") ?? "Data Source=ariasignature.db";
+        var configured = configuration.GetConnectionString("AriaSignature") ?? "Data Source=ariasignature.db";
+        _connectionString = NormalizeConnectionString(configured);
     }
 
     public SqliteConnection Create()
     {
         return new SqliteConnection(_connectionString);
+    }
+
+    private static string NormalizeConnectionString(string connectionString)
+    {
+        var builder = new SqliteConnectionStringBuilder(connectionString);
+        var dataSource = builder.DataSource;
+        if (!Path.IsPathRooted(dataSource))
+        {
+            var appDataDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "AriaSignature");
+            Directory.CreateDirectory(appDataDir);
+            builder.DataSource = Path.Combine(appDataDir, dataSource);
+        }
+
+        return builder.ConnectionString;
     }
 }

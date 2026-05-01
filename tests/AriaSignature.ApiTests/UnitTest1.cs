@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace AriaSignature.ApiTests;
 
-public sealed class ApiEndpointsTests : IClassFixture<WebApplicationFactory<Program>>
+public sealed class ApiEndpointsTests : IClassFixture<TestWebApplicationFactory>
 {
     private static readonly JsonSerializerOptions ApiJson = new()
     {
@@ -19,7 +19,7 @@ public sealed class ApiEndpointsTests : IClassFixture<WebApplicationFactory<Prog
 
     private readonly HttpClient _client;
 
-    public ApiEndpointsTests(WebApplicationFactory<Program> factory)
+    public ApiEndpointsTests(TestWebApplicationFactory factory)
     {
         _client = factory.CreateClient();
     }

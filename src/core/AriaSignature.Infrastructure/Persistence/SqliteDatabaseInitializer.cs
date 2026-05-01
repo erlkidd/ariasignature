@@ -9,7 +9,8 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
 
     public SqliteDatabaseInitializer(IConfiguration configuration)
     {
-        _connectionString = configuration.GetConnectionString("AriaSignature") ?? "Data Source=ariasignature.db";
+        var configured = configuration.GetConnectionString("AriaSignature") ?? "Data Source=ariasignature.db";
+        _connectionString = NormalizeConnectionString(configured);
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken)
@@ -26,7 +27,7 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
                 SizeTotalBytes INTEGER NOT NULL,
                 SizeFreeBytes INTEGER NOT NULL,
                 TemperatureCelsius INTEGER NOT NULL,
-                HealthPercent INTEGER NOT NULL,
+                HealthPercent INTEGER NULL,
                 PowerOnHours INTEGER NOT NULL,
                 PowerCycleCount INTEGER NOT NULL,
                 ReallocatedSectors INTEGER NOT NULL,
@@ -40,7 +41,7 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 DiskId TEXT NOT NULL,
                 TemperatureCelsius INTEGER NOT NULL,
-                HealthPercent INTEGER NOT NULL,
+                HealthPercent INTEGER NULL,
                 ReallocatedSectors INTEGER NOT NULL,
                 PendingSectors INTEGER NOT NULL,
                 UncorrectableErrors INTEGER NOT NULL,
@@ -86,6 +87,71 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
     {
         await AddColumnIfMissingAsync(connection, "Disks", "MediaType", "TEXT NOT NULL DEFAULT ''", cancellationToken);
         await AddColumnIfMissingAsync(connection, "Disks", "SsdLifeRemaining", "INTEGER NULL", cancellationToken);
+        await MigrateHealthPercentColumnsToNullableAsync(connection, cancellationToken);
+    }
+
+    private static async Task MigrateHealthPercentColumnsToNullableAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        foreach (var table in new[] { "Disks", "SmartMetrics" })
+        {
+            if (!await ColumnExistsAsync(connection, table, "HealthPercent", cancellationToken))
+            {
+                continue;
+            }
+
+            if (!await IsHealthPercentNotNullAsync(connection, table, cancellationToken))
+            {
+                continue;
+            }
+
+            try
+            {
+                await using var drop = connection.CreateCommand();
+                drop.CommandText = $"ALTER TABLE {table} DROP COLUMN HealthPercent;";
+                await drop.ExecuteNonQueryAsync(cancellationToken);
+                await using var add = connection.CreateCommand();
+                add.CommandText = $"ALTER TABLE {table} ADD COLUMN HealthPercent INTEGER NULL;";
+                await add.ExecuteNonQueryAsync(cancellationToken);
+            }
+            catch
+            {
+                /* SQLite без DROP COLUMN: схема остаётся NOT NULL */
+            }
+        }
+    }
+
+    private static async Task<bool> ColumnExistsAsync(SqliteConnection connection, string table, string column, CancellationToken cancellationToken)
+    {
+        await using var pragma = connection.CreateCommand();
+        pragma.CommandText = $"PRAGMA table_info({table});";
+        await using var reader = await pragma.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async Task<bool> IsHealthPercentNotNullAsync(SqliteConnection connection, string table, CancellationToken cancellationToken)
+    {
+        await using var pragma = connection.CreateCommand();
+        pragma.CommandText = $"PRAGMA table_info({table});";
+        await using var reader = await pragma.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (!string.Equals(reader.GetString(1), "HealthPercent", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return reader.GetInt32(3) != 0;
+        }
+
+        return false;
     }
 
     private static async Task AddColumnIfMissingAsync(
@@ -142,5 +208,21 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
         insert.Parameters.AddWithValue("$k", key);
         insert.Parameters.AddWithValue("$v", value);
         await insert.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static string NormalizeConnectionString(string connectionString)
+    {
+        var builder = new SqliteConnectionStringBuilder(connectionString);
+        var dataSource = builder.DataSource;
+        if (!Path.IsPathRooted(dataSource))
+        {
+            var appDataDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "AriaSignature");
+            Directory.CreateDirectory(appDataDir);
+            builder.DataSource = Path.Combine(appDataDir, dataSource);
+        }
+
+        return builder.ConnectionString;
     }
 }

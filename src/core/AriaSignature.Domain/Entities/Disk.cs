@@ -20,7 +20,9 @@ public sealed class Disk
     public int? SsdLifeRemainingPercent { get; set; }
 
     public int TemperatureCelsius { get; set; }
-    public int HealthPercent { get; set; }
+
+    /// <summary>Процент «здоровья» по SMART/износу; null если метрик недостаточно для оценки.</summary>
+    public int? HealthPercent { get; set; }
     public long PowerOnHours { get; set; }
     public long PowerCycleCount { get; set; }
     public int ReallocatedSectors { get; set; }

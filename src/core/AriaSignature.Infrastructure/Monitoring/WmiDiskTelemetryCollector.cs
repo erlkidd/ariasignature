@@ -13,10 +13,12 @@ namespace AriaSignature.Infrastructure.Monitoring;
 public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
 {
     private readonly ILogger<WmiDiskTelemetryCollector> _logger;
+    private readonly SmartCtlLowLevelReader _smartCtl;
 
-    public WmiDiskTelemetryCollector(ILogger<WmiDiskTelemetryCollector> logger)
+    public WmiDiskTelemetryCollector(ILogger<WmiDiskTelemetryCollector> logger, SmartCtlLowLevelReader smartCtl)
     {
         _logger = logger;
+        _smartCtl = smartCtl;
     }
 
     public Task<IReadOnlyCollection<Disk>> CollectAsync(CancellationToken cancellationToken)
@@ -27,7 +29,9 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         }
 
         var smartSnapshot = ReadSmartSnapshotSafe();
+        var smartByDriveIndex = BuildSmartByPhysicalDriveIndex(smartSnapshot);
         var storageReliability = ReadStorageReliabilityByPhysicalDriveIndexSafe();
+        var smartCtlData = _smartCtl.Read();
         var disks = new List<Disk>();
 
         try
@@ -50,16 +54,19 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                         var iface = ResolveInterfaceType(item);
                         var diskId = CreateStableId(model, serial, iface);
                         var physicalIndex = TryParsePhysicalDriveIndex(item["DeviceID"]?.ToString());
+                        var pnp = item["PNPDeviceID"]?.ToString() ?? string.Empty;
 
                         var diskCapacity = ResolvePhysicalDiskCapacitySafe(item, size);
-                        var smart = CopySmartAttributes(ResolveSmartAttributes(smartSnapshot, model, serial));
+                        var smart = ResolveSmartForDisk(smartSnapshot, smartByDriveIndex, physicalIndex, model, serial, pnp);
                         MergeStorageReliability(physicalIndex, storageReliability, smart);
+                        MergeSmartCtl(physicalIndex, model, serial, smartCtlData, smart);
 
                         var reallocated = smart.ReallocatedSectors;
                         var pending = smart.PendingSectors;
                         var uncorrectable = smart.UncorrectableErrors;
                         var ssdLife = smart.SsdLifeRemainingPercent;
-                        var health = EstimateHealth(reallocated, pending, uncorrectable, ssdLife);
+                        var hadTelemetry = HasTelemetrySignal(smart) || smart.PredictFailure;
+                        var health = EstimateHealthPercent(reallocated, pending, uncorrectable, ssdLife, hadTelemetry, smart.PredictFailure);
                         var status = CalculateStatus(reallocated, pending, uncorrectable, ssdLife);
 
                         disks.Add(new Disk
@@ -139,12 +146,13 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                     var model = $"{root} ({fmt})";
                     var iface = "Логический том";
                     var diskId = CreateStableId(model, root, iface);
-                    var smart = ResolveSmartAttributes(smartSnapshot, model, label);
+                    var smart = CopySmartAttributes(ResolveSmartAttributes(smartSnapshot, model, label));
                     var reallocated = smart.ReallocatedSectors;
                     var pending = smart.PendingSectors;
                     var uncorrectable = smart.UncorrectableErrors;
                     var ssdLife = smart.SsdLifeRemainingPercent;
-                    var health = EstimateHealth(reallocated, pending, uncorrectable, ssdLife);
+                    var hadTelemetry = HasTelemetrySignal(smart) || smart.PredictFailure;
+                    var health = EstimateHealthPercent(reallocated, pending, uncorrectable, ssdLife, hadTelemetry, smart.PredictFailure);
                     var status = CalculateStatus(reallocated, pending, uncorrectable, ssdLife);
 
                     disks.Add(new Disk
@@ -189,6 +197,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         var map = new Dictionary<int, SmartAttributes>();
         try
         {
+            var diskOidByIndex = ReadMsftPhysicalDiskObjectIdsByIndex();
             const string ns = @"root\Microsoft\Windows\Storage";
             using var searcher = new ManagementObjectSearcher(ns, "SELECT * FROM MSFT_StorageReliabilityCounter");
             using var results = searcher.Get();
@@ -196,17 +205,30 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             {
                 using (row)
                 {
-                    var oid = row["ObjectId"]?.ToString();
+                    var oid = row["ObjectId"]?.ToString() ?? string.Empty;
                     var idx = TryParsePhysicalDriveIndex(oid);
                     if (idx is null)
+                    {
+                        foreach (var kv in diskOidByIndex)
+                        {
+                            if (oid.Contains($"PhysicalDrive{kv.Key}", StringComparison.OrdinalIgnoreCase) ||
+                                (!string.IsNullOrEmpty(kv.Value) && oid.StartsWith(kv.Value, StringComparison.Ordinal)))
+                            {
+                                idx = kv.Key;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (idx is not int driveIdx)
                     {
                         continue;
                     }
 
-                    if (!map.TryGetValue(idx.Value, out var agg))
+                    if (!map.TryGetValue(driveIdx, out var agg))
                     {
                         agg = new SmartAttributes();
-                        map[idx.Value] = agg;
+                        map[driveIdx] = agg;
                     }
 
                     var wear = TryGetUInt16(row["Wear"]);
@@ -219,7 +241,8 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                     }
 
                     var temp = TryGetUInt16(row["Temperature"]);
-                    if (temp is ushort tC && tC is > 0 and < 125)
+                    var normalizedTemp = NormalizeStorageTemperature(temp);
+                    if (normalizedTemp is int tC && tC is > 0 and < 125)
                     {
                         agg.TemperatureCelsius = Math.Max(agg.TemperatureCelsius, tC);
                     }
@@ -240,6 +263,119 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
 
         return map;
     }
+
+    private Dictionary<int, string> ReadMsftPhysicalDiskObjectIdsByIndex()
+    {
+        var map = new Dictionary<int, string>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\Microsoft\Windows\Storage",
+                "SELECT DeviceId, ObjectId FROM MSFT_PhysicalDisk");
+            using var results = searcher.Get();
+            foreach (ManagementObject row in results)
+            {
+                using (row)
+                {
+                    var dev = row["DeviceId"]?.ToString();
+                    var objectId = row["ObjectId"]?.ToString();
+                    var idx = TryParsePhysicalDriveIndex(dev);
+                    if (idx is int i && !string.IsNullOrEmpty(objectId))
+                    {
+                        map[i] = objectId;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "WMI MSFT_PhysicalDisk недоступен.");
+        }
+
+        return map;
+    }
+
+    private static Dictionary<int, SmartAttributes> BuildSmartByPhysicalDriveIndex(Dictionary<string, SmartAttributes> snapshot)
+    {
+        var map = new Dictionary<int, SmartAttributes>();
+        foreach (var kv in snapshot)
+        {
+            var idx = TryParsePhysicalDriveIndex(kv.Key);
+            if (idx is not int n)
+            {
+                continue;
+            }
+
+            if (!map.TryGetValue(n, out var agg))
+            {
+                map[n] = CopySmartAttributes(kv.Value);
+            }
+            else
+            {
+                map[n] = MergeSmart(agg, kv.Value);
+            }
+        }
+
+        return map;
+    }
+
+    private static SmartAttributes ResolveSmartForDisk(
+        Dictionary<string, SmartAttributes> snapshot,
+        Dictionary<int, SmartAttributes> byDriveIndex,
+        int? physicalIndex,
+        string model,
+        string serial,
+        string pnpDeviceId)
+    {
+        SmartAttributes smart;
+        if (physicalIndex is int pi && byDriveIndex.TryGetValue(pi, out var direct))
+        {
+            smart = CopySmartAttributes(direct);
+        }
+        else
+        {
+            smart = CopySmartAttributes(ResolveSmartAttributes(snapshot, model, serial));
+        }
+
+        if (!HasTelemetrySignal(smart) && !smart.PredictFailure && !string.IsNullOrWhiteSpace(pnpDeviceId))
+        {
+            var frag = pnpDeviceId.Replace("\\", "#", StringComparison.Ordinal);
+            foreach (var kv in snapshot)
+            {
+                if (kv.Key.Contains(frag, StringComparison.OrdinalIgnoreCase) ||
+                    pnpDeviceId.Contains(kv.Key.Replace('#', '\\'), StringComparison.OrdinalIgnoreCase))
+                {
+                    smart = MergeSmart(smart, kv.Value);
+                    break;
+                }
+            }
+        }
+
+        return smart;
+    }
+
+    private static SmartAttributes MergeSmart(SmartAttributes a, SmartAttributes b) =>
+        new()
+        {
+            TemperatureCelsius = Math.Max(a.TemperatureCelsius, b.TemperatureCelsius),
+            PowerOnHours = Math.Max(a.PowerOnHours, b.PowerOnHours),
+            PowerCycleCount = Math.Max(a.PowerCycleCount, b.PowerCycleCount),
+            ReallocatedSectors = Math.Max(a.ReallocatedSectors, b.ReallocatedSectors),
+            PendingSectors = Math.Max(a.PendingSectors, b.PendingSectors),
+            UncorrectableErrors = Math.Max(a.UncorrectableErrors, b.UncorrectableErrors),
+            SsdLifeRemainingPercent = a.SsdLifeRemainingPercent is int la && b.SsdLifeRemainingPercent is int lb
+                ? Math.Min(la, lb)
+                : a.SsdLifeRemainingPercent ?? b.SsdLifeRemainingPercent,
+            PredictFailure = a.PredictFailure || b.PredictFailure
+        };
+
+    private static bool HasTelemetrySignal(SmartAttributes s) =>
+        s.TemperatureCelsius > 0 ||
+        s.PowerOnHours > 0 ||
+        s.ReallocatedSectors > 0 ||
+        s.PendingSectors > 0 ||
+        s.UncorrectableErrors > 0 ||
+        s.SsdLifeRemainingPercent is > 0;
 
     private static void MergeStorageReliability(int? physicalIndex, Dictionary<int, SmartAttributes> storage, SmartAttributes target)
     {
@@ -266,6 +402,50 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         }
     }
 
+    private static void MergeSmartCtl(
+        int? physicalIndex,
+        string model,
+        string serial,
+        SmartCtlLowLevelReader.ReadResult smartCtlData,
+        SmartAttributes target)
+    {
+        SmartCtlLowLevelReader.Snapshot? src = null;
+
+        if (physicalIndex is int idx && smartCtlData.ByPhysicalIndex.TryGetValue(idx, out var byIdx))
+        {
+            src = byIdx;
+        }
+
+        if (src is null)
+        {
+            var key = SmartCtlLowLevelReader.BuildIdentityKey(model, serial);
+            smartCtlData.ByIdentity.TryGetValue(key, out src);
+        }
+
+        if (src is null)
+        {
+            return;
+        }
+
+        if (src.TemperatureCelsius > 0)
+        {
+            target.TemperatureCelsius = Math.Max(target.TemperatureCelsius, src.TemperatureCelsius);
+        }
+
+        target.PowerOnHours = Math.Max(target.PowerOnHours, src.PowerOnHours);
+        target.PowerCycleCount = Math.Max(target.PowerCycleCount, src.PowerCycleCount);
+        target.ReallocatedSectors = Math.Max(target.ReallocatedSectors, src.ReallocatedSectors);
+        target.PendingSectors = Math.Max(target.PendingSectors, src.PendingSectors);
+        target.UncorrectableErrors = Math.Max(target.UncorrectableErrors, src.UncorrectableErrors);
+
+        if (src.SsdLifeRemainingPercent is int life)
+        {
+            target.SsdLifeRemainingPercent = target.SsdLifeRemainingPercent is int existing
+                ? Math.Min(existing, life)
+                : life;
+        }
+    }
+
     private static SmartAttributes CopySmartAttributes(SmartAttributes s) =>
         new()
         {
@@ -276,6 +456,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             PendingSectors = s.PendingSectors,
             UncorrectableErrors = s.UncorrectableErrors,
             SsdLifeRemainingPercent = s.SsdLifeRemainingPercent,
+            PredictFailure = s.PredictFailure
         };
 
     /// <summary>Ищет номер физического диска в строке (DeviceID Win32 или ObjectId Storage WMI).</summary>
@@ -284,6 +465,12 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         if (string.IsNullOrWhiteSpace(text))
         {
             return null;
+        }
+
+        var trimmed = text.Trim();
+        if (int.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out var directIdx) && directIdx >= 0)
+        {
+            return directIdx;
         }
 
         var u = text.ToUpperInvariant();
@@ -307,6 +494,25 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         }
 
         return int.Parse(u.AsSpan(start, end - start), CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Для части NVMe-поставщиков температура в StorageReliabilityCounter приходит в Kelvin.
+    /// </summary>
+    private static int? NormalizeStorageTemperature(ushort? raw)
+    {
+        if (raw is not ushort value || value == 0)
+        {
+            return null;
+        }
+
+        if (value is > 150 and < 400)
+        {
+            var celsius = value - 273;
+            return celsius is > 0 and < 125 ? celsius : null;
+        }
+
+        return value is > 0 and < 125 ? value : null;
     }
 
     private static ushort? TryGetUInt16(object? o)
@@ -451,6 +657,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                 var parsed = ParseAtaSmartAttributes(vendorSpecific);
                 if (statusByInstance.TryGetValue(instance, out var predictFailure) && predictFailure)
                 {
+                    parsed.PredictFailure = true;
                     parsed.PendingSectors = Math.Max(parsed.PendingSectors, 1);
                 }
 
@@ -558,6 +765,27 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         return baseHealth;
     }
 
+    private static int? EstimateHealthPercent(
+        int reallocated,
+        int pending,
+        int uncorrectable,
+        int? ssdLife,
+        bool hadTelemetrySignal,
+        bool predictFailure)
+    {
+        if (predictFailure)
+        {
+            return Math.Clamp(EstimateHealth(reallocated, pending, uncorrectable, ssdLife), 0, 35);
+        }
+
+        if (!hadTelemetrySignal)
+        {
+            return null;
+        }
+
+        return EstimateHealth(reallocated, pending, uncorrectable, ssdLife);
+    }
+
     private static DiskHealthStatus CalculateStatus(int reallocated, int pending, int uncorrectable, int? ssdLife)
     {
         if (uncorrectable > 0 || pending > 50)
@@ -593,5 +821,6 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         public int PendingSectors { get; set; }
         public int UncorrectableErrors { get; set; }
         public int? SsdLifeRemainingPercent { get; set; }
+        public bool PredictFailure { get; set; }
     }
 }

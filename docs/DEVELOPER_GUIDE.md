@@ -1,124 +1,101 @@
-# Руководство разработчика AriaSignature
+# AriaSignature — developer guide
 
-**Версия релиза в репозитории:** 0.2.2.
+Версия документа: 0.2.2.
 
-## Версионирование релиза (обязательная синхронизация)
+## 1. Цель системы
 
-При смене номера версии обновляйте **все** следующие места одним коммитом:
+AriaSignature реализует `service-first` модель:
+- локальный сервис собирает телеметрию и выполняет задачи архивации;
+- desktop UI предоставляет операторский интерфейс;
+- API публикует данные сервиса для внешних систем.
 
-| Место | Назначение |
-|--------|------------|
-| `Directory.Build.props` | `Version`, `AssemblyVersion`, `FileVersion`, `InformationalVersion` для всех .NET-сборок |
-| `installer/inno/AriaSignature.iss` | `#define MyAppVersion` (версия в свойствах установщика) |
-| `src/web/package.json` и `src/web/package-lock.json` | поле `version` у корневого пакета `ariasignature-web` |
-| `docs/API.md`, `docs/USER_GUIDE.md` | строка с номером текущего релиза (этот документ — по необходимости) |
+Система должна работать автономно после настройки: автозапуск, плановое выполнение, API-доступность.
 
-Параллельно кратко зафиксируйте изменения в `docs/DEVELOPMENT_NOTES.md`. Ветка разработки: `test/agent-work`; в `production` сливает владелец.
+## 2. Архитектурные границы
 
-## Ветвление и поставка
+- `AriaSignature.Domain` — сущности и бизнес-перечисления.
+- `AriaSignature.Application` — use-case сервисы и абстракции.
+- `AriaSignature.Infrastructure` — реализация хранилища, телеметрии, backup execution.
+- `AriaSignature.Api` — HTTP-контракт и API host.
+- `AriaSignature.Service` — Windows service host.
+- `AriaSignature.UI` — WPF shell + WebView2.
+- `src/web` — React/Vite SPA.
 
-- Основная релизная ветка: `production`.
-- Рабочая ветка разработки: `test/agent-work`.
-- Все изменения коммитятся и пушатся в `test/agent-work`.
-- Слияние в `production` выполняется владельцем репозитория.
+Контракт API: `/api/v1`.
 
-## Архитектура
+## 3. Диагностика дисков
 
-- Модель `service-first`:
-  - служба `AriaSignature.Service` — центр бизнес-логики;
-  - UI — клиент панели управления;
-  - API — канал публикации данных наружу.
-- API запускается локально внутри сервисного процесса.
-- Версионирование API: `/api/v1`.
-- Структура решения: `domain` / `application` / `infrastructure` / `api` / `ui`.
+Точка входа: `IDiskTelemetryCollector`.
 
-## Модуль диагностики дисков
+Текущая реализация агрегирует:
+- WMI (`Win32_DiskDrive`, `MSStorageDriver_*`);
+- Storage counters (`MSFT_StorageReliabilityCounter`);
+- low-level SMART/NVMe через `smartctl` (если доступен).
 
-- `IDiskTelemetryCollector` отвечает за сбор телеметрии.
-- `WmiDiskTelemetryCollector` читает:
-  - сведения о физических дисках (в т.ч. `MediaType`, уточнение USB/NVMe по PNPDeviceID);
-  - SMART через `root\WMI` (`MSStorageDriver_*`) при доступности;
-  - **счётчики надёжности** `MSFT_StorageReliabilityCounter` в `root\Microsoft\Windows\Storage` (поле **Wear** — процент использованного ресурса носителя; температура и циклы) — ближе к данным, которые использует система и утилиты уровня Hard Disk Sentinel;
-  - привязку логических томов к физическим накопителям.
-- `DiskTelemetryService` управляет refresh/query сценариями.
-- `SqliteDiskTelemetryRepository` хранит срезы дисков и историю SMART.
+Правило слияния: выбираются наиболее информативные значения, идентификация выполняется по model/serial и физическим индексам, где возможно.
 
-## Модуль архивации
+История срезов и SMART хранится в SQLite через `IDiskTelemetryRepository`.
 
-- `IBackupService` предоставляет CRUD и запуск задач.
-- `BackupService` реализует:
-  - повторные попытки выполнения;
-  - ведение журналов;
-  - плановые запуски через scheduler.
-- `BackupExecutor` поддерживает:
-  - `File` архивирование;
-  - `MsSql` backup.
-- Результат архивирования упаковывается в `.rar`, временные сырые файлы удаляются.
-- Применяется retention-политика хранения копий.
+## 4. Архивация
 
-## Валидация API для задач архивации
+Точка входа: `IBackupService`.
 
-- Общие проверки:
-  - обязательные поля;
-  - корректный cron;
-  - корректный retention.
-- Типовые проверки:
-  - `File`: абсолютный путь и существование файла источника;
-  - `MsSql`: валидная строка подключения, доступность подключения и базы.
-- Проверка папки назначения:
-  - абсолютный путь;
-  - доступ на запись;
-  - запрет конфликтного source/destination.
+Поддерживаемые сценарии:
+- `file` (бэкап `.1CD`);
+- `msSql` (backup SQL Server).
 
-## Хранилище данных
+Функционал:
+- CRUD задач;
+- ручной запуск;
+- плановое выполнение;
+- retention;
+- журналирование;
+- валидация входных параметров и окружения.
 
-- Используется SQLite.
-- Инициализация схемы выполняется на старте службы.
-- В таблицах хранятся:
-  - диски и SMART-история;
-  - задачи архивации;
-  - логи выполнения;
-  - пара ключ/значение `AppSettings` (порт API, cron SMART и др.).
+## 5. UI и host взаимодействие
 
-## UI (WebView2 + React SPA)
+- SPA (`src/web`) использует API сервиса.
+- WPF host реализует:
+  - запуск/проверку службы;
+  - системный трей;
+  - автозапуск;
+  - файловые/папочные диалоги;
+  - управление сервисом через postMessage bridge.
 
-- Исходники SPA: `src/web` (Vite, React, TypeScript). Сборка: `npm ci` и `npm run build` — артефакты в `src/service/AriaSignature.Service/wwwroot`.
-- `AriaSignature.UI` (WPF): окно с `WebView2`, трей, иконка; при загрузке вызывается `WindowsServiceEnsure` для службы `AriaSignatureService`; навигация на `http://127.0.0.1:{port}/`.
-- Обмен с хостом для автозапуска: `chrome.webview.postMessage` ↔ `CoreWebView2.WebMessageReceived` / `PostWebMessageAsString` (реестр через `StartupRegistrationService`).
-- Панель использует **тот же** локальный API, что и внешние интеграции (`/api/v1`).
+Ссылки из WebView открываются во внешнем браузере по умолчанию.
 
-## Иконки и визуальные ресурсы
+## 6. Версионирование (обязательная синхронизация)
 
-- Исходник: `icon.png` в корне репозитория.
-- Производный файл: `icon.ico`.
-- Единый `icon.ico` используется для:
-  - exe;
-  - иконки окна;
-  - иконки в трее;
-  - ярлыков;
-  - установщика.
+При изменении версии обновлять одним коммитом:
+- `Directory.Build.props`;
+- `installer/inno/AriaSignature.iss` (`MyAppVersion`);
+- `src/web/package.json` и lockfile;
+- `docs/API.md` и `docs/USER_GUIDE.md`.
 
-## Установщик
+Изменения релиза фиксировать в `docs/DEVELOPMENT_NOTES.md`.
 
-- Скрипт: `installer/inno/AriaSignature.iss`.
-- Установщик:
-  - требует права администратора;
-  - ставит UI и сервис;
-  - регистрирует и запускает службу;
-  - на uninstall выполняет корректный stop/delete службы.
-- Язык установщика и деинсталлятора: русский.
+## 7. Стандарты документации
 
-## Локализация
+Обязательные требования:
+- документация обновляется вместе с изменением контракта/поведения;
+- описывается фактическое состояние системы, без плановых формулировок;
+- используется единый технический стиль: кратко, предметно, проверяемо.
 
-- Все пользовательские тексты (UI/installer/uninstaller) — на русском языке.
-- Новые пользовательские строки добавляются на русском по умолчанию.
+Минимальный набор при каждом изменении:
+- пользовательское воздействие (`USER_GUIDE.md`);
+- API-контракт (`API.md`);
+- техническая реализация/процесс (`DEVELOPER_GUIDE.md`, при необходимости `INSTALLER.md`, `RELEASE_GATE.md`);
+- запись в `DEVELOPMENT_NOTES.md`.
 
-## Тесты и release gate
+## 8. Сборка и проверка
 
-- Интеграционные API-тесты запускаются через `WebApplicationFactory`.
-- Проверяются:
-  - статус и диски;
-  - сценарии задач архивации;
-  - semantics `problem+json`.
-- Автоматизированный gate: `scripts/release-gate.ps1`.
-- Чеклист RC: `docs/RELEASE_GATE.md`.
+Основной gate:
+- `.\scripts\release-gate.ps1`
+
+Gate выполняет:
+- сборку SPA;
+- build/test .NET решения;
+- publish UI/service;
+- сборку Inno Setup installer.
+
+Артефакт: `artifacts/installer/AriaSignature-Setup.exe`.

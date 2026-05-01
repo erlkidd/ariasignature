@@ -15,6 +15,7 @@ public static class DependencyInjection
         services.AddSingleton<ISqliteDatabaseInitializer, SqliteDatabaseInitializer>();
         if (OperatingSystem.IsWindows())
         {
+            services.AddSingleton<SmartCtlLowLevelReader>();
             services.AddSingleton<IDiskTelemetryCollector, WmiDiskTelemetryCollector>();
         }
         else

@@ -1,8 +1,11 @@
 ﻿using System.IO;
+using System.Diagnostics;
 using System.Net.Http;
+using System.ServiceProcess;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Media.Imaging;
+using System.Windows.Input;
 using AriaSignature.UI.Services;
 using Microsoft.Web.WebView2.Core;
 
@@ -22,6 +25,7 @@ public partial class MainWindow : Window
         TrySetWindowIcon();
         Loaded += OnLoadedAsync;
         Closing += OnClosingToTray;
+        StateChanged += (_, _) => MaxRestoreButton.Content = WindowState == WindowState.Maximized ? "❐" : "□";
     }
 
     private async void OnLoadedAsync(object sender, RoutedEventArgs e)
@@ -70,6 +74,18 @@ public partial class MainWindow : Window
         }
 
         Browser.CoreWebView2.WebMessageReceived += OnWebMessage;
+        Browser.CoreWebView2.NewWindowRequested += (_, args) =>
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(args.Uri) { UseShellExecute = true });
+                args.Handled = true;
+            }
+            catch
+            {
+                // ignore
+            }
+        };
         Browser.CoreWebView2.NavigationCompleted += (_, e) =>
         {
             if (!e.IsSuccess)
@@ -182,6 +198,19 @@ public partial class MainWindow : Window
                 var payload = JsonSerializer.Serialize(new { action = "autostart", enabled = _startup.IsEnabled() });
                 Browser.CoreWebView2?.PostWebMessageAsString(payload);
             }
+            else if (action == "getWindowsServiceStatus")
+            {
+                var payload = JsonSerializer.Serialize(TryGetWindowsServiceStatus());
+                Browser.CoreWebView2?.PostWebMessageAsString(payload);
+            }
+            else if (action == "controlWindowsService" && root.TryGetProperty("command", out var cmdEl))
+            {
+                var cmd = cmdEl.GetString();
+                var payload = JsonSerializer.Serialize(TryControlWindowsService(cmd));
+                Browser.CoreWebView2?.PostWebMessageAsString(payload);
+                var statusPayload = JsonSerializer.Serialize(TryGetWindowsServiceStatus());
+                Browser.CoreWebView2?.PostWebMessageAsString(statusPayload);
+            }
             else if (action == "pickFile")
             {
                 var dlg = new Microsoft.Win32.OpenFileDialog
@@ -215,6 +244,98 @@ public partial class MainWindow : Window
         }
     }
 
+    private static object TryGetWindowsServiceStatus()
+    {
+        try
+        {
+            using var sc = new ServiceController(WindowsServiceEnsure.ServiceName);
+            sc.Refresh();
+            return new
+            {
+                action = "windowsServiceStatus",
+                ok = true,
+                status = NormalizeWindowsServiceStatus(sc.Status.ToString()),
+                displayName = sc.DisplayName ?? WindowsServiceEnsure.ServiceName
+            };
+        }
+        catch (Exception ex)
+        {
+            return new
+            {
+                action = "windowsServiceStatus",
+                ok = false,
+                status = "Unknown",
+                error = ex.Message
+            };
+        }
+    }
+
+    private static object TryControlWindowsService(string? command)
+    {
+        try
+        {
+            using var sc = new ServiceController(WindowsServiceEnsure.ServiceName);
+            switch (command?.ToLowerInvariant())
+            {
+                case "start":
+                    if (sc.Status == ServiceControllerStatus.Stopped)
+                    {
+                        sc.Start();
+                        sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(90));
+                    }
+
+                    break;
+                case "stop":
+                    if (sc.Status == ServiceControllerStatus.Running)
+                    {
+                        sc.Stop();
+                        sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(90));
+                    }
+
+                    break;
+                case "restart":
+                    if (sc.Status == ServiceControllerStatus.Running)
+                    {
+                        sc.Stop();
+                        sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(90));
+                    }
+
+                    sc.Refresh();
+                    if (sc.Status == ServiceControllerStatus.Stopped)
+                    {
+                        sc.Start();
+                        sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(90));
+                    }
+
+                    break;
+                default:
+                    return new { action = "windowsServiceControl", ok = false, error = "Неизвестная команда" };
+            }
+
+            sc.Refresh();
+            return new { action = "windowsServiceControl", ok = true, status = NormalizeWindowsServiceStatus(sc.Status.ToString()) };
+        }
+        catch (Exception ex)
+        {
+            return new { action = "windowsServiceControl", ok = false, error = ex.Message };
+        }
+    }
+
+    private static string NormalizeWindowsServiceStatus(string raw)
+    {
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "running" => "Running",
+            "stopped" => "Stopped",
+            "paused" => "Paused",
+            "startpending" => "StartPending",
+            "stoppending" => "StopPending",
+            "pausepending" => "PausePending",
+            "continuepending" => "ContinuePending",
+            _ => raw
+        };
+    }
+
     private void OnClosingToTray(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         if (!_app.CanCloseToTray())
@@ -235,5 +356,37 @@ public partial class MainWindow : Window
         }
 
         Icon = new BitmapImage(new Uri(iconPath, UriKind.Absolute));
+    }
+
+    private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount == 2)
+        {
+            ToggleMaximizeRestore();
+            return;
+        }
+
+        DragMove();
+    }
+
+    private void MinimizeButton_Click(object sender, RoutedEventArgs e)
+    {
+        WindowState = WindowState.Minimized;
+    }
+
+    private void MaxRestoreButton_Click(object sender, RoutedEventArgs e)
+    {
+        ToggleMaximizeRestore();
+    }
+
+    private void CloseButton_Click(object sender, RoutedEventArgs e)
+    {
+        Close();
+    }
+
+    private void ToggleMaximizeRestore()
+    {
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+        MaxRestoreButton.Content = WindowState == WindowState.Maximized ? "❐" : "□";
     }
 }

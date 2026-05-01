@@ -1,404 +1,139 @@
-Ты сейчас описал не ТЗ, а набор требований разного уровня — продуктовых, технических и инфраструктурных. Если это отдать Cursor как есть, он либо сделает урезанный MVP, либо запутается и начнёт импровизировать. Ни то, ни другое тебе не подходит.
+# AriaSignature — Product Technical Specification
+
+Version: 0.2.2  
+Status: Active baseline
+
+## 1. Product objective
+
+AriaSignature is a Windows desktop product with a service-first runtime model.  
+The system must:
+- continuously collect disk telemetry;
+- execute backup jobs by schedule;
+- expose produced operational data through a stable local REST API;
+- provide a user-friendly local UI for setup and monitoring.
+
+The target operating mode is autonomous execution at customer site after initial setup.
+
+## 2. Scope
+
+### Included
+- Disk diagnostics (HDD/SSD/NVMe, best-effort USB).
+- Backup orchestration for 1C file databases and MSSQL.
+- Job scheduling, execution logging, retention.
+- Local API publication for external consumers.
+- Installer, Windows service registration, tray workflow, autostart.
+
+### Excluded
+- External transport/integration logic outside local API boundary.
+- Cloud backend responsibility.
+- Vendor-specific dashboards outside product UI.
+
+## 3. Architecture constraints
+
+- `AriaSignature.Service` is the execution core.
+- `AriaSignature.UI` is an operator console, not the execution engine.
+- API contract is versioned and served by service (`/api/v1`).
+- Local persistence is SQLite.
+- UI uses the same API contracts as external integrations.
+
+## 4. Runtime requirements
+
+- OS: Windows 10/11 x64.
+- Service must auto-start after OS reboot.
+- Tray mode must support background operation without active main window.
+- Single-instance policy for UI process is mandatory.
+- Product must remain operational if UI is closed.
+
+## 5. Functional requirements
+
+### 5.1 Disk diagnostics
+- Collect model, serial, interface, media type, capacity, free/used space.
+- Collect temperature, health estimate, SSD life, power-on hours, power cycles.
+- Collect SMART counters (reallocated, pending, uncorrectable, related metrics).
+- Maintain status classification (`ok` / `warning` / `critical`).
+- Support manual and scheduled refresh.
+- Persist history for SMART/telemetry trends.
+
+Data sources (priority merge):
+- WMI (`Win32_DiskDrive`, `MSStorageDriver_*`);
+- Storage Reliability counters (`MSFT_StorageReliabilityCounter`);
+- low-level SMART/NVMe via `smartctl` when available.
+
+### 5.2 Backup management
+- Support backup job types:
+  - `file` (1C `.1CD`);
+  - `msSql` (SQL Server backup flow).
+- Support CRUD operations for jobs.
+- Support manual run and schedule-driven run.
+- Enforce retention count with automatic cleanup.
+- Record execution logs (status, timestamps, size, message).
+
+### 5.3 Settings and operations
+- Configure API port and diagnostic schedule.
+- Configure UI autostart.
+- Provide service status and control actions from UI.
+- Keep all operational actions available through UI without script usage.
+
+## 6. API requirements
+
+- REST + JSON, local bind by default.
+- Version prefix: `/api/v1`.
+- OpenAPI/Swagger must be available.
+- Stable contracts, backward-safe evolution.
+- Error contract: `application/problem+json`.
+
+Minimum endpoint groups:
+- service status;
+- settings;
+- disks + smart history;
+- backup jobs;
+- backup logs.
+
+## 7. Non-functional requirements
+
+- No stubs as final implementation.
+- Deterministic install/upgrade/uninstall behavior.
+- Input validation for all write operations.
+- Structured logging for service execution paths.
+- Build reproducibility via release gate script.
+
+## 8. Build, release and versioning
+
+Mandatory version synchronization:
+- `Directory.Build.props`;
+- `installer/inno/AriaSignature.iss`;
+- `src/web/package.json` and lockfile;
+- user/API docs versions.
 
-Я собрал это в **жёсткое, инженерное ТЗ**, пригодное для AI-агента.
+Release gate entry point:
+- `scripts/release-gate.ps1`
 
----
+Expected artifact:
+- `artifacts/installer/AriaSignature-Setup.exe`
 
-# Техническое задание
+## 9. Branching and delivery policy
 
-## Проект: **AriaSignature (Windows Desktop Application)**
+- Development branch: `test/agent-work`.
+- Release branch: `production`.
+- Merge to `production` is owner-controlled.
 
-**Актуальная версия в репозитории:** 0.2.2 — единый номер в `Directory.Build.props`, установщике Inno (`MyAppVersion`) и `src/web/package.json`; документация в `docs/` обновляется параллельно; Git: ветка разработки `test/agent-work`, релизная `production`.
+## 10. Documentation governance
 
----
+Documentation is part of the deliverable and must be updated in the same change set as behavior/contract changes.
 
-## 1. Общие требования
+Required docs set:
+- `docs/USER_GUIDE.md`
+- `docs/API.md`
+- `docs/DEVELOPER_GUIDE.md`
+- `docs/INSTALLER.md`
+- `docs/RELEASE_GATE.md`
+- `docs/DEVELOPMENT_NOTES.md`
 
-### 1.1 Назначение
+## 11. Definition of done
 
-Приложение предназначено для:
-
-* мониторинга состояния накопителей (HDD/SSD)
-* управления архивацией баз **1С:Предприятие**
-* предоставления данных через внешний API для интеграции с 1С
-
----
-
-### 1.2 Платформа
-
-* ОС: **Windows 10/11 (x64)**
-* Тип: **Desktop Application**
-* Язык интерфейса: **RU (с возможностью расширения)**
-
----
-
-### 1.3 Установка и запуск
-
-Обязательно реализовать:
-
-* Установщик (MSI или EXE):
-
-  * стандартный мастер установки
-  * выбор пути установки
-* После установки:
-
-  * регистрация **Windows Service**
-  * добавление в **автозагрузку**
-  * фоновый запуск без UI
-* Разделение:
-
-  * UI-приложение
-  * фоновая служба (Service)
-
----
-
-## 2. Архитектура
-
-### 2.1 Обязательное разделение
-
-Система должна состоять из:
-
-1. **Core Service (Windows Service)**
-
-   * сбор данных по дискам
-   * выполнение задач архивации
-   * хранение состояния
-   * API сервер
-
-2. **Desktop UI**
-
-   * взаимодействие с пользователем
-   * настройка
-   * отображение данных
-
-3. **API Layer**
-
-   * REST API (локально)
-   * JSON формат
-
----
-
-### 2.2 Хранение данных
-
-* Локальная БД:
-
-  * SQLite (предпочтительно)
-* Хранить:
-
-  * список дисков
-  * историю S.M.A.R.T.
-  * задачи архивации
-  * лог выполнения
-  * настройки
-
----
-
-## 3. Функционал: Накопители
-
-### 3.1 Общие требования
-
-Функционал аналогичен **Hard Disk Sentinel (уровень — упрощённый, но полноценный)**
-
----
-
-### 3.2 Поддержка
-
-* HDD
-* SSD (SATA/NVMe)
-* USB накопители (по возможности)
-
----
-
-### 3.3 Данные по каждому диску
-
-Обязательно:
-
-* модель
-* серийный номер
-* интерфейс (SATA/NVMe/USB)
-* температура
-* состояние здоровья (%)
-* оставшийся ресурс (для SSD)
-* общее время работы
-* количество включений
-* объем:
-
-  * общий
-  * свободный
-  * занятый
-
----
-
-### 3.4 S.M.A.R.T.
-
-* чтение S.M.A.R.T. атрибутов
-* анализ:
-
-  * bad sectors
-  * reallocated sectors
-  * pending sectors
-* интерпретация:
-
-  * OK / WARNING / CRITICAL
-
----
-
-### 3.5 Обновление данных
-
-* периодическое (настраиваемое)
-* ручное обновление
-
----
-
-## 4. Функционал: Архивация 1С
-
-### 4.1 Поддерживаемые типы
-
-1. **Файловые базы**
-
-   * файл `.1CD`
-
-2. **MS SQL базы**
-
-   * создание `.bak`
-
----
-
-### 4.2 Возможности
-
-* создание задач архивации
-* редактирование задач
-* удаление задач
-
----
-
-### 4.3 Настройки задачи
-
-* источник:
-
-  * путь к `.1CD`
-  * или параметры MSSQL:
-
-    * сервер
-    * база
-    * логин/пароль
-* путь сохранения
-* расписание:
-
-  * ежедневно
-  * еженедельно
-  * по времени
-* хранение:
-
-  * количество копий
-  * автоудаление старых
-
----
-
-### 4.4 Выполнение
-
-* запуск вручную
-* запуск по расписанию
-* логирование:
-
-  * успех / ошибка
-  * время выполнения
-  * размер файла
-
----
-
-### 4.5 Журнал
-
-* список всех задач
-* фильтрация:
-
-  * по статусу
-  * по дате
-* просмотр деталей
-
----
-
-### 4.6 UX ориентир
-
-Интерфейс должен быть по уровню:
-
-* как **Effector Saver**
-* без необходимости писать код
-* полностью через UI
-
----
-
-## 5. API
-
-### 5.1 Общие требования
-
-* REST API
-* JSON
-* локальный сервер (localhost)
-* порт настраиваемый
-
----
-
-### 5.2 Основные эндпоинты
-
-#### Диски
-
-* GET /api/disks
-* GET /api/disks/{id}
-
-#### S.M.A.R.T.
-
-* GET /api/disks/{id}/smart
-
-#### Архивации
-
-* GET /api/backups
-* POST /api/backups/run
-* GET /api/backups/logs
-
-#### Статусы
-
-* GET /api/status
-
----
-
-### 5.3 Требования к API
-
-* стабильность контрактов
-* версионирование (/api/v1/)
-* обязательное тестирование
-* автогенерация документации (Swagger/OpenAPI)
-
----
-
-## 6. Интерфейс (UI)
-
-### 6.1 Основная структура
-
-3 вкладки:
-
-1. **Накопители**
-2. **Архивация**
-3. **Настройки**
-
----
-
-### 6.2 Вкладка "Накопители"
-
-* список дисков
-* индикатор состояния
-* детальная карточка
-
----
-
-### 6.3 Вкладка "Архивация"
-
-Разделы:
-
-* задачи
-* журнал
-
----
-
-### 6.4 Вкладка "Настройки"
-
-* API (порт)
-* расписание обновления
-* автозагрузка
-* логирование
-
----
-
-## 7. Git и процесс разработки
-
-Обязательно:
-
-* работа через Git
-* структура репозитория:
-
-  * /core
-  * /ui
-  * /api
-* коммиты:
-
-  * атомарные
-  * осмысленные сообщения
-* ветки:
-
-  * main
-  * develop
-  * feature/*
-
----
-
-## 8. Документация
-
-### 8.1 Для разработчика
-
-* архитектура
-* описание модулей
-* схема данных
-* API
-
----
-
-### 8.2 Для пользователя
-
-* установка
-* настройка
-* работа с архивацией
-
----
-
-## 9. Тестирование
-
-Обязательно:
-
-* unit-тесты
-* API тесты
-* проверка:
-
-  * создания backup
-  * чтения SMART
-  * работы расписания
-
----
-
-## 10. Критические требования (НЕ НАРУШАТЬ)
-
-* ❌ Нельзя делать MVP или заглушки
-* ❌ Нельзя пропускать API
-* ❌ Нельзя делать без Windows Service
-* ❌ Нельзя делать без установщика
-* ❌ Нельзя хардкодить настройки
-
----
-
-## 11. Рекомендуемый стек (для Cursor)
-
-Если не задан — использовать:
-
-* Backend: **.NET 8 (C#)**
-* UI: **WPF**
-* Service: **Worker Service**
-* API: **ASP.NET Core**
-* DB: **SQLite**
-* SMART: через WMI / сторонние библиотеки
-
----
-
-## 12. Название приложения
-
-**AriaSignature**
-
----
-
-## Что тебе важно понять
-
-Ты хочешь сразу “не MVP, а продукт”. Это нормально, но:
-
-* объём = **уровень небольшой команды**
-* Cursor без жёсткого ТЗ начнёт “срезать углы”
-* главный риск — **сломанный API и кривой сервис**
-
----
+A change is complete only if:
+- functional behavior is implemented;
+- tests/build pass;
+- installer build succeeds;
+- API contract remains consistent;
+- documentation reflects actual state.

@@ -196,7 +196,7 @@ public static class AriaApiExtensions
 
         api.MapPost("/backups", async (UpsertBackupJobRequest request, IBackupService backups, CancellationToken cancellationToken) =>
         {
-            var validationError = await ValidateBackupRequestAsync(request, cancellationToken);
+            var validationError = await ValidateBackupRequestAsync(request, existingForUpdate: null, cancellationToken);
             if (validationError is not null)
             {
                 return Results.ValidationProblem(validationError);
@@ -211,7 +211,8 @@ public static class AriaApiExtensions
 
         api.MapPut("/backups/{id:guid}", async (Guid id, UpsertBackupJobRequest request, IBackupService backups, CancellationToken cancellationToken) =>
         {
-            var validationError = await ValidateBackupRequestAsync(request, cancellationToken);
+            var existing = await backups.GetJobAsync(id, cancellationToken);
+            var validationError = await ValidateBackupRequestAsync(request, existingForUpdate: existing, cancellationToken);
             if (validationError is not null)
             {
                 return Results.ValidationProblem(validationError);
@@ -273,6 +274,26 @@ public static class AriaApiExtensions
         return app;
     }
 
+    private static bool IsUnchangedFileSourceOnUpdate(string requestSource, BackupJob? existingForUpdate)
+    {
+        if (existingForUpdate is null || existingForUpdate.Type != BackupType.File)
+        {
+            return false;
+        }
+
+        try
+        {
+            return string.Equals(
+                Path.GetFullPath(requestSource.Trim()),
+                Path.GetFullPath(existingForUpdate.Source.Trim()),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return string.Equals(requestSource.Trim(), existingForUpdate.Source.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     private static void TryUseSpaStaticFiles(WebApplication app)
     {
         var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
@@ -290,7 +311,10 @@ public static class AriaApiExtensions
         app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = provider });
     }
 
-    private static async Task<Dictionary<string, string[]>?> ValidateBackupRequestAsync(UpsertBackupJobRequest request, CancellationToken cancellationToken)
+    private static async Task<Dictionary<string, string[]>?> ValidateBackupRequestAsync(
+        UpsertBackupJobRequest request,
+        BackupJob? existingForUpdate,
+        CancellationToken cancellationToken)
     {
         var errors = new Dictionary<string, string[]>();
 
@@ -325,7 +349,9 @@ public static class AriaApiExtensions
         {
             errors["source"] = ["Для файловой базы путь к .1CD должен быть абсолютным"];
         }
-        else if (request.Type == BackupType.File && !File.Exists(request.Source))
+        else if (request.Type == BackupType.File &&
+                 !File.Exists(request.Source) &&
+                 !IsUnchangedFileSourceOnUpdate(request.Source, existingForUpdate))
         {
             errors["source"] = [$"Файл базы не найден: {request.Source}"];
         }

@@ -1,87 +1,119 @@
-# Документация API AriaSignature
+# AriaSignature API (v1)
 
-**Версия продукта (релиз):** 0.2.2 — совпадает с `Directory.Build.props`, установщиком (`MyAppVersion`) и `package.json` веб-панели.
+Версия документа: 0.2.2.
 
-Версия контракта: **v1**. Текущая сборка API также отражается в `GET /api/v1/status` (поле `version`).
+## 1. Общие параметры
 
-## Базовые параметры
+- Base URL: `http://127.0.0.1:{port}/api/v1`
+- Порт по умолчанию: `5160`
+- Формат: `application/json`
+- OpenAPI/Swagger: `/swagger`
 
-- Базовый URL: `http://127.0.0.1:{port}/api/v1`
-- Порт по умолчанию: `5160` (можно изменить в таблице `AppSettings` ключа `Api:Port`; для вступления в силу обычно требуется перезапуск службы)
-- Формат данных: `application/json`
-- Перечисления в JSON: строки в **camelCase** (например тип задачи: `file`, `msSql`)
+Поле версии сервиса доступно через `GET /status`.
 
-## Endpoints
+## 2. Контракт ошибок
 
-### Состояние сервиса
+- `400 Bad Request` — валидация, `application/problem+json`
+- `404 Not Found` — отсутствующий ресурс, `application/problem+json`
+- `500 Internal Server Error` — непредвиденная ошибка, `application/problem+json` + `traceId`
 
-- `GET /status` — состояние, метка времени и версия сборки API.
+## 3. Endpoints
 
-### Настройки приложения
+### 3.1 Service status
 
-- `GET /settings` — текущие значения: `apiPort`, `smartMonitoringCron`, пояснение о перезапуске службы.
-- `PUT /settings` — тело JSON: `apiPort` (опционально), `smartMonitoringCron` (опционально, валидный Quartz cron).
+- `GET /status`
+  - Назначение: проверка доступности и версии сервиса.
+  - Ответ: `status`, `timestampUtc`, `version`.
 
-### Диски
+### 3.2 Settings
 
-- `GET /disks` — список накопителей (модель, серийный номер, интерфейс, тип носителя, объёмы, температура, здоровье, ресурс SSD при наличии, SMART-счётчики, статус `ok` / `warning` / `critical`).
-- `POST /disks/refresh` — принудительно пересобрать снимок WMI/томов и вернуть актуальный список (тот же формат, что у `GET /disks`). Панель управления вызывает этот метод при открытии и по кнопке обновления.
-- `GET /disks/{id}` — карточка диска.
-  - если диск не найден: `404` + `application/problem+json`.
+- `GET /settings`
+  - Назначение: чтение текущих параметров (`apiPort`, `smartMonitoringCron`, `note`).
 
-### SMART
+- `PUT /settings`
+  - Назначение: обновление параметров.
+  - Тело:
+    - `apiPort` (optional, `1..65535`)
+    - `smartMonitoringCron` (optional, Quartz expression)
 
-- `GET /disks/{id}/smart` — история SMART-метрик по диску (до 500 последних записей).
-  - если диск не найден: `404` + `application/problem+json`.
+### 3.3 Disk telemetry
 
-### Архивация
+- `GET /disks`
+  - Назначение: список диагностируемых дисков.
+  - Ответ содержит: идентификатор, модель, интерфейс, объемы, температуру, health, SMART-счетчики, статус.
 
-- `GET /backups` — список задач архивации.
-- `POST /backups` — создание задачи.
-- `PUT /backups/{id}` — обновление задачи.
-- `DELETE /backups/{id}` — удаление задачи (`404` + problem, если не найдена).
-- `POST /backups/{id}/run` — ручной запуск задачи.
-- `POST /backups/test-mssql` — проверка подключения к SQL Server без сохранения задачи. Тело: объект как `msSql` ниже (`server`, `database`, `auth`: `sql` | `windows`, `user`, `password`, `trustServerCertificate`).
+- `POST /disks/refresh`
+  - Назначение: принудительный пересчет среза телеметрии.
+  - Источники: WMI + Storage Reliability + low-level SMART/NVMe (`smartctl`, если доступен).
 
-### Логи архивации
+- `GET /disks/{id}`
+  - Назначение: карточка диска.
+  - `404`, если диск не найден.
 
-- `GET /backups/logs` — журнал выполнения.
-  - опциональные query-параметры: `status` (`Succeeded` | `Failed`), `from`, `to` (ISO-8601 `DateTimeOffset`).
+- `GET /disks/{id}/smart`
+  - Назначение: история SMART-метрик (последние записи).
+  - `404`, если диск не найден.
 
-## Типы задач архивации
+### 3.4 Backup jobs
 
-- `file`:
-  - `source` — абсолютный путь к файлу базы (`.1CD`);
-  - `destination` — папка для архивов.
-- `msSql`:
-  - либо `source` — полная строка подключения;
-  - либо объект **`msSql`**: при его наличии строка подключения собирается на сервере и записывается в `source`:
-    - `server`, `database`, `auth` (`sql` | `windows`), при `sql` — `user`, `password`, `trustServerCertificate` (по умолчанию `true`).
+- `GET /backups`
+  - Назначение: список задач.
 
-## Валидация запросов архивации
+- `POST /backups`
+  - Назначение: создание задачи.
 
-- Обязательные поля, cron Quartz, `retentionCount > 0`.
-- Файловый сценарий: абсолютные пути, файл источника существует, нет конфликта путей.
-- MSSQL: проверка подключения и базы перед сохранением.
-- Папка назначения: абсолютный путь, тест записи.
+- `PUT /backups/{id}`
+  - Назначение: обновление задачи.
 
-## Статические файлы панели (SPA)
+- `DELETE /backups/{id}`
+  - Назначение: удаление задачи.
 
-- Если рядом с `AriaSignature.Service.exe` развёрнута папка `wwwroot`, служба отдаёт интерфейс по корню URL (например `http://127.0.0.1:5160/`).
-- Маршруты `/api/v1/*` и `/swagger` не перекрываются SPA.
+- `POST /backups/{id}/run`
+  - Назначение: немедленный запуск задачи.
 
-## Формат ошибок
+- `POST /backups/test-mssql`
+  - Назначение: проверка подключения к MSSQL без сохранения задачи.
 
-- Валидация: `400`, validation problem details.
-- Not found: `404`, `application/problem+json`.
-- Прочие: `500`, `application/problem+json`, `traceId`.
+### 3.5 Backup logs
 
-## OpenAPI
+- `GET /backups/logs`
+  - Назначение: журнал выполнения задач.
+  - Query:
+    - `status` (`Succeeded` | `Failed`)
+    - `from` (ISO-8601)
+    - `to` (ISO-8601)
 
-- Swagger UI: `/swagger`
+## 4. Модель задачи архивации
 
-## Примечания
+### 4.1 `file`
 
-- API работает локально; для внешних систем при необходимости настраиваются правила брандмауэра/прокси отдельно.
-- Метаданные и журналы — SQLite (`ConnectionStrings:AriaSignature`); это не база 1С и не MSSQL.
-- Архивы по возможности упаковываются в `.rar` (наличие Rar.exe влияет на успех шага упаковки).
+- `source` — абсолютный путь к `.1CD`
+- `destination` — абсолютный путь к каталогу архивов
+- `scheduleCron` — Quartz cron
+- `retentionCount` — количество хранимых архивов
+
+### 4.2 `msSql`
+
+Варианты задания подключения:
+- `source` как готовая connection string
+- или объект `msSql`:
+  - `server`
+  - `database`
+  - `auth` (`sql` | `windows`)
+  - при `sql`: `user`, `password`
+  - `trustServerCertificate` (optional)
+
+## 5. Валидация
+
+- обязательные поля;
+- корректность Quartz cron;
+- `retentionCount > 0`;
+- абсолютные пути и доступность destination;
+- для `file`: существование source;
+- для `msSql`: валидность подключения и доступ к базе.
+
+## 6. Эксплуатационные заметки
+
+- API локальный; публикация наружу выполняется сетевой конфигурацией заказчика.
+- UI использует тот же API-контур, что и внешние интеграции.
+- Сервис является системной точкой выполнения: сбор данных, архивирование, журналирование и выдача API.

@@ -10,6 +10,7 @@
   --danger: #c62828;
   --ok-bg: #e8f5e9;
   --err-bg: #ffebee;
+  --surface-soft: #f7f9ff;
 }
 
 [data-theme="dark"] {
@@ -23,6 +24,7 @@
   --danger: #ff8a80;
   --ok-bg: #1b3d2a;
   --err-bg: #3d1f24;
+  --surface-soft: #232536;
 }
 
 * {
@@ -42,41 +44,42 @@ body {
   padding: 16px 20px 48px;
 }
 
-.header-row {
+.header-brand {
   display: flex;
   align-items: flex-start;
-  gap: 14px;
-  margin-bottom: 12px;
+  gap: 12px;
+  margin-bottom: 16px;
+  text-align: left;
 }
 
 .app-logo {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 72px;
+  height: 72px;
+  border-radius: 14px;
   object-fit: contain;
   flex-shrink: 0;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
 .header-titles {
-  flex: 1;
-  min-width: 0;
+  max-width: 720px;
+}
+
+.header-titles h1 {
+  margin: 0 0 4px;
+}
+
+.header-titles .subtitle {
+  margin: 0;
 }
 
 .header h1 {
-  margin: 0 0 4px;
   font-size: 1.75rem;
 }
 
 .subtitle {
-  margin: 0 0 16px;
   color: var(--muted);
-  max-width: 900px;
   line-height: 1.5;
-}
-
-.header .header-titles .subtitle {
-  margin-bottom: 0;
 }
 
 .tabs {
@@ -93,6 +96,7 @@ body {
   color: var(--text);
   cursor: pointer;
   font-weight: 600;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
 }
 
 .tabs button.active {
@@ -107,6 +111,11 @@ body {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 20px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+}
+
+.panel h2 {
+  margin-top: 0;
 }
 
 .toolbar {
@@ -126,6 +135,17 @@ body {
   color: var(--primary-contrast);
   font-weight: 600;
   cursor: pointer;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.toolbar button:hover,
+.panel button:hover {
+  opacity: 0.94;
+}
+
+.toolbar button:active,
+.panel button:active {
+  transform: translateY(1px);
 }
 
 .panel button.secondary {
@@ -154,6 +174,34 @@ body {
 
 .banner.ok {
   background: var(--ok-bg);
+}
+
+.banner-with-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.banner-with-actions .banner-msg {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-ghost {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.btn-ghost:hover {
+  background: color-mix(in srgb, var(--surface) 85%, var(--border));
 }
 
 .banner.error {
@@ -262,6 +310,18 @@ textarea {
   font: inherit;
 }
 
+.invalid-input {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 45%, transparent);
+}
+
+.field-error {
+  margin-top: 4px;
+  color: var(--danger);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
 .row {
   display: flex;
   gap: 12px;
@@ -269,9 +329,10 @@ textarea {
 
 .box {
   padding: 12px;
-  border: 1px dashed var(--border);
+  border: 1px solid var(--border);
   border-radius: 10px;
   margin-bottom: 12px;
+  background: var(--surface-soft);
 }
 
 label.check {
@@ -311,4 +372,232 @@ label.check {
 
 .footer a {
   color: var(--primary);
+}
+
+/* Вкладка «Архивация»: split-панель в духе классических планировщиков бэкапов */
+.backup-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding-bottom: 0;
+}
+
+.backup-split-top {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 16px;
+}
+
+.backup-split-bottom {
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.backup-subtabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  margin: 0 -4px;
+  padding: 0 4px 0;
+}
+
+.backup-subtabs button {
+  padding: 10px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+
+.backup-subtabs button:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.backup-subtabs button.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  background: var(--surface);
+}
+
+.backup-toolbar {
+  margin-bottom: 0;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.table-wrap .data {
+  margin: 0;
+}
+
+.table-wrap .data th:first-child,
+.table-wrap .data td:first-child {
+  border-left: none;
+}
+
+.table-wrap .data th:last-child,
+.table-wrap .data td:last-child {
+  border-right: none;
+}
+
+.backup-job-row {
+  cursor: pointer;
+}
+
+.backup-job-row:hover {
+  background: rgba(47, 111, 237, 0.06);
+}
+
+[data-theme="dark"] .backup-job-row:hover {
+  background: rgba(107, 156, 255, 0.08);
+}
+
+.row-actions {
+  white-space: nowrap;
+}
+
+.row-actions button {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+}
+
+.task-name-cell {
+  font-weight: 600;
+}
+
+.new-task-details {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 12px 12px;
+  background: var(--bg);
+}
+
+.new-task-details summary {
+  cursor: pointer;
+  font-weight: 700;
+  padding: 12px 4px;
+  list-style: none;
+}
+
+.new-task-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.new-task-body {
+  padding-top: 4px;
+}
+
+.backup-edit-box {
+  margin-top: 4px;
+}
+
+.status-bar-effector {
+  margin: 16px -20px -20px;
+  padding: 10px 20px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 13px 13px;
+}
+
+.status-bar-effector.err {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.backup-main-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+
+.backup-main-tabs button {
+  padding: 10px 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.backup-main-tabs button:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.backup-main-tabs button.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.job-editor-details {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 12px 12px;
+  background: var(--bg);
+}
+
+.job-editor-details summary {
+  cursor: pointer;
+  font-weight: 700;
+  padding: 12px 4px;
+  list-style: none;
+}
+
+.job-editor-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.new-task-page {
+  padding: 4px 0 8px;
+}
+
+.new-task-page-title {
+  margin: 0 0 12px;
+  font-size: 1.25rem;
+}
+
+.about-page .about-brand {
+  text-align: left;
+  max-width: 720px;
+}
+
+.about-logo {
+  border-radius: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.about-author {
+  margin-top: 24px;
+  font-size: 0.95rem;
+}
+
+.service-control-box {
+  margin-bottom: 20px;
+}
+
+.service-control-actions {
+  flex-wrap: wrap;
 }

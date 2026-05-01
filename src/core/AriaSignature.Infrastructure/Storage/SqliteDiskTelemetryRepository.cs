@@ -57,7 +57,7 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
                 """;
             metric.Parameters.AddWithValue("$DiskId", disk.Id.ToString());
             metric.Parameters.AddWithValue("$TemperatureCelsius", disk.TemperatureCelsius);
-            metric.Parameters.AddWithValue("$HealthPercent", disk.HealthPercent);
+            metric.Parameters.AddWithValue("$HealthPercent", disk.HealthPercent.HasValue ? disk.HealthPercent.Value : (object)DBNull.Value);
             metric.Parameters.AddWithValue("$ReallocatedSectors", disk.ReallocatedSectors);
             metric.Parameters.AddWithValue("$PendingSectors", disk.PendingSectors);
             metric.Parameters.AddWithValue("$UncorrectableErrors", disk.UncorrectableErrors);
@@ -141,7 +141,7 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
             {
                 DiskId = Guid.Parse(reader.GetString(0)),
                 TemperatureCelsius = reader.GetInt32(1),
-                HealthPercent = reader.GetInt32(2),
+                HealthPercent = reader.IsDBNull(2) ? null : reader.GetInt32(2),
                 ReallocatedSectors = reader.GetInt32(3),
                 PendingSectors = reader.GetInt32(4),
                 UncorrectableErrors = reader.GetInt32(5),
@@ -164,7 +164,7 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
         command.Parameters.AddWithValue("$SizeFreeBytes", disk.SizeFreeBytes);
         command.Parameters.AddWithValue("$SsdLifeRemaining", disk.SsdLifeRemainingPercent.HasValue ? disk.SsdLifeRemainingPercent.Value : (object)DBNull.Value);
         command.Parameters.AddWithValue("$TemperatureCelsius", disk.TemperatureCelsius);
-        command.Parameters.AddWithValue("$HealthPercent", disk.HealthPercent);
+        command.Parameters.AddWithValue("$HealthPercent", disk.HealthPercent.HasValue ? disk.HealthPercent.Value : (object)DBNull.Value);
         command.Parameters.AddWithValue("$PowerOnHours", disk.PowerOnHours);
         command.Parameters.AddWithValue("$PowerCycleCount", disk.PowerCycleCount);
         command.Parameters.AddWithValue("$ReallocatedSectors", disk.ReallocatedSectors);
@@ -187,7 +187,7 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
             SizeFreeBytes = reader.GetInt64(6),
             SsdLifeRemainingPercent = reader.IsDBNull(7) ? null : reader.GetInt32(7),
             TemperatureCelsius = reader.GetInt32(8),
-            HealthPercent = reader.GetInt32(9),
+            HealthPercent = reader.IsDBNull(9) ? null : reader.GetInt32(9),
             PowerOnHours = reader.GetInt64(10),
             PowerCycleCount = reader.GetInt64(11),
             ReallocatedSectors = reader.GetInt32(12),

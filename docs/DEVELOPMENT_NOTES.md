@@ -1,59 +1,34 @@
-# Журнал разработки AriaSignature
+# AriaSignature — development notes
 
-## Релиз 0.2.2
+## Release 0.2.2
 
-- Панель: логотип в шапке (`src/web/public/logo.png`), нейтральные формулировки без скобок «например 1С», подсказка по Quartz только в расширенном режиме расписания (без заголовка «Как это читать»).
-- Диагностика дисков: учёт `MSFT_StorageReliabilityCounter` (Wear/температура/циклы) для достоверной оценки износа SSD рядом с SMART.
-- Версии и документация синхронизированы.
+### Functional changes
+- Added low-level disk telemetry channel via `smartctl` (ATA/NVMe JSON), merged with WMI and Storage Reliability counters.
+- Improved SMART/health/temperature coverage for devices where WMI alone is incomplete.
+- Added user-facing schedule presets for SMART polling in Settings (interval/daily/custom Quartz).
+- Improved form validation UX for backup task creation (field-level errors + human-readable messages).
 
-## Релиз 0.2.1
+### Runtime and shell
+- Fixed tray restore crash caused by invalid WPF state combination (`ShowActivated=false` + `WindowState=Maximized`).
+- Kept single-instance behavior with foreground activation of existing process.
 
-- Исправлен старт локального API: `WebApplication.CreateBuilder` вместо SlimBuilder (совместимость со Swagger).
-- Диагностика дисков: устойчивый WMI, запасной перечень томов, `POST /api/v1/disks/refresh`, исправление мутации `SmartAttributes`.
-- Установщик: корректный `sc create` с `AddQuotes` для путей с пробелами, 64-битный `sc.exe`, проверка `sc query` после регистрации службы.
-- Документация и версии синхронизированы (`Directory.Build.props`, Inno, npm, docs).
+### UI and consistency
+- Normalized service status presentation in Russian.
+- Unified visual style for panels/controls and tightened section hierarchy.
 
-## Git-процесс
+### Documentation
+- Rewritten user/API/developer/installer/release-gate docs in a uniform technical style.
+- Clarified system purpose: autonomous service operation + API publication for external consumption.
 
-- Релизная ветка: `production`.
-- Рабочая ветка разработки: `test/agent-work`.
-- Изменения коммитятся и пушатся в `test/agent-work`.
-- Слияние в `production` выполняется вручную владельцем репозитория.
+## Release 0.2.1
 
-## Политика иконок
+- Stabilized API startup and Swagger compatibility.
+- Hardened WMI telemetry collection and refresh endpoint behavior.
+- Improved installer service registration flow (`sc create`, quoting, verification).
+- Synchronized versions across build artifacts and docs.
 
-- Исходный файл иконки: `icon.png` (корень репозитория).
-- Единая иконка применяется для:
-  - исполняемого файла UI;
-  - иконки в трее;
-  - установщика и ярлыков.
+## Branching policy
 
-## Текущее состояние проекта
-
-- Собрано решение в стиле Clean Architecture.
-- Реализованы доменные модели диагностики дисков и архивации.
-- Сервисный контур поднимает локальный API `/api/v1`.
-- Реализован сбор SMART/дисковой телеметрии через WMI.
-- Реализован scheduler для фоновых задач архивации.
-- Добавлено хранение данных в SQLite (диски, SMART, задачи, логи).
-- Панель управления: WPF + WebView2, интерфейс — React/Vite SPA из `src/web` (вкладки: накопители, архивация, настройки).
-- UI переведен на строгий `service-first` режим (данные только через API службы).
-- В UI доступны операции задач:
-  - создание;
-  - редактирование;
-  - включение/выключение;
-  - ручной запуск;
-  - удаление.
-- В UI добавлены:
-  - выбор темы (светлая/тёмная);
-  - управление автозапуском;
-  - интерактивный выбор файла/папки для `File` сценария;
-  - live-индикаторы (диски/задачи/ошибки);
-  - пользовательский cron.
-- В API добавлены строгие валидации и `problem+json` semantics.
-- В `BackupExecutor` добавлены проверки корректности результата и упаковка артефактов в `.rar`.
-- Установщик переведен на предсказуемый lifecycle службы (install/upgrade/uninstall).
-- Добавлены release-gate артефакты:
-  - `scripts/release-gate.ps1`;
-  - `docs/RELEASE_GATE.md`.
-- Сборка и тестовый контур проходят успешно.
+- Release branch: `production`.
+- Working branch: `test/agent-work`.
+- Merge to `production` is controlled by repository owner.

@@ -1,60 +1,80 @@
-# Руководство по установщику AriaSignature
+# AriaSignature installer guide
 
-**Версия установщика** задаётся `#define MyAppVersion` в `AriaSignature.iss` и должна совпадать с `Directory.Build.props` (сейчас **0.2.2**).
+Версия документа: 0.2.2.
 
-## Требования
+## 1. Назначение
 
-- Windows 10/11 x64.
-- Установлен Inno Setup 6.
-- Подготовлены publish-артефакты UI и службы.
-- WebView2 bootstrapper `installer/webview2/MicrosoftEdgeWebView2Setup.exe` (release-gate загрузит автоматически, если файла нет).
+Документ описывает выпуск инсталлятора, который:
+- устанавливает UI и Windows service;
+- регистрирует и запускает `AriaSignatureService`;
+- обеспечивает автозапуск службы после перезагрузки;
+- удаляет компоненты корректно на uninstall.
 
-## Подготовка publish-артефактов
+## 2. Предварительные требования
 
-Запускать из корня репозитория:
+- Windows 10/11 x64;
+- .NET 8 SDK (для подготовки publish-артефактов);
+- Inno Setup 6 (`ISCC.exe`);
+- WebView2 bootstrapper: `installer/webview2/MicrosoftEdgeWebView2Setup.exe`.
+
+## 3. Подготовка артефактов
+
+Из корня репозитория:
 
 ```powershell
 dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c Release -o .\publish\ui
 dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c Release -o .\publish\service
 ```
 
-## Сборка установщика
+## 4. Сборка установщика
 
-- Откройте `installer/inno/AriaSignature.iss` в Inno Setup Compiler и выполните сборку.
-- Готовый файл появляется в `artifacts/installer`.
-- Для полного автоматического прогона используйте `.\scripts\release-gate.ps1`.
+Стандартный способ:
 
-## Права и безопасность
+```powershell
+.\scripts\release-gate.ps1 -Configuration Release
+```
 
-- Установщик требует права администратора (`PrivilegesRequired=admin`).
-- Архитектура установщика: `x64compatible`.
-- Служба устанавливается с автостартом и политикой восстановления.
-- Деинсталлятор корректно останавливает и удаляет службу.
-- Если WebView2 Runtime отсутствует, установщик запускает его тихую установку перед первым стартом UI.
+Результат:
+- `artifacts/installer/AriaSignature-Setup.exe`
 
-## Поведение службы при установке/обновлении
+Ручной способ:
+- открыть `installer/inno/AriaSignature.iss` в Inno Setup;
+- выполнить compile.
 
-- Путь к `AriaSignature.Service.exe` в `sc create` передаётся через `AddQuotes` (обязательно для `C:\Program Files\...`); иначе `sc.exe` некорректно разбирает аргументы и служба не появляется в `services.msc`.
-- Для вызова используется 64-битный `sc.exe` (`{sysnative}\sc.exe` с запасными вариантами).
-- После `sc create` выполняется проверка `sc query AriaSignatureService`; при отсутствии записи установка прерывается с сообщением.
-- Перед регистрацией новой службы выполняется deterministic stop/delete предыдущей версии.
-- Служба создается заново с автостартом и recovery policy.
-- При ошибке регистрации или запуска установщик завершает процесс с явной ошибкой.
+## 5. Требования к версии
 
-## Поведение при удалении
+`MyAppVersion` в `AriaSignature.iss` должен совпадать с:
+- `Directory.Build.props`;
+- `src/web/package.json`;
+- версиями в документации.
 
-- На uninstall выполняется best-effort stop/delete `AriaSignatureService`.
-- Состояния «службы нет» и «служба уже остановлена» считаются допустимыми.
-- Данные внутри каталога установки (`{app}`), включая SQLite и логи, удаляются.
+## 6. Поведение установки/обновления
 
-## Автозапуск и трей
+- `PrivilegesRequired=admin`, архитектура `x64compatible`;
+- перед регистрацией службы выполняется stop/delete предыдущей инсталляции;
+- регистрация выполняется через корректно экранированный путь (`AddQuotes`);
+- после регистрации выполняется проверка существования службы;
+- применяется политика автозапуска и recovery.
 
-- Установщик может добавить ярлык автозапуска в `commonstartup`.
-- Ярлык запускает UI с параметром `--tray`.
-- Закрытие окна сворачивает приложение в трей, полный выход выполняется через меню трея.
+При критической ошибке регистрации/старта установка завершается с ошибкой.
 
-## Иконки
+## 7. Поведение удаления
 
-- Исходный ресурс: `icon.png` (корень репозитория).
-- Единый `icon.ico` используется в exe, окне, трее, ярлыках и установщике.
-- В скрипте включен `SetupIconFile`.
+- best-effort stop/delete `AriaSignatureService`;
+- допустимые состояния: служба отсутствует / уже остановлена;
+- удаляется каталог установки и локальные данные в `{app}`.
+
+## 8. Автозапуск UI и трей
+
+- optional startup shortcut в `commonstartup`;
+- запуск UI с параметром `--tray`;
+- штатный выход выполняется через меню трея.
+
+## 9. Верификация после установки
+
+Минимальные проверки:
+- служба `AriaSignatureService` существует и запущена;
+- UI открывается без ошибки WebView2;
+- API доступен на `http://127.0.0.1:{port}/api/v1/status`;
+- создание и запуск backup-задачи выполняются успешно;
+- журнал содержит запись о выполнении.
