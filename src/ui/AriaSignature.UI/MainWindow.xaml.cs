@@ -17,6 +17,7 @@ public partial class MainWindow : Window
     private readonly App _app;
     private readonly StartupRegistrationService _startup = new();
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(8) };
+    private CancellationTokenSource? _startupRetryCts;
 
     public MainWindow(App app)
     {
@@ -42,16 +43,6 @@ public partial class MainWindow : Window
         }
 
         var baseUrl = await ResolveApiBaseAsync() ?? DefaultApiBase;
-        if (!await WaitApiReadyAsync(baseUrl, TimeSpan.FromSeconds(30)))
-        {
-            System.Windows.MessageBox.Show(
-                "Локальный API не поднялся в ожидаемое время. Проверьте антивирус/брандмауэр и попробуйте перезапустить приложение.\n" +
-                $"Ожидаемый адрес: {baseUrl}",
-                "AriaSignature",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
-            return;
-        }
 
         try
         {
@@ -90,18 +81,13 @@ public partial class MainWindow : Window
         {
             if (!e.IsSuccess)
             {
-                var status = (int)e.WebErrorStatus;
-                var html =
-                    "<!DOCTYPE html><html lang=\"ru\"><head><meta charset=\"utf-8\"/><title>AriaSignature</title>" +
-                    "<style>body{font-family:Segoe UI,sans-serif;padding:24px;background:#111;color:#eee;max-width:720px}" +
-                    "code{background:#222;padding:2px 6px}</style></head><body>" +
-                    "<h1>Не удалось открыть панель</h1>" +
-                    "<p>Адрес: <code>" + System.Net.WebUtility.HtmlEncode($"{baseUrl.TrimEnd('/')}/") + "</code></p>" +
-                    "<p>Код ошибки WebView2: <strong>" + status + "</strong> (" +
-                    System.Net.WebUtility.HtmlEncode(e.WebErrorStatus.ToString()) + ")</p>" +
-                    "<p>Проверьте, что локальный сервис запущен (служба AriaSignatureService или процесс AriaSignature.Service.exe), " +
-                    "антивирус не блокирует <code>127.0.0.1</code> и порт из настроек API.</p></body></html>";
-                Browser.CoreWebView2.NavigateToString(html);
+                RenderFallbackPage(
+                    "Не удалось открыть панель",
+                    "UI не получил страницу от локального API. Сервис должен быть запущен и доступен на localhost.",
+                    baseUrl,
+                    (int)e.WebErrorStatus,
+                    e.WebErrorStatus.ToString());
+                StartApiRecoveryLoop(baseUrl);
                 return;
             }
 
@@ -116,7 +102,65 @@ public partial class MainWindow : Window
             }
         };
 
+        var apiReady = await WaitApiReadyAsync(baseUrl, TimeSpan.FromSeconds(20));
+        if (!apiReady)
+        {
+            RenderFallbackPage(
+                "Сервис еще запускается",
+                "Локальный API пока не готов. Окно не будет пустым: приложение продолжит ожидание и автоматически откроет интерфейс.",
+                baseUrl);
+            StartApiRecoveryLoop(baseUrl);
+            return;
+        }
+
         Browser.Source = new Uri($"{baseUrl.TrimEnd('/')}/");
+    }
+
+    private void StartApiRecoveryLoop(string baseUrl)
+    {
+        _startupRetryCts?.Cancel();
+        _startupRetryCts?.Dispose();
+        _startupRetryCts = new CancellationTokenSource();
+        var token = _startupRetryCts.Token;
+        _ = Task.Run(async () =>
+        {
+            while (!token.IsCancellationRequested)
+            {
+                if (await WaitApiReadyAsync(baseUrl, TimeSpan.FromSeconds(3)))
+                {
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        Browser.Source = new Uri($"{baseUrl.TrimEnd('/')}/");
+                    });
+                    return;
+                }
+
+                await Task.Delay(2000, token);
+            }
+        }, token);
+    }
+
+    private void RenderFallbackPage(string title, string details, string baseUrl, int? code = null, string? codeName = null)
+    {
+        if (Browser.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        var errorCodeText = code is int c
+            ? $"<p>Код ошибки WebView2: <strong>{c}</strong> ({System.Net.WebUtility.HtmlEncode(codeName ?? "unknown")})</p>"
+            : string.Empty;
+        var html =
+            "<!DOCTYPE html><html lang=\"ru\"><head><meta charset=\"utf-8\"/><title>AriaSignature</title>" +
+            "<style>body{font-family:Segoe UI,sans-serif;padding:24px;background:#111;color:#eee;max-width:760px}" +
+            "code{background:#222;padding:2px 6px} .muted{color:#aaa}</style></head><body>" +
+            "<h1>" + System.Net.WebUtility.HtmlEncode(title) + "</h1>" +
+            "<p>" + System.Net.WebUtility.HtmlEncode(details) + "</p>" +
+            "<p>Ожидаемый адрес: <code>" + System.Net.WebUtility.HtmlEncode($"{baseUrl.TrimEnd('/')}/") + "</code></p>" +
+            errorCodeText +
+            "<p class=\"muted\">Проверьте службу AriaSignatureService и доступность localhost. " +
+            "После восстановления сервиса окно автоматически загрузит интерфейс.</p></body></html>";
+        Browser.CoreWebView2.NavigateToString(html);
     }
 
     private static async Task<bool> WaitApiReadyAsync(string baseUrl, TimeSpan timeout)
@@ -338,6 +382,7 @@ public partial class MainWindow : Window
 
     private void OnClosingToTray(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        _startupRetryCts?.Cancel();
         if (!_app.CanCloseToTray())
         {
             return;

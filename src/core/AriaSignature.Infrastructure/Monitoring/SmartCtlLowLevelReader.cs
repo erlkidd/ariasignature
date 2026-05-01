@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
@@ -60,15 +61,13 @@ public sealed class SmartCtlLowLevelReader
             }
 
             var type = dev.TryGetProperty("type", out var t) ? t.GetString() : null;
-            var doc = string.IsNullOrWhiteSpace(type)
-                ? RunSmartCtlJson(exe, "-a", "-j", name!)
-                : RunSmartCtlJson(exe, "-a", "-j", "-d", type!, name!);
+            var doc = TryReadDeviceWithFallbacks(exe, name!, type);
             if (doc is null)
             {
                 continue;
             }
 
-            var snap = ParseSnapshot(doc.RootElement);
+            var snap = ParseSnapshot(doc.RootElement, name!);
             if (snap is null)
             {
                 continue;
@@ -79,7 +78,7 @@ public sealed class SmartCtlLowLevelReader
                 byIdentity[BuildIdentityKey(snap.Model, snap.Serial)] = snap;
             }
 
-            var idx = TryParsePhysicalDriveIndex(name);
+            var idx = snap.PhysicalDriveIndex ?? TryParsePhysicalDriveIndex(name);
             if (idx is int physicalIndex)
             {
                 byPhysicalIndex[physicalIndex] = snap;
@@ -95,15 +94,100 @@ public sealed class SmartCtlLowLevelReader
         return $"{Norm(model)}|{Norm(serial)}";
     }
 
-    private Snapshot? ParseSnapshot(JsonElement root)
+    private JsonDocument? TryReadDeviceWithFallbacks(string exe, string name, string? scannedType)
+    {
+        foreach (var candidate in BuildDeviceTypeCandidates(name, scannedType))
+        {
+            var doc = string.IsNullOrWhiteSpace(candidate)
+                ? RunSmartCtlJson(exe, "-a", "-j", name)
+                : RunSmartCtlJson(exe, "-a", "-j", "-d", candidate, name);
+            if (doc is null)
+            {
+                continue;
+            }
+
+            if (GetInt(doc.RootElement, "exit_status") is int code && code >= 8)
+            {
+                doc.Dispose();
+                continue;
+            }
+
+            return doc;
+        }
+
+        _logger.LogInformation("smartctl: no readable payload for device {Device}", name);
+        return null;
+    }
+
+    private static IReadOnlyList<string?> BuildDeviceTypeCandidates(string deviceName, string? scannedType)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var list = new List<string?>();
+        void Add(string? type)
+        {
+            var key = type ?? "<auto>";
+            if (seen.Add(key))
+            {
+                list.Add(type);
+            }
+        }
+
+        Add(scannedType);
+        Add(null);
+
+        var up = deviceName.ToUpperInvariant();
+        var isPhysical = up.Contains("PHYSICALDRIVE", StringComparison.Ordinal);
+        if (isPhysical)
+        {
+            Add("auto");
+            Add("sat");
+            Add("scsi");
+            Add("ata");
+            Add("nvme");
+            Add("usbjmicron");
+            Add("usbsunplus");
+            Add("usbprolific");
+            Add("sntjmicron");
+        }
+
+        if (up.Contains("NVME", StringComparison.Ordinal))
+        {
+            Add("nvme");
+        }
+
+        if (up.Contains("USB", StringComparison.Ordinal))
+        {
+            Add("sat");
+            Add("scsi");
+        }
+
+        return list;
+    }
+
+    private Snapshot? ParseSnapshot(JsonElement root, string deviceName)
     {
         var model = GetString(root, "model_name") ?? GetString(root, "model_family") ?? string.Empty;
         var serial = GetString(root, "serial_number") ?? string.Empty;
         var snap = new Snapshot
         {
             Model = model.Trim(),
-            Serial = serial.Trim()
+            Serial = serial.Trim(),
+            DeviceName = deviceName,
+            DeviceType = GetString(root, "device", "type"),
+            PhysicalDriveIndex = TryParsePhysicalDriveIndex(deviceName)
         };
+
+        var infoName = GetString(root, "device", "name");
+        if (snap.PhysicalDriveIndex is null && !string.IsNullOrWhiteSpace(infoName))
+        {
+            snap.PhysicalDriveIndex = TryParsePhysicalDriveIndex(infoName);
+        }
+
+        var infoPath = GetString(root, "info_name");
+        if (snap.PhysicalDriveIndex is null && !string.IsNullOrWhiteSpace(infoPath))
+        {
+            snap.PhysicalDriveIndex = TryParsePhysicalDriveIndex(infoPath);
+        }
 
         if (root.TryGetProperty("temperature", out var tempObj))
         {
@@ -285,6 +369,16 @@ public sealed class SmartCtlLowLevelReader
     private static string? GetString(JsonElement element, string name) =>
         element.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
 
+    private static string? GetString(JsonElement element, string parent, string child)
+    {
+        if (!element.TryGetProperty(parent, out var p) || p.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        return GetString(p, child);
+    }
+
     private static int? TryParsePhysicalDriveIndex(string? deviceName)
     {
         if (string.IsNullOrWhiteSpace(deviceName))
@@ -312,8 +406,14 @@ public sealed class SmartCtlLowLevelReader
             return null;
         }
 
-        return int.TryParse(up.AsSpan(start, end - start), NumberStyles.Integer, CultureInfo.InvariantCulture, out var idx)
-            ? idx
+        if (int.TryParse(up.AsSpan(start, end - start), NumberStyles.Integer, CultureInfo.InvariantCulture, out var idx))
+        {
+            return idx;
+        }
+
+        var regex = Regex.Match(up, @"PHYSICALDRIVE(\d+)", RegexOptions.CultureInvariant);
+        return regex.Success && int.TryParse(regex.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var rx)
+            ? rx
             : null;
     }
 
@@ -351,7 +451,10 @@ public sealed class SmartCtlLowLevelReader
     {
         public string Model { get; init; } = string.Empty;
         public string Serial { get; init; } = string.Empty;
-        public int TemperatureCelsius { get; set; }
+        public string DeviceName { get; init; } = string.Empty;
+        public string? DeviceType { get; init; }
+        public int? PhysicalDriveIndex { get; set; }
+        public int? TemperatureCelsius { get; set; }
         public long PowerOnHours { get; set; }
         public long PowerCycleCount { get; set; }
         public int ReallocatedSectors { get; set; }

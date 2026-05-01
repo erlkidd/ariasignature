@@ -1,6 +1,6 @@
 # AriaSignature installer guide
 
-Версия документа: 0.2.2.
+Версия документа: 0.2.3.
 
 ## 1. Назначение
 
@@ -17,6 +17,7 @@
 - Inno Setup 6 (`ISCC.exe`);
 - WebView2 bootstrapper: `installer/webview2/MicrosoftEdgeWebView2Setup.exe`.
 - `smartctl.exe` (smartmontools) доступен на build-машине в `PATH` или через `ARIASIGNATURE_SMARTCTL` (release-gate добавляет бинарник в инсталлятор автоматически).
+- `drivedb.h` обязателен для корректной базы сигнатур SMART (проверяется release-gate).
 
 ## 3. Подготовка артефактов
 
@@ -78,5 +79,6 @@ dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj 
 - UI открывается без ошибки WebView2;
 - API доступен на `http://127.0.0.1:{port}/api/v1/status`;
 - low-level SMART канал активен (в логах сервиса есть строка про `smartctl` либо метрики дисков показывают температуру/health, когда поддерживается устройством);
+- в `{app}\service\smartctl` присутствуют `smartctl.exe` и `drivedb.h` с ненулевым размером;
 - создание и запуск backup-задачи выполняются успешно;
 - журнал содержит запись о выполнении.

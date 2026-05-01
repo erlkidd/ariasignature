@@ -38,11 +38,17 @@ if (-not (Test-Path $webView2Exe)) {
 Write-Host "7/8 Prepare smartctl runtime..."
 $smartCtlDir = ".\installer\smartctl"
 $smartCtlExe = Join-Path $smartCtlDir "smartctl.exe"
+$driveDbPath = Join-Path $smartCtlDir "drivedb.h"
 if (-not (Test-Path $smartCtlExe)) {
     $smartCtlCmd = Get-Command smartctl -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue
     if ($smartCtlCmd) {
         New-Item -Path $smartCtlDir -ItemType Directory -Force | Out-Null
         Copy-Item -Path $smartCtlCmd -Destination $smartCtlExe -Force
+        $cmdDir = Split-Path -Parent $smartCtlCmd
+        $pathDriveDb = Join-Path $cmdDir "drivedb.h"
+        if (Test-Path $pathDriveDb) {
+            Copy-Item -Path $pathDriveDb -Destination $driveDbPath -Force
+        }
     }
     else {
         $tmpRoot = ".\installer\smartctl-temp"
@@ -71,9 +77,22 @@ if (-not (Test-Path $smartCtlExe)) {
         Copy-Item -Path $candidate -Destination $smartCtlExe -Force
         $drivedb = Join-Path $extractRoot "bin\drivedb.h"
         if (Test-Path $drivedb) {
-            Copy-Item -Path $drivedb -Destination (Join-Path $smartCtlDir "drivedb.h") -Force
+            Copy-Item -Path $drivedb -Destination $driveDbPath -Force
         }
     }
+}
+
+if (-not (Test-Path $smartCtlExe)) {
+    throw "smartctl.exe is missing after prepare step."
+}
+if ((Get-Item $smartCtlExe).Length -le 0) {
+    throw "smartctl.exe is empty after prepare step."
+}
+if (-not (Test-Path $driveDbPath)) {
+    throw "drivedb.h is missing after prepare step."
+}
+if ((Get-Item $driveDbPath).Length -le 0) {
+    throw "drivedb.h is empty after prepare step."
 }
 
 Write-Host "8/8 Build installer..."

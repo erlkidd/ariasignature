@@ -26,8 +26,8 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
             var upsert = connection.CreateCommand();
             upsert.Transaction = transaction;
             upsert.CommandText = """
-                INSERT INTO Disks (Id, Model, Serial, Interface, MediaType, SizeTotalBytes, SizeFreeBytes, SsdLifeRemaining, TemperatureCelsius, HealthPercent, PowerOnHours, PowerCycleCount, ReallocatedSectors, PendingSectors, UncorrectableErrors, Status, UpdatedAtUtc)
-                VALUES ($Id, $Model, $Serial, $Interface, $MediaType, $SizeTotalBytes, $SizeFreeBytes, $SsdLifeRemaining, $TemperatureCelsius, $HealthPercent, $PowerOnHours, $PowerCycleCount, $ReallocatedSectors, $PendingSectors, $UncorrectableErrors, $Status, $UpdatedAtUtc)
+                INSERT INTO Disks (Id, Model, Serial, Interface, MediaType, SizeTotalBytes, SizeFreeBytes, SsdLifeRemaining, TemperatureCelsius, HealthPercent, PowerOnHours, PowerCycleCount, ReallocatedSectors, PendingSectors, UncorrectableErrors, SmartCtlUsed, WmiUsed, StorageReliabilityUsed, TelemetryConfidence, TelemetryDegradationReason, Status, UpdatedAtUtc)
+                VALUES ($Id, $Model, $Serial, $Interface, $MediaType, $SizeTotalBytes, $SizeFreeBytes, $SsdLifeRemaining, $TemperatureCelsius, $HealthPercent, $PowerOnHours, $PowerCycleCount, $ReallocatedSectors, $PendingSectors, $UncorrectableErrors, $SmartCtlUsed, $WmiUsed, $StorageReliabilityUsed, $TelemetryConfidence, $TelemetryDegradationReason, $Status, $UpdatedAtUtc)
                 ON CONFLICT(Id) DO UPDATE SET
                     Model = excluded.Model,
                     Serial = excluded.Serial,
@@ -43,6 +43,11 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
                     ReallocatedSectors = excluded.ReallocatedSectors,
                     PendingSectors = excluded.PendingSectors,
                     UncorrectableErrors = excluded.UncorrectableErrors,
+                    SmartCtlUsed = excluded.SmartCtlUsed,
+                    WmiUsed = excluded.WmiUsed,
+                    StorageReliabilityUsed = excluded.StorageReliabilityUsed,
+                    TelemetryConfidence = excluded.TelemetryConfidence,
+                    TelemetryDegradationReason = excluded.TelemetryDegradationReason,
                     Status = excluded.Status,
                     UpdatedAtUtc = excluded.UpdatedAtUtc;
                 """;
@@ -56,7 +61,7 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
                 VALUES ($DiskId, $TemperatureCelsius, $HealthPercent, $ReallocatedSectors, $PendingSectors, $UncorrectableErrors, $Status, $TimestampUtc);
                 """;
             metric.Parameters.AddWithValue("$DiskId", disk.Id.ToString());
-            metric.Parameters.AddWithValue("$TemperatureCelsius", disk.TemperatureCelsius);
+            metric.Parameters.AddWithValue("$TemperatureCelsius", disk.TemperatureCelsius.HasValue ? disk.TemperatureCelsius.Value : (object)DBNull.Value);
             metric.Parameters.AddWithValue("$HealthPercent", disk.HealthPercent.HasValue ? disk.HealthPercent.Value : (object)DBNull.Value);
             metric.Parameters.AddWithValue("$ReallocatedSectors", disk.ReallocatedSectors);
             metric.Parameters.AddWithValue("$PendingSectors", disk.PendingSectors);
@@ -88,7 +93,7 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
 
         var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, Model, Serial, Interface, MediaType, SizeTotalBytes, SizeFreeBytes, SsdLifeRemaining, TemperatureCelsius, HealthPercent, PowerOnHours, PowerCycleCount, ReallocatedSectors, PendingSectors, UncorrectableErrors, Status, UpdatedAtUtc
+            SELECT Id, Model, Serial, Interface, MediaType, SizeTotalBytes, SizeFreeBytes, SsdLifeRemaining, TemperatureCelsius, HealthPercent, PowerOnHours, PowerCycleCount, ReallocatedSectors, PendingSectors, UncorrectableErrors, SmartCtlUsed, WmiUsed, StorageReliabilityUsed, TelemetryConfidence, TelemetryDegradationReason, Status, UpdatedAtUtc
             FROM Disks ORDER BY Model;
             """;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -109,7 +114,7 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
 
         var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, Model, Serial, Interface, MediaType, SizeTotalBytes, SizeFreeBytes, SsdLifeRemaining, TemperatureCelsius, HealthPercent, PowerOnHours, PowerCycleCount, ReallocatedSectors, PendingSectors, UncorrectableErrors, Status, UpdatedAtUtc
+            SELECT Id, Model, Serial, Interface, MediaType, SizeTotalBytes, SizeFreeBytes, SsdLifeRemaining, TemperatureCelsius, HealthPercent, PowerOnHours, PowerCycleCount, ReallocatedSectors, PendingSectors, UncorrectableErrors, SmartCtlUsed, WmiUsed, StorageReliabilityUsed, TelemetryConfidence, TelemetryDegradationReason, Status, UpdatedAtUtc
             FROM Disks WHERE Id = $Id;
             """;
         command.Parameters.AddWithValue("$Id", diskId.ToString());
@@ -140,7 +145,7 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
             metrics.Add(new SmartMetric
             {
                 DiskId = Guid.Parse(reader.GetString(0)),
-                TemperatureCelsius = reader.GetInt32(1),
+                TemperatureCelsius = reader.IsDBNull(1) ? null : reader.GetInt32(1),
                 HealthPercent = reader.IsDBNull(2) ? null : reader.GetInt32(2),
                 ReallocatedSectors = reader.GetInt32(3),
                 PendingSectors = reader.GetInt32(4),
@@ -163,13 +168,18 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
         command.Parameters.AddWithValue("$SizeTotalBytes", disk.SizeTotalBytes);
         command.Parameters.AddWithValue("$SizeFreeBytes", disk.SizeFreeBytes);
         command.Parameters.AddWithValue("$SsdLifeRemaining", disk.SsdLifeRemainingPercent.HasValue ? disk.SsdLifeRemainingPercent.Value : (object)DBNull.Value);
-        command.Parameters.AddWithValue("$TemperatureCelsius", disk.TemperatureCelsius);
+        command.Parameters.AddWithValue("$TemperatureCelsius", disk.TemperatureCelsius.HasValue ? disk.TemperatureCelsius.Value : (object)DBNull.Value);
         command.Parameters.AddWithValue("$HealthPercent", disk.HealthPercent.HasValue ? disk.HealthPercent.Value : (object)DBNull.Value);
         command.Parameters.AddWithValue("$PowerOnHours", disk.PowerOnHours);
         command.Parameters.AddWithValue("$PowerCycleCount", disk.PowerCycleCount);
         command.Parameters.AddWithValue("$ReallocatedSectors", disk.ReallocatedSectors);
         command.Parameters.AddWithValue("$PendingSectors", disk.PendingSectors);
         command.Parameters.AddWithValue("$UncorrectableErrors", disk.UncorrectableErrors);
+        command.Parameters.AddWithValue("$SmartCtlUsed", disk.SmartCtlUsed ? 1 : 0);
+        command.Parameters.AddWithValue("$WmiUsed", disk.WmiUsed ? 1 : 0);
+        command.Parameters.AddWithValue("$StorageReliabilityUsed", disk.StorageReliabilityUsed ? 1 : 0);
+        command.Parameters.AddWithValue("$TelemetryConfidence", disk.TelemetryConfidence);
+        command.Parameters.AddWithValue("$TelemetryDegradationReason", disk.TelemetryDegradationReason ?? string.Empty);
         command.Parameters.AddWithValue("$Status", (int)disk.Status);
         command.Parameters.AddWithValue("$UpdatedAtUtc", disk.UpdatedAtUtc.UtcDateTime.ToString("O"));
     }
@@ -186,15 +196,20 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
             SizeTotalBytes = reader.GetInt64(5),
             SizeFreeBytes = reader.GetInt64(6),
             SsdLifeRemainingPercent = reader.IsDBNull(7) ? null : reader.GetInt32(7),
-            TemperatureCelsius = reader.GetInt32(8),
+            TemperatureCelsius = reader.IsDBNull(8) ? null : reader.GetInt32(8),
             HealthPercent = reader.IsDBNull(9) ? null : reader.GetInt32(9),
             PowerOnHours = reader.GetInt64(10),
             PowerCycleCount = reader.GetInt64(11),
             ReallocatedSectors = reader.GetInt32(12),
             PendingSectors = reader.GetInt32(13),
             UncorrectableErrors = reader.GetInt32(14),
-            Status = (DiskHealthStatus)reader.GetInt32(15),
-            UpdatedAtUtc = DateTimeOffset.Parse(reader.GetString(16))
+            SmartCtlUsed = reader.GetInt32(15) == 1,
+            WmiUsed = reader.GetInt32(16) == 1,
+            StorageReliabilityUsed = reader.GetInt32(17) == 1,
+            TelemetryConfidence = reader.GetInt32(18),
+            TelemetryDegradationReason = reader.GetString(19),
+            Status = (DiskHealthStatus)reader.GetInt32(20),
+            UpdatedAtUtc = DateTimeOffset.Parse(reader.GetString(21))
         };
     }
 }

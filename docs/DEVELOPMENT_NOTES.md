@@ -1,5 +1,21 @@
 # AriaSignature — development notes
 
+## Release 0.2.3
+
+### Telemetry reliability
+- Switched disk telemetry strategy to smartctl-first with explicit retry matrix by device type (`sat`, `nvme`, `scsi`, USB bridges) and autodetect fallback.
+- Added stronger disk mapping by `PhysicalDriveN`, model/serial and controller hints to reduce unmatched devices.
+- Added telemetry observability fields in disk model/API: `smartCtlUsed`, `wmiUsed`, `storageReliabilityUsed`, `telemetryConfidence`, `telemetryDegradationReason`.
+- Migrated `TemperatureCelsius` to nullable in domain/storage/API/UI to avoid "0 = unknown" ambiguity.
+
+### Packaging
+- Hardened release-gate: verifies `installer/smartctl/smartctl.exe` and `installer/smartctl/drivedb.h` existence and non-zero size before Inno build.
+- Inno installer continues bundling smartctl runtime to `{app}\service\smartctl` for out-of-box telemetry after install.
+
+### Startup reliability
+- Fixed UI startup behavior to avoid white/black empty window when local API is not yet ready.
+- Added explicit fallback screen with diagnostics and automatic recovery loop to open UI when service/API becomes available.
+
 ## Release 0.2.2
 
 ### Functional changes

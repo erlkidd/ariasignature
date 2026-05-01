@@ -5,7 +5,7 @@ namespace AriaSignature.Domain.Entities;
 public sealed class SmartMetric
 {
     public Guid DiskId { get; set; }
-    public int TemperatureCelsius { get; set; }
+    public int? TemperatureCelsius { get; set; }
 
     /// <summary>Снимок оценки здоровья; null если в момент записи оценка не вычислялась.</summary>
     public int? HealthPercent { get; set; }

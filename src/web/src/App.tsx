@@ -13,20 +13,25 @@ type DiskRow = {
   sizeFreeBytes: number;
   sizeUsedBytes: number;
   ssdLifeRemainingPercent: number | null;
-  temperatureCelsius: number;
+  temperatureCelsius: number | null;
   healthPercent: number | null;
   powerOnHours: number;
   powerCycleCount: number;
   reallocatedSectors: number;
   pendingSectors: number;
   uncorrectableErrors: number;
+  smartCtlUsed: boolean;
+  wmiUsed: boolean;
+  storageReliabilityUsed: boolean;
+  telemetryConfidence: number;
+  telemetryDegradationReason: string;
   status: string;
   updatedAtUtc: string;
 };
 
 interface SmartRow {
   diskId: string;
-  temperatureCelsius: number;
+  temperatureCelsius: number | null;
   healthPercent: number | null;
   reallocatedSectors: number;
   pendingSectors: number;
@@ -90,12 +95,20 @@ function formatHealthPercent(p: number | null | undefined): string {
   return `${p}%`;
 }
 
-function formatTempC(t: number): string {
-  return t > 0 ? `${t} °C` : "—";
+function formatTempC(t: number | null | undefined): string {
+  return t != null && t > 0 ? `${t} °C` : "—";
 }
 
 function formatPowerOnHours(h: number): string {
   return h > 0 ? `${h} ч` : "—";
+}
+
+function formatTelemetrySource(d: DiskRow): string {
+  const parts: string[] = [];
+  if (d.smartCtlUsed) parts.push("smartctl");
+  if (d.storageReliabilityUsed) parts.push("StorageReliability");
+  if (d.wmiUsed) parts.push("WMI");
+  return parts.length > 0 ? parts.join(" + ") : "Источник не определен";
 }
 
 function parseSmartCron(cron: string): { mode: SmartScheduleMode; intervalMin: number; hour: number; minute: number } {
@@ -768,8 +781,8 @@ export default function App() {
               Обновить данные
             </button>
             <span className="hint">
-              Данные собирает служба Windows: WMI SMART и счётчики надёжности хранилища. SQLite хранит историю опросов и задания
-              архивации.
+              Сбор телеметрии, выполнение архивации и журналирование выполняет служба AriaSignatureService. Панель предназначена
+              для локального контроля состояния и администрирования.
             </span>
           </div>
           <div className="grid2">
@@ -822,7 +835,9 @@ export default function App() {
                     <dt>Температура</dt>
                     <dd>{formatTempC(selectedDisk.temperatureCelsius)}</dd>
                     <dt>Ресурс SSD</dt>
-                    <dd>{selectedDisk.ssdLifeRemainingPercent ?? "н/д"}%</dd>
+                    <dd>
+                      {selectedDisk.ssdLifeRemainingPercent == null ? "н/д" : `${selectedDisk.ssdLifeRemainingPercent}%`}
+                    </dd>
                     <dt>Наработка</dt>
                     <dd>
                       {formatPowerOnHours(selectedDisk.powerOnHours)}, включений {selectedDisk.powerCycleCount || "—"}
@@ -832,6 +847,12 @@ export default function App() {
                       Reallocated {selectedDisk.reallocatedSectors}, Pending {selectedDisk.pendingSectors}, Uncorrectable{" "}
                       {selectedDisk.uncorrectableErrors}
                     </dd>
+                    <dt>Источник телеметрии</dt>
+                    <dd>{formatTelemetrySource(selectedDisk)}</dd>
+                    <dt>Достоверность</dt>
+                    <dd>{selectedDisk.telemetryConfidence}%</dd>
+                    <dt>Диагностика</dt>
+                    <dd>{selectedDisk.telemetryDegradationReason || "—"}</dd>
                   </dl>
                   <h3>История SMART (последние записи)</h3>
                   <table className="data compact">

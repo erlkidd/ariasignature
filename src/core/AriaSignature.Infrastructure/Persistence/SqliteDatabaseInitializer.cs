@@ -26,13 +26,18 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
                 Interface TEXT NOT NULL,
                 SizeTotalBytes INTEGER NOT NULL,
                 SizeFreeBytes INTEGER NOT NULL,
-                TemperatureCelsius INTEGER NOT NULL,
+                TemperatureCelsius INTEGER NULL,
                 HealthPercent INTEGER NULL,
                 PowerOnHours INTEGER NOT NULL,
                 PowerCycleCount INTEGER NOT NULL,
                 ReallocatedSectors INTEGER NOT NULL,
                 PendingSectors INTEGER NOT NULL,
                 UncorrectableErrors INTEGER NOT NULL,
+                SmartCtlUsed INTEGER NOT NULL DEFAULT 0,
+                WmiUsed INTEGER NOT NULL DEFAULT 0,
+                StorageReliabilityUsed INTEGER NOT NULL DEFAULT 0,
+                TelemetryConfidence INTEGER NOT NULL DEFAULT 0,
+                TelemetryDegradationReason TEXT NOT NULL DEFAULT '',
                 Status INTEGER NOT NULL,
                 UpdatedAtUtc TEXT NOT NULL
             );
@@ -40,7 +45,7 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
             CREATE TABLE IF NOT EXISTS SmartMetrics (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 DiskId TEXT NOT NULL,
-                TemperatureCelsius INTEGER NOT NULL,
+                TemperatureCelsius INTEGER NULL,
                 HealthPercent INTEGER NULL,
                 ReallocatedSectors INTEGER NOT NULL,
                 PendingSectors INTEGER NOT NULL,
@@ -87,7 +92,130 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
     {
         await AddColumnIfMissingAsync(connection, "Disks", "MediaType", "TEXT NOT NULL DEFAULT ''", cancellationToken);
         await AddColumnIfMissingAsync(connection, "Disks", "SsdLifeRemaining", "INTEGER NULL", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "Disks", "SmartCtlUsed", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "Disks", "WmiUsed", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "Disks", "StorageReliabilityUsed", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "Disks", "TelemetryConfidence", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "Disks", "TelemetryDegradationReason", "TEXT NOT NULL DEFAULT ''", cancellationToken);
         await MigrateHealthPercentColumnsToNullableAsync(connection, cancellationToken);
+        await MigrateTemperatureToNullableAsync(connection, cancellationToken);
+    }
+
+    private static async Task MigrateTemperatureToNullableAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await EnsureTemperatureNullableForTable(connection, "Disks", cancellationToken);
+        await EnsureTemperatureNullableForTable(connection, "SmartMetrics", cancellationToken);
+    }
+
+    private static async Task EnsureTemperatureNullableForTable(SqliteConnection connection, string table, CancellationToken cancellationToken)
+    {
+        if (!await ColumnExistsAsync(connection, table, "TemperatureCelsius", cancellationToken))
+        {
+            return;
+        }
+
+        await using var pragma = connection.CreateCommand();
+        pragma.CommandText = $"PRAGMA table_info({table});";
+        await using var reader = await pragma.ExecuteReaderAsync(cancellationToken);
+        var isNotNull = false;
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (!string.Equals(reader.GetString(1), "TemperatureCelsius", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            isNotNull = reader.GetInt32(3) != 0;
+            break;
+        }
+
+        if (!isNotNull)
+        {
+            return;
+        }
+
+        // SQLite schema migration for NOT NULL -> NULL uses table rebuild.
+        if (string.Equals(table, "Disks", StringComparison.OrdinalIgnoreCase))
+        {
+            await RebuildDisksTableWithNullableTemperature(connection, cancellationToken);
+            return;
+        }
+
+        await RebuildSmartMetricsTableWithNullableTemperature(connection, cancellationToken);
+    }
+
+    private static async Task RebuildDisksTableWithNullableTemperature(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var sql = """
+            CREATE TABLE IF NOT EXISTS Disks_New (
+                Id TEXT PRIMARY KEY,
+                Model TEXT NOT NULL,
+                Serial TEXT NOT NULL,
+                Interface TEXT NOT NULL,
+                MediaType TEXT NOT NULL,
+                SizeTotalBytes INTEGER NOT NULL,
+                SizeFreeBytes INTEGER NOT NULL,
+                SsdLifeRemaining INTEGER NULL,
+                TemperatureCelsius INTEGER NULL,
+                HealthPercent INTEGER NULL,
+                PowerOnHours INTEGER NOT NULL,
+                PowerCycleCount INTEGER NOT NULL,
+                ReallocatedSectors INTEGER NOT NULL,
+                PendingSectors INTEGER NOT NULL,
+                UncorrectableErrors INTEGER NOT NULL,
+                SmartCtlUsed INTEGER NOT NULL DEFAULT 0,
+                WmiUsed INTEGER NOT NULL DEFAULT 0,
+                StorageReliabilityUsed INTEGER NOT NULL DEFAULT 0,
+                TelemetryConfidence INTEGER NOT NULL DEFAULT 0,
+                TelemetryDegradationReason TEXT NOT NULL DEFAULT '',
+                Status INTEGER NOT NULL,
+                UpdatedAtUtc TEXT NOT NULL
+            );
+
+            INSERT INTO Disks_New (
+                Id, Model, Serial, Interface, MediaType, SizeTotalBytes, SizeFreeBytes, SsdLifeRemaining,
+                TemperatureCelsius, HealthPercent, PowerOnHours, PowerCycleCount, ReallocatedSectors, PendingSectors,
+                UncorrectableErrors, SmartCtlUsed, WmiUsed, StorageReliabilityUsed, TelemetryConfidence,
+                TelemetryDegradationReason, Status, UpdatedAtUtc
+            )
+            SELECT
+                Id, Model, Serial, Interface, COALESCE(MediaType, ''), SizeTotalBytes, SizeFreeBytes, SsdLifeRemaining,
+                NULLIF(TemperatureCelsius, 0), HealthPercent, PowerOnHours, PowerCycleCount, ReallocatedSectors, PendingSectors,
+                UncorrectableErrors, COALESCE(SmartCtlUsed, 0), COALESCE(WmiUsed, 0), COALESCE(StorageReliabilityUsed, 0),
+                COALESCE(TelemetryConfidence, 0), COALESCE(TelemetryDegradationReason, ''), Status, UpdatedAtUtc
+            FROM Disks;
+
+            DROP TABLE Disks;
+            ALTER TABLE Disks_New RENAME TO Disks;
+            """;
+        await using var cmd = new SqliteCommand(sql, connection);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task RebuildSmartMetricsTableWithNullableTemperature(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var sql = """
+            CREATE TABLE IF NOT EXISTS SmartMetrics_New (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                DiskId TEXT NOT NULL,
+                TemperatureCelsius INTEGER NULL,
+                HealthPercent INTEGER NULL,
+                ReallocatedSectors INTEGER NOT NULL,
+                PendingSectors INTEGER NOT NULL,
+                UncorrectableErrors INTEGER NOT NULL,
+                Status INTEGER NOT NULL,
+                TimestampUtc TEXT NOT NULL
+            );
+
+            INSERT INTO SmartMetrics_New (Id, DiskId, TemperatureCelsius, HealthPercent, ReallocatedSectors, PendingSectors, UncorrectableErrors, Status, TimestampUtc)
+            SELECT Id, DiskId, NULLIF(TemperatureCelsius, 0), HealthPercent, ReallocatedSectors, PendingSectors, UncorrectableErrors, Status, TimestampUtc
+            FROM SmartMetrics;
+
+            DROP TABLE SmartMetrics;
+            ALTER TABLE SmartMetrics_New RENAME TO SmartMetrics;
+            """;
+        await using var cmd = new SqliteCommand(sql, connection);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task MigrateHealthPercentColumnsToNullableAsync(SqliteConnection connection, CancellationToken cancellationToken)

@@ -28,10 +28,10 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             return Task.FromResult<IReadOnlyCollection<Disk>>(Array.Empty<Disk>());
         }
 
+        var smartCtlData = _smartCtl.Read();
         var smartSnapshot = ReadSmartSnapshotSafe();
         var smartByDriveIndex = BuildSmartByPhysicalDriveIndex(smartSnapshot);
         var storageReliability = ReadStorageReliabilityByPhysicalDriveIndexSafe();
-        var smartCtlData = _smartCtl.Read();
         var disks = new List<Disk>();
 
         try
@@ -58,8 +58,16 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
 
                         var diskCapacity = ResolvePhysicalDiskCapacitySafe(item, size);
                         var smart = ResolveSmartForDisk(smartSnapshot, smartByDriveIndex, physicalIndex, model, serial, pnp);
-                        MergeStorageReliability(physicalIndex, storageReliability, smart);
-                        MergeSmartCtl(physicalIndex, model, serial, smartCtlData, smart);
+                        var smartCtlUsed = MergeSmartCtl(physicalIndex, model, serial, pnp, smartCtlData, smart);
+                        var storageUsed = MergeStorageReliability(physicalIndex, storageReliability, smart);
+                        var wmiUsed = HasTelemetrySignal(smart) && !smartCtlUsed;
+                        if (!smartCtlUsed)
+                        {
+                            _logger.LogInformation(
+                                "Telemetry fallback for disk {Model} ({Serial}): smartctl mapping missing, using WMI/Storage signals.",
+                                model,
+                                string.IsNullOrWhiteSpace(serial) ? "n/a" : serial);
+                        }
 
                         var reallocated = smart.ReallocatedSectors;
                         var pending = smart.PendingSectors;
@@ -86,6 +94,11 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                             ReallocatedSectors = reallocated,
                             PendingSectors = pending,
                             UncorrectableErrors = uncorrectable,
+                            SmartCtlUsed = smartCtlUsed,
+                            WmiUsed = wmiUsed,
+                            StorageReliabilityUsed = storageUsed,
+                            TelemetryConfidence = ComputeTelemetryConfidence(smartCtlUsed, storageUsed, wmiUsed, hadTelemetry),
+                            TelemetryDegradationReason = BuildTelemetryDegradationReason(smartCtlUsed, storageUsed, wmiUsed, hadTelemetry, smartCtlData),
                             Status = status,
                             UpdatedAtUtc = DateTimeOffset.UtcNow
                         });
@@ -115,7 +128,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             AppendLogicalDriveFallback(disks, smartSnapshot, cancellationToken);
         }
 
-        if (disks.Count > 0 && disks.All(d => d.HealthPercent is null && d.TemperatureCelsius <= 0))
+        if (disks.Count > 0 && disks.All(d => d.HealthPercent is null && d.TemperatureCelsius is null))
         {
             _logger.LogWarning(
                 "Disk telemetry collected without SMART signals. " +
@@ -179,6 +192,13 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                         ReallocatedSectors = reallocated,
                         PendingSectors = pending,
                         UncorrectableErrors = uncorrectable,
+                        SmartCtlUsed = false,
+                        WmiUsed = HasTelemetrySignal(smart),
+                        StorageReliabilityUsed = false,
+                        TelemetryConfidence = HasTelemetrySignal(smart) ? 45 : 10,
+                        TelemetryDegradationReason = HasTelemetrySignal(smart)
+                            ? "Данные получены из WMI fallback."
+                            : "SMART недоступен в fallback-режиме.",
                         Status = status,
                         UpdatedAtUtc = DateTimeOffset.UtcNow
                     });
@@ -251,7 +271,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                     var normalizedTemp = NormalizeStorageTemperature(temp);
                     if (normalizedTemp is int tC && tC is > 0 and < 125)
                     {
-                        agg.TemperatureCelsius = Math.Max(agg.TemperatureCelsius, tC);
+                        agg.TemperatureCelsius = agg.TemperatureCelsius is int prev ? Math.Max(prev, tC) : tC;
                     }
 
                     var cycles = TryGetUInt64(row["LoadUnloadCycleCount"]);
@@ -364,7 +384,9 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
     private static SmartAttributes MergeSmart(SmartAttributes a, SmartAttributes b) =>
         new()
         {
-            TemperatureCelsius = Math.Max(a.TemperatureCelsius, b.TemperatureCelsius),
+            TemperatureCelsius = a.TemperatureCelsius is int at && b.TemperatureCelsius is int bt
+                ? Math.Max(at, bt)
+                : a.TemperatureCelsius ?? b.TemperatureCelsius,
             PowerOnHours = Math.Max(a.PowerOnHours, b.PowerOnHours),
             PowerCycleCount = Math.Max(a.PowerCycleCount, b.PowerCycleCount),
             ReallocatedSectors = Math.Max(a.ReallocatedSectors, b.ReallocatedSectors),
@@ -377,23 +399,27 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         };
 
     private static bool HasTelemetrySignal(SmartAttributes s) =>
-        s.TemperatureCelsius > 0 ||
+        s.TemperatureCelsius is > 0 ||
         s.PowerOnHours > 0 ||
         s.ReallocatedSectors > 0 ||
         s.PendingSectors > 0 ||
         s.UncorrectableErrors > 0 ||
         s.SsdLifeRemainingPercent is > 0;
 
-    private static void MergeStorageReliability(int? physicalIndex, Dictionary<int, SmartAttributes> storage, SmartAttributes target)
+    private static bool MergeStorageReliability(int? physicalIndex, Dictionary<int, SmartAttributes> storage, SmartAttributes target)
     {
         if (physicalIndex is not int idx || !storage.TryGetValue(idx, out var extra))
         {
-            return;
+            return false;
         }
 
-        if (extra.TemperatureCelsius > 0)
+        var used = false;
+        if (extra.TemperatureCelsius is > 0)
         {
-            target.TemperatureCelsius = Math.Max(target.TemperatureCelsius, extra.TemperatureCelsius);
+            target.TemperatureCelsius = target.TemperatureCelsius is int existing
+                ? Math.Max(existing, extra.TemperatureCelsius.Value)
+                : extra.TemperatureCelsius.Value;
+            used = true;
         }
 
         if (extra.SsdLifeRemainingPercent is int storageLife)
@@ -401,18 +427,23 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             target.SsdLifeRemainingPercent = target.SsdLifeRemainingPercent is int smartLife
                 ? Math.Min(smartLife, storageLife)
                 : storageLife;
+            used = true;
         }
 
         if (extra.PowerCycleCount > target.PowerCycleCount)
         {
             target.PowerCycleCount = extra.PowerCycleCount;
+            used = true;
         }
+
+        return used;
     }
 
-    private static void MergeSmartCtl(
+    private static bool MergeSmartCtl(
         int? physicalIndex,
         string model,
         string serial,
+        string pnpDeviceId,
         SmartCtlLowLevelReader.ReadResult smartCtlData,
         SmartAttributes target)
     {
@@ -429,14 +460,23 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             smartCtlData.ByIdentity.TryGetValue(key, out src);
         }
 
-        if (src is null)
+        if (src is null && !string.IsNullOrWhiteSpace(pnpDeviceId))
         {
-            return;
+            src = smartCtlData.ByIdentity.Values.FirstOrDefault(s =>
+                pnpDeviceId.Contains(s.Serial, StringComparison.OrdinalIgnoreCase) ||
+                pnpDeviceId.Contains(s.Model, StringComparison.OrdinalIgnoreCase));
         }
 
-        if (src.TemperatureCelsius > 0)
+        if (src is null)
         {
-            target.TemperatureCelsius = Math.Max(target.TemperatureCelsius, src.TemperatureCelsius);
+            return false;
+        }
+
+        if (src.TemperatureCelsius is > 0)
+        {
+            target.TemperatureCelsius = target.TemperatureCelsius is int existing
+                ? Math.Max(existing, src.TemperatureCelsius.Value)
+                : src.TemperatureCelsius.Value;
         }
 
         target.PowerOnHours = Math.Max(target.PowerOnHours, src.PowerOnHours);
@@ -451,6 +491,8 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                 ? Math.Min(existing, life)
                 : life;
         }
+
+        return true;
     }
 
     private static SmartAttributes CopySmartAttributes(SmartAttributes s) =>
@@ -760,6 +802,61 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         return long.TryParse(value?.ToString(), out var parsed) ? parsed : 0;
     }
 
+    private static int ComputeTelemetryConfidence(bool smartCtlUsed, bool storageUsed, bool wmiUsed, bool hadTelemetry)
+    {
+        if (!hadTelemetry)
+        {
+            return 5;
+        }
+
+        var score = 20;
+        if (smartCtlUsed)
+        {
+            score += 55;
+        }
+
+        if (storageUsed)
+        {
+            score += 20;
+        }
+
+        if (wmiUsed)
+        {
+            score += 10;
+        }
+
+        return Math.Clamp(score, 0, 100);
+    }
+
+    private static string BuildTelemetryDegradationReason(
+        bool smartCtlUsed,
+        bool storageUsed,
+        bool wmiUsed,
+        bool hadTelemetry,
+        SmartCtlLowLevelReader.ReadResult smartCtlData)
+    {
+        if (smartCtlUsed)
+        {
+            return storageUsed
+                ? "Использован smartctl как первичный источник, дополнено StorageReliability."
+                : "Использован smartctl как первичный источник телеметрии.";
+        }
+
+        if (wmiUsed || storageUsed)
+        {
+            if (smartCtlData.ByIdentity.Count == 0 && smartCtlData.ByPhysicalIndex.Count == 0)
+            {
+                return "smartctl недоступен или не вернул устройства; используется WMI fallback.";
+            }
+
+            return "smartctl не сопоставлен с диском, используются WMI/Storage fallback-метрики.";
+        }
+
+        return hadTelemetry
+            ? "Метрики получены частично, возможны ограничения контроллера."
+            : "Телеметрия недоступна: диск/контроллер не отдает SMART-атрибуты.";
+    }
+
     private static int EstimateHealth(int reallocated, int pending, int uncorrectable, int? ssdLife)
     {
         var penalty = (reallocated * 2) + (pending * 5) + (uncorrectable * 8);
@@ -821,7 +918,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
     private sealed record SmartAttributes
     {
         public static readonly SmartAttributes Empty = new();
-        public int TemperatureCelsius { get; set; }
+        public int? TemperatureCelsius { get; set; }
         public long PowerOnHours { get; set; }
         public long PowerCycleCount { get; set; }
         public int ReallocatedSectors { get; set; }
