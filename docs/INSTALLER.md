@@ -1,6 +1,6 @@
 # AriaSignature — руководство по installer
 
-Версия документа: 0.2.4.
+Версия документа: 0.2.5.
 
 ## 1. Назначение
 
@@ -15,7 +15,7 @@
 - Windows 10/11 x64;
 - .NET 8 SDK (для подготовки publish-артефактов);
 - Inno Setup 6 (`ISCC.exe`);
-- WebView2 bootstrapper: `installer/webview2/MicrosoftEdgeWebView2Setup.exe`.
+- WebView2 offline runtime installer: `installer/webview2/MicrosoftEdgeWebView2RuntimeInstallerX64.exe`.
 - `smartctl.exe` (smartmontools) доступен на build-машине в `PATH` или через `ARIASIGNATURE_SMARTCTL` (release-gate добавляет бинарник в инсталлятор автоматически).
 - `drivedb.h` обязателен для корректной базы сигнатур SMART (проверяется release-gate).
 
@@ -53,6 +53,7 @@ dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj 
 ## 6. Поведение установки/обновления
 
 - `PrivilegesRequired=admin`, архитектура `x64compatible`;
+- фильтр закрытия приложений ограничен только процессами AriaSignature (`UI/Service/API`);
 - перед копированием файлов выполняется stop/delete предыдущей службы и best-effort завершение процессов `AriaSignature.*`;
 - регистрация выполняется через корректно экранированный путь (`AddQuotes`);
 - после регистрации выполняется проверка существования службы;

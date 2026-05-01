@@ -9,6 +9,7 @@ namespace AriaSignature.Infrastructure.Storage;
 public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
 {
     private readonly SqliteConnectionFactory _connectionFactory;
+    private const int MaxBusyRetries = 5;
 
     public SqliteDiskTelemetryRepository(SqliteConnectionFactory connectionFactory)
     {
@@ -17,85 +18,86 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
 
     public async Task UpsertDisksAsync(IReadOnlyCollection<Disk> disks, CancellationToken cancellationToken)
     {
-        await using var connection = _connectionFactory.Create();
-        await connection.OpenAsync(cancellationToken);
-        var disksTemperatureNotNull = await IsColumnNotNullAsync(connection, "Disks", "TemperatureCelsius", cancellationToken);
-        var metricsTemperatureNotNull = await IsColumnNotNullAsync(connection, "SmartMetrics", "TemperatureCelsius", cancellationToken);
-        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
-
-        foreach (var disk in disks)
+        await ExecuteWithBusyRetryAsync(async () =>
         {
-            var upsert = connection.CreateCommand();
-            upsert.Transaction = transaction;
-            upsert.CommandText = """
-                INSERT INTO Disks (Id, Model, Serial, Interface, MediaType, SizeTotalBytes, SizeFreeBytes, SsdLifeRemaining, TemperatureCelsius, HealthPercent, PowerOnHours, PowerCycleCount, ReallocatedSectors, PendingSectors, UncorrectableErrors, SmartCtlUsed, WmiUsed, StorageReliabilityUsed, TelemetryConfidence, TelemetryDegradationReason, Status, UpdatedAtUtc)
-                VALUES ($Id, $Model, $Serial, $Interface, $MediaType, $SizeTotalBytes, $SizeFreeBytes, $SsdLifeRemaining, $TemperatureCelsius, $HealthPercent, $PowerOnHours, $PowerCycleCount, $ReallocatedSectors, $PendingSectors, $UncorrectableErrors, $SmartCtlUsed, $WmiUsed, $StorageReliabilityUsed, $TelemetryConfidence, $TelemetryDegradationReason, $Status, $UpdatedAtUtc)
-                ON CONFLICT(Id) DO UPDATE SET
-                    Model = excluded.Model,
-                    Serial = excluded.Serial,
-                    Interface = excluded.Interface,
-                    MediaType = excluded.MediaType,
-                    SizeTotalBytes = excluded.SizeTotalBytes,
-                    SizeFreeBytes = excluded.SizeFreeBytes,
-                    SsdLifeRemaining = excluded.SsdLifeRemaining,
-                    TemperatureCelsius = excluded.TemperatureCelsius,
-                    HealthPercent = excluded.HealthPercent,
-                    PowerOnHours = excluded.PowerOnHours,
-                    PowerCycleCount = excluded.PowerCycleCount,
-                    ReallocatedSectors = excluded.ReallocatedSectors,
-                    PendingSectors = excluded.PendingSectors,
-                    UncorrectableErrors = excluded.UncorrectableErrors,
-                    SmartCtlUsed = excluded.SmartCtlUsed,
-                    WmiUsed = excluded.WmiUsed,
-                    StorageReliabilityUsed = excluded.StorageReliabilityUsed,
-                    TelemetryConfidence = excluded.TelemetryConfidence,
-                    TelemetryDegradationReason = excluded.TelemetryDegradationReason,
-                    Status = excluded.Status,
-                    UpdatedAtUtc = excluded.UpdatedAtUtc;
+            await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+            var disksTemperatureNotNull = await IsColumnNotNullAsync(connection, "Disks", "TemperatureCelsius", cancellationToken);
+            var metricsTemperatureNotNull = await IsColumnNotNullAsync(connection, "SmartMetrics", "TemperatureCelsius", cancellationToken);
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+
+            foreach (var disk in disks)
+            {
+                var upsert = connection.CreateCommand();
+                upsert.Transaction = transaction;
+                upsert.CommandText = """
+                    INSERT INTO Disks (Id, Model, Serial, Interface, MediaType, SizeTotalBytes, SizeFreeBytes, SsdLifeRemaining, TemperatureCelsius, HealthPercent, PowerOnHours, PowerCycleCount, ReallocatedSectors, PendingSectors, UncorrectableErrors, SmartCtlUsed, WmiUsed, StorageReliabilityUsed, TelemetryConfidence, TelemetryDegradationReason, Status, UpdatedAtUtc)
+                    VALUES ($Id, $Model, $Serial, $Interface, $MediaType, $SizeTotalBytes, $SizeFreeBytes, $SsdLifeRemaining, $TemperatureCelsius, $HealthPercent, $PowerOnHours, $PowerCycleCount, $ReallocatedSectors, $PendingSectors, $UncorrectableErrors, $SmartCtlUsed, $WmiUsed, $StorageReliabilityUsed, $TelemetryConfidence, $TelemetryDegradationReason, $Status, $UpdatedAtUtc)
+                    ON CONFLICT(Id) DO UPDATE SET
+                        Model = excluded.Model,
+                        Serial = excluded.Serial,
+                        Interface = excluded.Interface,
+                        MediaType = excluded.MediaType,
+                        SizeTotalBytes = excluded.SizeTotalBytes,
+                        SizeFreeBytes = excluded.SizeFreeBytes,
+                        SsdLifeRemaining = excluded.SsdLifeRemaining,
+                        TemperatureCelsius = excluded.TemperatureCelsius,
+                        HealthPercent = excluded.HealthPercent,
+                        PowerOnHours = excluded.PowerOnHours,
+                        PowerCycleCount = excluded.PowerCycleCount,
+                        ReallocatedSectors = excluded.ReallocatedSectors,
+                        PendingSectors = excluded.PendingSectors,
+                        UncorrectableErrors = excluded.UncorrectableErrors,
+                        SmartCtlUsed = excluded.SmartCtlUsed,
+                        WmiUsed = excluded.WmiUsed,
+                        StorageReliabilityUsed = excluded.StorageReliabilityUsed,
+                        TelemetryConfidence = excluded.TelemetryConfidence,
+                        TelemetryDegradationReason = excluded.TelemetryDegradationReason,
+                        Status = excluded.Status,
+                        UpdatedAtUtc = excluded.UpdatedAtUtc;
+                    """;
+                BindDisk(upsert, disk, disksTemperatureNotNull);
+                await upsert.ExecuteNonQueryAsync(cancellationToken);
+
+                var metric = connection.CreateCommand();
+                metric.Transaction = transaction;
+                metric.CommandText = """
+                    INSERT INTO SmartMetrics (DiskId, TemperatureCelsius, HealthPercent, ReallocatedSectors, PendingSectors, UncorrectableErrors, Status, TimestampUtc)
+                    VALUES ($DiskId, $TemperatureCelsius, $HealthPercent, $ReallocatedSectors, $PendingSectors, $UncorrectableErrors, $Status, $TimestampUtc);
+                    """;
+                metric.Parameters.AddWithValue("$DiskId", disk.Id.ToString());
+                metric.Parameters.AddWithValue(
+                    "$TemperatureCelsius",
+                    disk.TemperatureCelsius.HasValue
+                        ? disk.TemperatureCelsius.Value
+                        : metricsTemperatureNotNull ? 0 : (object)DBNull.Value);
+                metric.Parameters.AddWithValue("$HealthPercent", disk.HealthPercent.HasValue ? disk.HealthPercent.Value : (object)DBNull.Value);
+                metric.Parameters.AddWithValue("$ReallocatedSectors", disk.ReallocatedSectors);
+                metric.Parameters.AddWithValue("$PendingSectors", disk.PendingSectors);
+                metric.Parameters.AddWithValue("$UncorrectableErrors", disk.UncorrectableErrors);
+                metric.Parameters.AddWithValue("$Status", (int)disk.Status);
+                metric.Parameters.AddWithValue("$TimestampUtc", disk.UpdatedAtUtc.UtcDateTime.ToString("O"));
+                await metric.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            var trimMetrics = connection.CreateCommand();
+            trimMetrics.Transaction = transaction;
+            trimMetrics.CommandText = """
+                DELETE FROM SmartMetrics
+                WHERE Id NOT IN (
+                    SELECT Id FROM SmartMetrics
+                    ORDER BY TimestampUtc DESC
+                    LIMIT 5000
+                );
                 """;
-            BindDisk(upsert, disk, disksTemperatureNotNull);
-            await upsert.ExecuteNonQueryAsync(cancellationToken);
+            await trimMetrics.ExecuteNonQueryAsync(cancellationToken);
 
-            var metric = connection.CreateCommand();
-            metric.Transaction = transaction;
-            metric.CommandText = """
-                INSERT INTO SmartMetrics (DiskId, TemperatureCelsius, HealthPercent, ReallocatedSectors, PendingSectors, UncorrectableErrors, Status, TimestampUtc)
-                VALUES ($DiskId, $TemperatureCelsius, $HealthPercent, $ReallocatedSectors, $PendingSectors, $UncorrectableErrors, $Status, $TimestampUtc);
-                """;
-            metric.Parameters.AddWithValue("$DiskId", disk.Id.ToString());
-            metric.Parameters.AddWithValue(
-                "$TemperatureCelsius",
-                disk.TemperatureCelsius.HasValue
-                    ? disk.TemperatureCelsius.Value
-                    : metricsTemperatureNotNull ? 0 : (object)DBNull.Value);
-            metric.Parameters.AddWithValue("$HealthPercent", disk.HealthPercent.HasValue ? disk.HealthPercent.Value : (object)DBNull.Value);
-            metric.Parameters.AddWithValue("$ReallocatedSectors", disk.ReallocatedSectors);
-            metric.Parameters.AddWithValue("$PendingSectors", disk.PendingSectors);
-            metric.Parameters.AddWithValue("$UncorrectableErrors", disk.UncorrectableErrors);
-            metric.Parameters.AddWithValue("$Status", (int)disk.Status);
-            metric.Parameters.AddWithValue("$TimestampUtc", disk.UpdatedAtUtc.UtcDateTime.ToString("O"));
-            await metric.ExecuteNonQueryAsync(cancellationToken);
-        }
-
-        var trimMetrics = connection.CreateCommand();
-        trimMetrics.Transaction = transaction;
-        trimMetrics.CommandText = """
-            DELETE FROM SmartMetrics
-            WHERE Id NOT IN (
-                SELECT Id FROM SmartMetrics
-                ORDER BY TimestampUtc DESC
-                LIMIT 5000
-            );
-            """;
-        await trimMetrics.ExecuteNonQueryAsync(cancellationToken);
-
-        await transaction.CommitAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }, cancellationToken);
     }
 
     public async Task<IReadOnlyCollection<Disk>> GetDisksAsync(CancellationToken cancellationToken)
     {
-        await using var connection = _connectionFactory.Create();
-        await connection.OpenAsync(cancellationToken);
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
 
         var command = connection.CreateCommand();
         command.CommandText = """
@@ -115,8 +117,7 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
 
     public async Task<Disk?> GetDiskAsync(Guid diskId, CancellationToken cancellationToken)
     {
-        await using var connection = _connectionFactory.Create();
-        await connection.OpenAsync(cancellationToken);
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
 
         var command = connection.CreateCommand();
         command.CommandText = """
@@ -131,8 +132,7 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
 
     public async Task<IReadOnlyCollection<SmartMetric>> GetSmartMetricsAsync(Guid diskId, CancellationToken cancellationToken)
     {
-        await using var connection = _connectionFactory.Create();
-        await connection.OpenAsync(cancellationToken);
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
 
         var command = connection.CreateCommand();
         command.CommandText = """
@@ -243,5 +243,27 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
         }
 
         return false;
+    }
+
+    private static async Task ExecuteWithBusyRetryAsync(Func<Task> operation, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; attempt <= MaxBusyRetries; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await operation();
+                return;
+            }
+            catch (SqliteException ex) when (IsSqliteBusy(ex) && attempt < MaxBusyRetries)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt), cancellationToken);
+            }
+        }
+    }
+
+    private static bool IsSqliteBusy(SqliteException ex)
+    {
+        return ex.SqliteErrorCode is 5 or 6;
     }
 }

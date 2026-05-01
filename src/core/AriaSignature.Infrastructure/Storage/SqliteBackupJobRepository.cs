@@ -2,12 +2,14 @@ using AriaSignature.Application.Abstractions;
 using AriaSignature.Domain.Entities;
 using AriaSignature.Domain.Enums;
 using AriaSignature.Infrastructure.Persistence;
+using Microsoft.Data.Sqlite;
 
 namespace AriaSignature.Infrastructure.Storage;
 
 public sealed class SqliteBackupJobRepository : IBackupJobRepository
 {
     private readonly SqliteConnectionFactory _connectionFactory;
+    private const int MaxBusyRetries = 5;
 
     public SqliteBackupJobRepository(SqliteConnectionFactory connectionFactory)
     {
@@ -16,8 +18,7 @@ public sealed class SqliteBackupJobRepository : IBackupJobRepository
 
     public async Task<IReadOnlyCollection<BackupJob>> GetJobsAsync(CancellationToken cancellationToken)
     {
-        await using var connection = _connectionFactory.Create();
-        await connection.OpenAsync(cancellationToken);
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
 
         var command = connection.CreateCommand();
         command.CommandText = "SELECT Id, Name, Type, Source, Destination, ScheduleCron, RetentionCount, IsEnabled FROM BackupJobs ORDER BY Name;";
@@ -34,8 +35,7 @@ public sealed class SqliteBackupJobRepository : IBackupJobRepository
 
     public async Task<BackupJob?> GetJobAsync(Guid id, CancellationToken cancellationToken)
     {
-        await using var connection = _connectionFactory.Create();
-        await connection.OpenAsync(cancellationToken);
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
 
         var command = connection.CreateCommand();
         command.CommandText = "SELECT Id, Name, Type, Source, Destination, ScheduleCron, RetentionCount, IsEnabled FROM BackupJobs WHERE Id = $Id;";
@@ -59,47 +59,49 @@ public sealed class SqliteBackupJobRepository : IBackupJobRepository
             IsEnabled = job.IsEnabled
         };
 
-        await using var connection = _connectionFactory.Create();
-        await connection.OpenAsync(cancellationToken);
-
-        var command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT INTO BackupJobs (Id, Name, Type, Source, Destination, ScheduleCron, RetentionCount, IsEnabled)
-            VALUES ($Id, $Name, $Type, $Source, $Destination, $ScheduleCron, $RetentionCount, $IsEnabled);
-            """;
-        BindJob(command, entity);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await ExecuteWithBusyRetryAsync(async () =>
+        {
+            await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+            var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO BackupJobs (Id, Name, Type, Source, Destination, ScheduleCron, RetentionCount, IsEnabled)
+                VALUES ($Id, $Name, $Type, $Source, $Destination, $ScheduleCron, $RetentionCount, $IsEnabled);
+                """;
+            BindJob(command, entity);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }, cancellationToken);
 
         return entity;
     }
 
     public async Task<BackupJob?> UpdateJobAsync(Guid id, BackupJob job, CancellationToken cancellationToken)
     {
-        await using var connection = _connectionFactory.Create();
-        await connection.OpenAsync(cancellationToken);
-
-        var command = connection.CreateCommand();
-        command.CommandText = """
-            UPDATE BackupJobs
-            SET Name = $Name,
-                Type = $Type,
-                Source = $Source,
-                Destination = $Destination,
-                ScheduleCron = $ScheduleCron,
-                RetentionCount = $RetentionCount,
-                IsEnabled = $IsEnabled
-            WHERE Id = $Id;
-            """;
-        command.Parameters.AddWithValue("$Id", id.ToString());
-        command.Parameters.AddWithValue("$Name", job.Name);
-        command.Parameters.AddWithValue("$Type", (int)job.Type);
-        command.Parameters.AddWithValue("$Source", job.Source);
-        command.Parameters.AddWithValue("$Destination", job.Destination);
-        command.Parameters.AddWithValue("$ScheduleCron", job.ScheduleCron);
-        command.Parameters.AddWithValue("$RetentionCount", job.RetentionCount);
-        command.Parameters.AddWithValue("$IsEnabled", job.IsEnabled ? 1 : 0);
-
-        var affected = await command.ExecuteNonQueryAsync(cancellationToken);
+        var affected = 0;
+        await ExecuteWithBusyRetryAsync(async () =>
+        {
+            await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+            var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE BackupJobs
+                SET Name = $Name,
+                    Type = $Type,
+                    Source = $Source,
+                    Destination = $Destination,
+                    ScheduleCron = $ScheduleCron,
+                    RetentionCount = $RetentionCount,
+                    IsEnabled = $IsEnabled
+                WHERE Id = $Id;
+                """;
+            command.Parameters.AddWithValue("$Id", id.ToString());
+            command.Parameters.AddWithValue("$Name", job.Name);
+            command.Parameters.AddWithValue("$Type", (int)job.Type);
+            command.Parameters.AddWithValue("$Source", job.Source);
+            command.Parameters.AddWithValue("$Destination", job.Destination);
+            command.Parameters.AddWithValue("$ScheduleCron", job.ScheduleCron);
+            command.Parameters.AddWithValue("$RetentionCount", job.RetentionCount);
+            command.Parameters.AddWithValue("$IsEnabled", job.IsEnabled ? 1 : 0);
+            affected = await command.ExecuteNonQueryAsync(cancellationToken);
+        }, cancellationToken);
         if (affected == 0)
         {
             return null;
@@ -110,39 +112,42 @@ public sealed class SqliteBackupJobRepository : IBackupJobRepository
 
     public async Task<bool> DeleteJobAsync(Guid id, CancellationToken cancellationToken)
     {
-        await using var connection = _connectionFactory.Create();
-        await connection.OpenAsync(cancellationToken);
-
-        var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM BackupJobs WHERE Id = $Id;";
-        command.Parameters.AddWithValue("$Id", id.ToString());
-        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+        var deleted = false;
+        await ExecuteWithBusyRetryAsync(async () =>
+        {
+            await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+            var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM BackupJobs WHERE Id = $Id;";
+            command.Parameters.AddWithValue("$Id", id.ToString());
+            deleted = await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+        }, cancellationToken);
+        return deleted;
     }
 
     public async Task AddLogAsync(BackupLog log, CancellationToken cancellationToken)
     {
-        await using var connection = _connectionFactory.Create();
-        await connection.OpenAsync(cancellationToken);
-
-        var command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT INTO BackupLogs (Id, JobId, Status, StartTimeUtc, EndTimeUtc, FileSizeBytes, Message)
-            VALUES ($Id, $JobId, $Status, $StartTimeUtc, $EndTimeUtc, $FileSizeBytes, $Message);
-            """;
-        command.Parameters.AddWithValue("$Id", log.Id.ToString());
-        command.Parameters.AddWithValue("$JobId", log.JobId.ToString());
-        command.Parameters.AddWithValue("$Status", (int)log.Status);
-        command.Parameters.AddWithValue("$StartTimeUtc", log.StartTimeUtc.UtcDateTime.ToString("O"));
-        command.Parameters.AddWithValue("$EndTimeUtc", log.EndTimeUtc?.UtcDateTime.ToString("O"));
-        command.Parameters.AddWithValue("$FileSizeBytes", (object?)log.FileSizeBytes ?? DBNull.Value);
-        command.Parameters.AddWithValue("$Message", log.Message);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await ExecuteWithBusyRetryAsync(async () =>
+        {
+            await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+            var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO BackupLogs (Id, JobId, Status, StartTimeUtc, EndTimeUtc, FileSizeBytes, Message)
+                VALUES ($Id, $JobId, $Status, $StartTimeUtc, $EndTimeUtc, $FileSizeBytes, $Message);
+                """;
+            command.Parameters.AddWithValue("$Id", log.Id.ToString());
+            command.Parameters.AddWithValue("$JobId", log.JobId.ToString());
+            command.Parameters.AddWithValue("$Status", (int)log.Status);
+            command.Parameters.AddWithValue("$StartTimeUtc", log.StartTimeUtc.UtcDateTime.ToString("O"));
+            command.Parameters.AddWithValue("$EndTimeUtc", log.EndTimeUtc?.UtcDateTime.ToString("O"));
+            command.Parameters.AddWithValue("$FileSizeBytes", (object?)log.FileSizeBytes ?? DBNull.Value);
+            command.Parameters.AddWithValue("$Message", log.Message);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }, cancellationToken);
     }
 
     public async Task<IReadOnlyCollection<BackupLog>> GetLogsAsync(BackupExecutionStatus? status, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken)
     {
-        await using var connection = _connectionFactory.Create();
-        await connection.OpenAsync(cancellationToken);
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
 
         var command = connection.CreateCommand();
         var sql = """
@@ -176,8 +181,7 @@ public sealed class SqliteBackupJobRepository : IBackupJobRepository
 
     public async Task<IReadOnlyCollection<BackupLog>> GetLogsByJobAsync(Guid jobId, CancellationToken cancellationToken)
     {
-        await using var connection = _connectionFactory.Create();
-        await connection.OpenAsync(cancellationToken);
+        await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
 
         var command = connection.CreateCommand();
         command.CommandText = "SELECT Id, JobId, Status, StartTimeUtc, EndTimeUtc, FileSizeBytes, Message FROM BackupLogs WHERE JobId = $JobId ORDER BY StartTimeUtc DESC LIMIT 1000;";
@@ -231,5 +235,27 @@ public sealed class SqliteBackupJobRepository : IBackupJobRepository
         }
 
         return logs;
+    }
+
+    private static async Task ExecuteWithBusyRetryAsync(Func<Task> operation, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; attempt <= MaxBusyRetries; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await operation();
+                return;
+            }
+            catch (SqliteException ex) when (IsSqliteBusy(ex) && attempt < MaxBusyRetries)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt), cancellationToken);
+            }
+        }
+    }
+
+    private static bool IsSqliteBusy(SqliteException ex)
+    {
+        return ex.SqliteErrorCode is 5 or 6;
     }
 }

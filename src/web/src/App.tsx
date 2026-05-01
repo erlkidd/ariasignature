@@ -140,6 +140,16 @@ function parseSmartCron(cron: string): { mode: SmartScheduleMode; intervalMin: n
   return { mode: "custom", intervalMin: 60, hour: 2, minute: 0 };
 }
 
+function buildSmartCron(mode: SmartScheduleMode, intervalMin: number, hour: number, minute: number, customCron: string): string {
+  if (mode === "interval") {
+    return `0 */${intervalMin} * * * ?`;
+  }
+  if (mode === "daily") {
+    return `0 ${minute} ${hour} * * ?`;
+  }
+  return customCron.trim();
+}
+
 function formatWindowsServiceStatus(status?: string): string {
   switch ((status ?? "").toLowerCase()) {
     case "running":
@@ -285,6 +295,7 @@ export default function App() {
   const [smartIntervalMin, setSmartIntervalMin] = useState(60);
   const [smartHour, setSmartHour] = useState(2);
   const [smartMinute, setSmartMinute] = useState(0);
+  const [smartCustomCron, setSmartCustomCron] = useState("0 */60 * * * ?");
 
   const cronValue = useMemo(() => {
     if (useAdvancedCron && advancedCron.trim()) return advancedCron.trim();
@@ -530,33 +541,19 @@ export default function App() {
     if (!settings?.smartMonitoringCron) {
       return;
     }
-    const parsed = parseSmartCron(settings.smartMonitoringCron);
+    const serverCron = settings.smartMonitoringCron;
+    const parsed = parseSmartCron(serverCron);
     setSmartScheduleMode(parsed.mode);
     setSmartIntervalMin(parsed.intervalMin);
     setSmartHour(parsed.hour);
     setSmartMinute(parsed.minute);
+    setSmartCustomCron(serverCron);
   }, [settings?.smartMonitoringCron]);
 
-  useEffect(() => {
-    if (!settings) {
-      return;
-    }
-
-    if (smartScheduleMode === "interval") {
-      const nextCron = `0 */${smartIntervalMin} * * * ?`;
-      if (settings.smartMonitoringCron !== nextCron) {
-        setSettings({ ...settings, smartMonitoringCron: nextCron });
-      }
-      return;
-    }
-
-    if (smartScheduleMode === "daily") {
-      const nextCron = `0 ${smartMinute} ${smartHour} * * ?`;
-      if (settings.smartMonitoringCron !== nextCron) {
-        setSettings({ ...settings, smartMonitoringCron: nextCron });
-      }
-    }
-  }, [settings, smartScheduleMode, smartIntervalMin, smartHour, smartMinute]);
+  const smartCronPreview = useMemo(
+    () => buildSmartCron(smartScheduleMode, smartIntervalMin, smartHour, smartMinute, smartCustomCron),
+    [smartScheduleMode, smartIntervalMin, smartHour, smartMinute, smartCustomCron]
+  );
 
   const loadSmart = async (disk: DiskRow) => {
     setSelectedDisk(disk);
@@ -714,8 +711,9 @@ export default function App() {
     try {
       await apiSend("/settings", "PUT", {
         apiPort: settings.apiPort,
-        smartMonitoringCron: settings.smartMonitoringCron,
+        smartMonitoringCron: smartCronPreview,
       });
+      setSettings({ ...settings, smartMonitoringCron: smartCronPreview });
       setStatus("Настройки записаны. При смене порта перезапустите службу.");
     } catch (e) {
       showErr(e);
@@ -1442,7 +1440,6 @@ export default function App() {
                 onChange={(e) => {
                   const next = Number(e.target.value);
                   setSmartIntervalMin(next);
-                  setSettings({ ...settings, smartMonitoringCron: `0 */${next} * * * ?` });
                 }}
               >
                 <option value={5}>Каждые 5 минут</option>
@@ -1465,7 +1462,6 @@ export default function App() {
                   onChange={(e) => {
                     const h = Math.max(0, Math.min(23, Number(e.target.value) || 0));
                     setSmartHour(h);
-                    setSettings({ ...settings, smartMonitoringCron: `0 ${smartMinute} ${h} * * ?` });
                   }}
                 />
               </label>
@@ -1479,7 +1475,6 @@ export default function App() {
                   onChange={(e) => {
                     const m = Math.max(0, Math.min(59, Number(e.target.value) || 0));
                     setSmartMinute(m);
-                    setSettings({ ...settings, smartMonitoringCron: `0 ${m} ${smartHour} * * ?` });
                   }}
                 />
               </label>
@@ -1490,8 +1485,8 @@ export default function App() {
               <label>
                 Cron Quartz
                 <input
-                  value={settings.smartMonitoringCron}
-                  onChange={(e) => setSettings({ ...settings, smartMonitoringCron: e.target.value })}
+                  value={smartCustomCron}
+                  onChange={(e) => setSmartCustomCron(e.target.value)}
                   placeholder="0 */15 * * * ?"
                 />
               </label>
@@ -1506,6 +1501,9 @@ export default function App() {
               Текущий cron: <span className="mono">{settings.smartMonitoringCron}</span>
             </p>
           )}
+          <p className="hint">
+            Будет сохранено: <span className="mono">{smartCronPreview || "—"}</span>
+          </p>
           <button type="button" onClick={() => void saveSettings()}>
             Сохранить в базу настроек
           </button>
@@ -1536,7 +1534,7 @@ export default function App() {
       )}
 
       <footer className="footer">
-        <span>AriaSignature v0.2.2</span>
+        <span>AriaSignature v0.2.5</span>
         <a href="/swagger" target="_blank" rel="noreferrer">
           Swagger / OpenAPI
         </a>

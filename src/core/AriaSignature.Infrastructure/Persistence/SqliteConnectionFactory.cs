@@ -18,6 +18,33 @@ public sealed class SqliteConnectionFactory
         return new SqliteConnection(_connectionString);
     }
 
+    public async Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken)
+    {
+        var connection = Create();
+        try
+        {
+            await connection.OpenAsync(cancellationToken);
+            await ConfigureConnectionAsync(connection, cancellationToken);
+            return connection;
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
+    }
+
+    private static async Task ConfigureConnectionAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            PRAGMA busy_timeout = 15000;
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            """;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static string NormalizeConnectionString(string connectionString)
     {
         var builder = new SqliteConnectionStringBuilder(connectionString);

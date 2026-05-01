@@ -9,7 +9,7 @@ using Microsoft.Extensions.Hosting;
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.Configure<HostOptions>(options =>
 {
-    options.ServicesStartConcurrently = true;
+    options.ServicesStartConcurrently = false;
     options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
 });
 builder.Services.AddWindowsService(options =>

@@ -2,7 +2,7 @@
 ; Build binaries first, then run this script in Inno Setup Compiler.
 
 #define MyAppName "AriaSignature"
-#define MyAppVersion "0.2.4"
+#define MyAppVersion "0.2.5"
 #define MyAppPublisher "AriaSignature"
 #define MyAppExeName "AriaSignature.UI.exe"
 #define MyServiceExeName "AriaSignature.Service.exe"
@@ -27,7 +27,7 @@ ArchitecturesAllowed=x64compatible
 UninstallDisplayIcon={app}\ui\{#MyAppExeName}
 SetupIconFile=..\..\icon.ico
 CloseApplications=yes
-CloseApplicationsFilter=*.exe,*.dll
+CloseApplicationsFilter=AriaSignature.UI.exe,AriaSignature.Service.exe,AriaSignature.Api.exe
 RestartApplications=no
 
 [Languages]
@@ -46,7 +46,7 @@ Name: "autostarttray"; Description: "Запускать AriaSignature при в�
 Source: "..\..\publish\ui\*"; DestDir: "{app}\ui"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\smartctl\*"; DestDir: "{app}\service\smartctl"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "..\webview2\MicrosoftEdgeWebView2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall ignoreversion
+Source: "..\webview2\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall ignoreversion
 
 [Icons]
 Name: "{group}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; IconFilename: "{app}\ui\Assets\icon.ico"
@@ -54,7 +54,7 @@ Name: "{autodesktop}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Tasks
 Name: "{commonstartup}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Parameters: "--tray"; Tasks: autostarttray; IconFilename: "{app}\ui\Assets\icon.ico"
 
 [Run]
-Filename: "{tmp}\MicrosoftEdgeWebView2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Установка Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated skipifsilent; Check: NeedsWebView2Runtime()
+Filename: "{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Parameters: "/silent /install"; StatusMsg: "Установка Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated skipifsilent; Check: NeedsWebView2Runtime()
 
 [UninstallRun]
 
@@ -183,12 +183,6 @@ begin
     RaiseException('Установка требует прав администратора: без них служба Windows не может быть зарегистрирована. Запустите установщик от имени администратора.');
   end;
 
-  StopAndDeleteServiceBestEffort();
-  if not WaitServiceAbsent(25) then
-  begin
-    Log('Service still exists after delete wait timeout; will continue with create retries.');
-  end;
-
   BinPath := ExpandConstant('{app}\service\{#MyServiceExeName}');
   if not FileExists(BinPath) then
   begin
@@ -209,8 +203,7 @@ begin
 
     Log(Format('sc create retry %d failed with code %d', [Attempt, LastScExitCode]));
     if (LastScExitCode <> SC_MARKED_FOR_DELETE) and
-       (LastScExitCode <> SC_ALREADY_EXISTS) and
-       (LastScExitCode <> SC_ACCESS_DENIED) then
+       (LastScExitCode <> SC_ALREADY_EXISTS) then
     begin
       Break;
     end;
