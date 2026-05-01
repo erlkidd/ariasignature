@@ -1,8 +1,13 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using AriaSignature.Application.Abstractions;
 using AriaSignature.Api.Contracts;
 using AriaSignature.Domain.Entities;
 using AriaSignature.Domain.Enums;
+using Microsoft.AspNetCore.Http.Json;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.FileProviders;
 using Quartz;
 
 namespace AriaSignature.Api;
@@ -11,6 +16,11 @@ public static class AriaApiExtensions
 {
     public static IServiceCollection AddAriaApi(this IServiceCollection services)
     {
+        services.ConfigureHttpJsonOptions(options =>
+        {
+            options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+            options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+        });
         services.AddProblemDetails();
         services.AddEndpointsApiExplorer();
         services.AddSwaggerGen();
@@ -48,9 +58,93 @@ public static class AriaApiExtensions
         {
             service = "AriaSignature",
             status = "Running",
+            version = typeof(AriaApiExtensions).Assembly.GetName().Version?.ToString(3) ?? "0.0",
             timestampUtc = DateTimeOffset.UtcNow
         }))
         .WithName("GetSystemStatus")
+        .WithOpenApi();
+
+        api.MapGet("/settings", async (IAppSettingsService settings, IConfiguration configuration, CancellationToken cancellationToken) =>
+        {
+            var dict = await settings.GetAllAsync(cancellationToken);
+            var portStr = dict.GetValueOrDefault("Api:Port");
+            var port = int.TryParse(portStr, out var p) ? p : configuration.GetValue("Api:Port", 5160);
+            var cron = dict.GetValueOrDefault("SmartMonitoring:Cron") ?? configuration.GetValue<string>("SmartMonitoring:Cron") ?? "0 */1 * * * ?";
+            return Results.Ok(new
+            {
+                apiPort = port,
+                smartMonitoringCron = cron,
+                note = "Изменение порта API вступает в силу после перезапуска службы AriaSignatureService. Расписание SMART в Quartz обновляется при следующем перезапуске службы."
+            });
+        })
+        .WithName("GetSettings")
+        .WithOpenApi();
+
+        api.MapPut("/settings", async (UpdateAppSettingsRequest body, IAppSettingsService settings, CancellationToken cancellationToken) =>
+        {
+            var errors = new Dictionary<string, string[]>();
+            if (body.ApiPort is int ap)
+            {
+                if (ap is < 1 or > 65535)
+                {
+                    errors["apiPort"] = ["Порт должен быть в диапазоне 1–65535"];
+                }
+                else
+                {
+                    await settings.SetAsync("Api:Port", ap.ToString(), cancellationToken);
+                }
+            }
+
+            if (body.SmartMonitoringCron is { } cron)
+            {
+                if (!CronExpression.IsValidExpression(cron))
+                {
+                    errors["smartMonitoringCron"] = ["Некорректное cron-выражение (Quartz)"];
+                }
+                else
+                {
+                    await settings.SetAsync("SmartMonitoring:Cron", cron, cancellationToken);
+                }
+            }
+
+            return errors.Count > 0
+                ? Results.ValidationProblem(errors)
+                : Results.Ok(new { saved = true });
+        })
+        .WithName("UpdateSettings")
+        .WithOpenApi();
+
+        api.MapPost("/backups/test-mssql", async (MsSqlConnectionPayload payload, CancellationToken cancellationToken) =>
+        {
+            var payloadErrors = MsSqlConnectionStringBuilder.ValidatePayload(payload);
+            if (payloadErrors is not null)
+            {
+                return Results.ValidationProblem(payloadErrors);
+            }
+
+            var cs = MsSqlConnectionStringBuilder.Build(payload);
+            try
+            {
+                await using var connection = new SqlConnection(cs);
+                await connection.OpenAsync(cancellationToken);
+                await using var command = new SqlCommand("SELECT DB_NAME()", connection);
+                var db = await command.ExecuteScalarAsync(cancellationToken);
+                return Results.Ok(new
+                {
+                    ok = true,
+                    message = "Подключение к Microsoft SQL Server установлено.",
+                    database = db?.ToString()
+                });
+            }
+            catch (Exception ex)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["connection"] = [$"Не удалось подключиться: {ex.Message}"]
+                });
+            }
+        })
+        .WithName("TestMsSqlConnection")
         .WithOpenApi();
 
         api.MapGet("/disks", async (IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
@@ -148,22 +242,66 @@ public static class AriaApiExtensions
                 return Results.NotFound(log);
             }
 
-            return Results.Accepted($"/api/v1/backups/logs", log);
+            return Results.Accepted("/api/v1/backups/logs", log);
         })
             .WithName("RunBackup")
             .WithOpenApi();
 
-        api.MapGet("/backups/logs", async (IBackupService backups, CancellationToken cancellationToken) =>
-            Results.Ok(await backups.GetLogsAsync(cancellationToken)))
+        api.MapGet("/backups/logs", async (string? status, DateTimeOffset? from, DateTimeOffset? to, IBackupService backups, CancellationToken cancellationToken) =>
+        {
+            BackupExecutionStatus? st = null;
+            if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<BackupExecutionStatus>(status, true, out var parsed))
+            {
+                st = parsed;
+            }
+
+            return Results.Ok(await backups.GetLogsAsync(st, from, to, cancellationToken));
+        })
             .WithName("GetBackupLogs")
             .WithOpenApi();
 
+        TryUseSpaStaticFiles(app);
+
         return app;
+    }
+
+    private static void TryUseSpaStaticFiles(WebApplication app)
+    {
+        var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+        if (!Directory.Exists(webRoot))
+        {
+            return;
+        }
+
+        app.Environment.WebRootPath = webRoot;
+        var provider = new PhysicalFileProvider(webRoot);
+        app.Environment.WebRootFileProvider = provider;
+
+        app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = provider });
+        app.UseStaticFiles(new StaticFileOptions { FileProvider = provider });
+        app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = provider });
     }
 
     private static async Task<Dictionary<string, string[]>?> ValidateBackupRequestAsync(UpsertBackupJobRequest request, CancellationToken cancellationToken)
     {
         var errors = new Dictionary<string, string[]>();
+
+        if (request.Type == BackupType.MsSql && request.MsSql is not null)
+        {
+            var msSqlErrors = MsSqlConnectionStringBuilder.ValidatePayload(request.MsSql);
+            if (msSqlErrors is not null)
+            {
+                foreach (var kv in msSqlErrors)
+                {
+                    errors[kv.Key] = kv.Value;
+                }
+            }
+            else
+            {
+                request.Source = MsSqlConnectionStringBuilder.Build(request.MsSql);
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(request.Name))
         {
             errors["name"] = ["Имя задачи обязательно"];
@@ -171,11 +309,13 @@ public static class AriaApiExtensions
 
         if (string.IsNullOrWhiteSpace(request.Source))
         {
-            errors["source"] = ["Источник обязателен"];
+            errors["source"] = request.Type == BackupType.MsSql && request.MsSql is null
+                ? ["Укажите параметры MSSQL или строку подключения в поле источник"]
+                : ["Источник обязателен"];
         }
         else if (request.Type == BackupType.File && !Path.IsPathRooted(request.Source))
         {
-            errors["source"] = ["Для File-архивации путь источника должен быть абсолютным"];
+            errors["source"] = ["Для файловой базы путь к .1CD должен быть абсолютным"];
         }
         else if (request.Type == BackupType.File && !File.Exists(request.Source))
         {
@@ -183,29 +323,29 @@ public static class AriaApiExtensions
         }
         else if (request.Type == BackupType.MsSql)
         {
-            if (!request.Source.Contains("Server=", StringComparison.OrdinalIgnoreCase))
+            if (!request.Source.Contains("Server=", StringComparison.OrdinalIgnoreCase) &&
+                !request.Source.Contains("Data Source=", StringComparison.OrdinalIgnoreCase))
             {
-                errors["source"] = ["Для MsSql требуется connection string c параметром Server"];
+                errors["source"] = ["Для MsSql требуется строка подключения с сервером (Server или Data Source)"];
             }
-
-            if (!request.Source.Contains("Database=", StringComparison.OrdinalIgnoreCase) &&
-                !request.Source.Contains("Initial Catalog=", StringComparison.OrdinalIgnoreCase))
+            else if (!request.Source.Contains("Database=", StringComparison.OrdinalIgnoreCase) &&
+                     !request.Source.Contains("Initial Catalog=", StringComparison.OrdinalIgnoreCase))
             {
                 errors["source"] = ["Для MsSql требуется Database или Initial Catalog"];
             }
             else if (!await CanConnectToMsSqlAsync(request.Source, cancellationToken))
             {
-                errors["source"] = ["Подключение к MSSQL не установлено или база недоступна"];
+                errors["source"] = ["Подключение к MSSQL не установлено или база недоступна (проверьте сервер, имя БД и учётную запись службы Windows при Integrated Security)"];
             }
         }
 
         if (string.IsNullOrWhiteSpace(request.Destination))
         {
-            errors["destination"] = ["Назначение обязательно"];
+            errors["destination"] = ["Укажите папку для сохранения архивов"];
         }
         else if (!Path.IsPathRooted(request.Destination))
         {
-            errors["destination"] = ["Путь назначения должен быть абсолютным"];
+            errors["destination"] = ["Путь к папке архивов должен быть абсолютным"];
         }
         else if (!CanAccessDestination(request.Destination, out var destinationError))
         {
@@ -214,12 +354,12 @@ public static class AriaApiExtensions
         else if (request.Type == BackupType.File &&
                  string.Equals(Path.GetFullPath(request.Source), Path.GetFullPath(request.Destination), StringComparison.OrdinalIgnoreCase))
         {
-            errors["destination"] = ["Источник и назначение не должны совпадать"];
+            errors["destination"] = ["Источник и папка назначения не должны совпадать"];
         }
 
         if (request.RetentionCount <= 0)
         {
-            errors["retentionCount"] = ["RetentionCount должен быть больше 0"];
+            errors["retentionCount"] = ["Число хранимых копий должно быть больше 0"];
         }
 
         if (string.IsNullOrWhiteSpace(request.ScheduleCron) || !CronExpression.IsValidExpression(request.ScheduleCron))
@@ -243,7 +383,7 @@ public static class AriaApiExtensions
         }
         catch (Exception ex)
         {
-            error = $"Нет доступа к папке назначения: {ex.Message}";
+            error = $"Нет доступа к папке: {ex.Message}";
             return false;
         }
     }

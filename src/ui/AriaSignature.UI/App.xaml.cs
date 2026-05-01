@@ -4,9 +4,6 @@ using Drawing = System.Drawing;
 
 namespace AriaSignature.UI;
 
-/// <summary>
-/// Interaction logic for App.xaml
-/// </summary>
 public partial class App : System.Windows.Application
 {
     private Forms.NotifyIcon? _trayIcon;
@@ -18,10 +15,7 @@ public partial class App : System.Windows.Application
         base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
-        var mainWindow = new MainWindow(this)
-        {
-            DataContext = Current.Resources["MainViewModel"]
-        };
+        var mainWindow = new MainWindow(this);
         MainWindow = mainWindow;
 
         var startInTray = e.Args.Any(arg => string.Equals(arg, "--tray", StringComparison.OrdinalIgnoreCase));
@@ -86,7 +80,7 @@ public partial class App : System.Windows.Application
         }
         catch
         {
-            // Fallback to avoid application crash on invalid icon file.
+            // ignore
         }
 
         return Drawing.SystemIcons.Application;
@@ -104,4 +98,3 @@ public partial class App : System.Windows.Application
         Shutdown();
     }
 }
-

@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using AriaSignature.Api.Contracts;
 using AriaSignature.Domain.Entities;
 using AriaSignature.Domain.Enums;
@@ -9,6 +11,12 @@ namespace AriaSignature.ApiTests;
 
 public sealed class ApiEndpointsTests : IClassFixture<WebApplicationFactory<Program>>
 {
+    private static readonly JsonSerializerOptions ApiJson = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+    };
+
     private readonly HttpClient _client;
 
     public ApiEndpointsTests(WebApplicationFactory<Program> factory)
@@ -62,7 +70,7 @@ public sealed class ApiEndpointsTests : IClassFixture<WebApplicationFactory<Prog
         var createResponse = await _client.PostAsJsonAsync("/api/v1/backups", request);
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
 
-        var createdJob = await createResponse.Content.ReadFromJsonAsync<BackupJob>();
+        var createdJob = await createResponse.Content.ReadFromJsonAsync<BackupJob>(ApiJson);
         Assert.NotNull(createdJob);
 
         var getAllResponse = await _client.GetAsync("/api/v1/backups");

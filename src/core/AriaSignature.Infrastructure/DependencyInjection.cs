@@ -23,6 +23,7 @@ public static class DependencyInjection
         }
 
         services.AddSingleton<IDiskTelemetryRepository, SqliteDiskTelemetryRepository>();
+        services.AddSingleton<IAppSettingsService, SqliteAppSettingsService>();
         services.AddSingleton<IBackupJobRepository, SqliteBackupJobRepository>();
         services.AddSingleton<IBackupExecutor, BackupExecutor>();
         return services;

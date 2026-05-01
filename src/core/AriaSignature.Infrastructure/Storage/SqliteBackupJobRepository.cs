@@ -139,13 +139,37 @@ public sealed class SqliteBackupJobRepository : IBackupJobRepository
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    public async Task<IReadOnlyCollection<BackupLog>> GetLogsAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyCollection<BackupLog>> GetLogsAsync(BackupExecutionStatus? status, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken)
     {
         await using var connection = _connectionFactory.Create();
         await connection.OpenAsync(cancellationToken);
 
         var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id, JobId, Status, StartTimeUtc, EndTimeUtc, FileSizeBytes, Message FROM BackupLogs ORDER BY StartTimeUtc DESC LIMIT 1000;";
+        var sql = """
+            SELECT Id, JobId, Status, StartTimeUtc, EndTimeUtc, FileSizeBytes, Message
+            FROM BackupLogs
+            WHERE 1=1
+            """;
+        if (status is BackupExecutionStatus st)
+        {
+            sql += " AND Status = $status";
+            command.Parameters.AddWithValue("$status", (int)st);
+        }
+
+        if (fromUtc is DateTimeOffset from)
+        {
+            sql += " AND StartTimeUtc >= $from";
+            command.Parameters.AddWithValue("$from", from.UtcDateTime.ToString("O"));
+        }
+
+        if (toUtc is DateTimeOffset to)
+        {
+            sql += " AND StartTimeUtc <= $to";
+            command.Parameters.AddWithValue("$to", to.UtcDateTime.ToString("O"));
+        }
+
+        sql += " ORDER BY StartTimeUtc DESC LIMIT 1000;";
+        command.CommandText = sql;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await ReadLogs(reader, cancellationToken);
     }

@@ -2,7 +2,7 @@
 ; Build binaries first, then run this script in Inno Setup Compiler.
 
 #define MyAppName "AriaSignature"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "AriaSignature"
 #define MyAppExeName "AriaSignature.UI.exe"
 #define MyServiceExeName "AriaSignature.Service.exe"

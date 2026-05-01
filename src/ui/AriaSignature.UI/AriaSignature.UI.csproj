@@ -1,6 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\core\AriaSignature.Application\AriaSignature.Application.csproj" />
     <ProjectReference Include="..\..\core\AriaSignature.Domain\AriaSignature.Domain.csproj" />
   </ItemGroup>

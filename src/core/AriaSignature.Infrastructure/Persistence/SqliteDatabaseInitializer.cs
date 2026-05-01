@@ -68,9 +68,79 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
                 FileSizeBytes INTEGER NULL,
                 Message TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS AppSettings (
+                [Key] TEXT PRIMARY KEY,
+                Value TEXT NOT NULL
+            );
             """;
 
         await using var command = new SqliteCommand(sql, connection);
         await command.ExecuteNonQueryAsync(cancellationToken);
+
+        await ApplyMigrationsAsync(connection, cancellationToken);
+        await SeedDefaultSettingsAsync(connection, cancellationToken);
+    }
+
+    private static async Task ApplyMigrationsAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await AddColumnIfMissingAsync(connection, "Disks", "MediaType", "TEXT NOT NULL DEFAULT ''", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "Disks", "SsdLifeRemaining", "INTEGER NULL", cancellationToken);
+    }
+
+    private static async Task AddColumnIfMissingAsync(
+        SqliteConnection connection,
+        string table,
+        string column,
+        string columnDefinition,
+        CancellationToken cancellationToken)
+    {
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var pragma = connection.CreateCommand())
+        {
+            pragma.CommandText = $"PRAGMA table_info({table});";
+            await using var reader = await pragma.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                existing.Add(reader.GetString(1));
+            }
+        }
+
+        if (existing.Contains(column))
+        {
+            return;
+        }
+
+        await using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {columnDefinition};";
+        await alter.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task SeedDefaultSettingsAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await UpsertSettingIfMissingAsync(connection, "Api:Port", "5160", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, "SmartMonitoring:Cron", "0 */1 * * * ?", cancellationToken);
+    }
+
+    private static async Task UpsertSettingIfMissingAsync(
+        SqliteConnection connection,
+        string key,
+        string value,
+        CancellationToken cancellationToken)
+    {
+        await using var check = connection.CreateCommand();
+        check.CommandText = "SELECT 1 FROM AppSettings WHERE [Key] = $k LIMIT 1;";
+        check.Parameters.AddWithValue("$k", key);
+        var exists = await check.ExecuteScalarAsync(cancellationToken) is not null;
+        if (exists)
+        {
+            return;
+        }
+
+        await using var insert = connection.CreateCommand();
+        insert.CommandText = "INSERT INTO AppSettings ([Key], Value) VALUES ($k, $v);";
+        insert.Parameters.AddWithValue("$k", key);
+        insert.Parameters.AddWithValue("$v", value);
+        await insert.ExecuteNonQueryAsync(cancellationToken);
     }
 }

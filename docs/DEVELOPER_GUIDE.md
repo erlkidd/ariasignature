@@ -21,8 +21,8 @@
 
 - `IDiskTelemetryCollector` отвечает за сбор телеметрии.
 - `WmiDiskTelemetryCollector` читает:
-  - сведения о физических дисках;
-  - SMART-атрибуты;
+  - сведения о физических дисках (в т.ч. `MediaType`, уточнение USB/NVMe по PNPDeviceID);
+  - SMART-атрибуты (в т.ч. атрибуты износа SSD 231/233 при наличии);
   - привязку логических томов к физическим накопителям.
 - `DiskTelemetryService` управляет refresh/query сценариями.
 - `SqliteDiskTelemetryRepository` хранит срезы дисков и историю SMART.
@@ -61,18 +61,15 @@
 - В таблицах хранятся:
   - диски и SMART-история;
   - задачи архивации;
-  - логи выполнения.
+  - логи выполнения;
+  - пара ключ/значение `AppSettings` (порт API, cron SMART и др.).
 
-## UI (WPF + MVVM)
+## UI (WebView2 + React SPA)
 
-- Основной ViewModel: `MainViewModel`.
-- Вкладки: накопители, архивация, настройки.
-- UI получает данные только из service API.
-- Поддерживается:
-  - создание/редактирование/включение/выключение/удаление/ручной запуск задач;
-  - выбор темы;
-  - управление автозапуском;
-  - интерактивный выбор файлов и папок для `File` сценария.
+- Исходники SPA: `src/web` (Vite, React, TypeScript). Сборка: `npm ci` и `npm run build` — артефакты в `src/service/AriaSignature.Service/wwwroot`.
+- `AriaSignature.UI` (WPF): окно с `WebView2`, трей, иконка; при загрузке вызывается `WindowsServiceEnsure` для службы `AriaSignatureService`; навигация на `http://127.0.0.1:{port}/`.
+- Обмен с хостом для автозапуска: `chrome.webview.postMessage` ↔ `CoreWebView2.WebMessageReceived` / `PostWebMessageAsString` (реестр через `StartupRegistrationService`).
+- Панель использует **тот же** локальный API, что и внешние интеграции (`/api/v1`).
 
 ## Иконки и визуальные ресурсы
 

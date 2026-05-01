@@ -18,7 +18,8 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
 
         var smartSnapshot = ReadSmartSnapshot();
         var disks = new List<Disk>();
-        using var searcher = new ManagementObjectSearcher("SELECT Model, SerialNumber, InterfaceType, Size, DeviceID FROM Win32_DiskDrive");
+        using var searcher = new ManagementObjectSearcher(
+            "SELECT Model, SerialNumber, InterfaceType, Size, DeviceID, MediaType, PNPDeviceID FROM Win32_DiskDrive");
         using var results = searcher.Get();
 
         foreach (var item in results.OfType<ManagementObject>())
@@ -28,8 +29,8 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             var size = TryParseLong(item["Size"]);
             var model = item["Model"]?.ToString()?.Trim() ?? "Unknown";
             var serial = item["SerialNumber"]?.ToString()?.Trim() ?? string.Empty;
-            var iface = item["InterfaceType"]?.ToString()?.Trim() ?? "Unknown";
-            var deviceId = item["DeviceID"]?.ToString() ?? string.Empty;
+            var mediaType = item["MediaType"]?.ToString()?.Trim() ?? string.Empty;
+            var iface = ResolveInterfaceType(item);
             var diskId = CreateStableId(model, serial, iface);
 
             var diskCapacity = ResolvePhysicalDiskCapacity(item, size);
@@ -38,8 +39,9 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             var reallocated = smart.ReallocatedSectors;
             var pending = smart.PendingSectors;
             var uncorrectable = smart.UncorrectableErrors;
-            var health = EstimateHealth(reallocated, pending, uncorrectable);
-            var status = CalculateStatus(reallocated, pending, uncorrectable);
+            var ssdLife = smart.SsdLifeRemainingPercent;
+            var health = EstimateHealth(reallocated, pending, uncorrectable, ssdLife);
+            var status = CalculateStatus(reallocated, pending, uncorrectable, ssdLife);
 
             disks.Add(new Disk
             {
@@ -47,8 +49,10 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                 Model = model,
                 Serial = serial,
                 Interface = iface,
+                MediaType = string.IsNullOrWhiteSpace(mediaType) ? InferMediaType(iface, model) : mediaType,
                 SizeTotalBytes = diskCapacity.total > 0 ? diskCapacity.total : size,
                 SizeFreeBytes = diskCapacity.free,
+                SsdLifeRemainingPercent = ssdLife,
                 TemperatureCelsius = smart.TemperatureCelsius,
                 HealthPercent = health,
                 PowerOnHours = smart.PowerOnHours,
@@ -62,6 +66,40 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         }
 
         return Task.FromResult<IReadOnlyCollection<Disk>>(disks);
+    }
+
+    private static string InferMediaType(string iface, string model)
+    {
+        var m = model.ToUpperInvariant();
+        if (m.Contains("SSD", StringComparison.Ordinal) || m.Contains("NVME", StringComparison.Ordinal))
+        {
+            return "SSD";
+        }
+
+        return iface.Contains("NVMe", StringComparison.OrdinalIgnoreCase) ? "SSD" : "HDD";
+    }
+
+    private static string ResolveInterfaceType(ManagementObject disk)
+    {
+        var pnp = disk["PNPDeviceID"]?.ToString() ?? string.Empty;
+        if (pnp.Contains("USB", StringComparison.OrdinalIgnoreCase))
+        {
+            return "USB";
+        }
+
+        if (pnp.Contains("NVME", StringComparison.OrdinalIgnoreCase) ||
+            pnp.Contains("VEN_144D", StringComparison.OrdinalIgnoreCase))
+        {
+            return "NVMe";
+        }
+
+        var wmiIface = disk["InterfaceType"]?.ToString()?.Trim() ?? "Unknown";
+        return wmiIface.ToUpperInvariant() switch
+        {
+            "IDE" => "SATA",
+            "SCSI" => "SATA/SCSI",
+            _ => wmiIface
+        };
     }
 
     private static (long total, long free) ResolvePhysicalDiskCapacity(ManagementObject diskDrive, long fallbackTotal)
@@ -164,6 +202,20 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                 case 198:
                     attributes.UncorrectableErrors = (int)raw;
                     break;
+                case 231:
+                    attributes.SsdLifeRemainingPercent = (int)Math.Clamp(raw & 0xFF, 0, 100);
+                    break;
+                case 233:
+                    if (attributes.SsdLifeRemainingPercent is null)
+                    {
+                        var wear = (int)Math.Clamp((raw >> 16) & 0xFF, 0, 100);
+                        if (wear > 0)
+                        {
+                            attributes.SsdLifeRemainingPercent = wear;
+                        }
+                    }
+
+                    break;
             }
         }
 
@@ -187,17 +239,33 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         return long.TryParse(value?.ToString(), out var parsed) ? parsed : 0;
     }
 
-    private static int EstimateHealth(int reallocated, int pending, int uncorrectable)
+    private static int EstimateHealth(int reallocated, int pending, int uncorrectable, int? ssdLife)
     {
         var penalty = (reallocated * 2) + (pending * 5) + (uncorrectable * 8);
-        return Math.Clamp(100 - penalty, 0, 100);
+        var baseHealth = Math.Clamp(100 - penalty, 0, 100);
+        if (ssdLife is int life)
+        {
+            baseHealth = Math.Min(baseHealth, life);
+        }
+
+        return baseHealth;
     }
 
-    private static DiskHealthStatus CalculateStatus(int reallocated, int pending, int uncorrectable)
+    private static DiskHealthStatus CalculateStatus(int reallocated, int pending, int uncorrectable, int? ssdLife)
     {
         if (uncorrectable > 0 || pending > 50)
         {
             return DiskHealthStatus.Critical;
+        }
+
+        if (ssdLife is <= 10)
+        {
+            return DiskHealthStatus.Critical;
+        }
+
+        if (ssdLife is <= 20)
+        {
+            return DiskHealthStatus.Warning;
         }
 
         if (reallocated > 0 || pending > 0)
@@ -217,5 +285,6 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         public int ReallocatedSectors { get; set; }
         public int PendingSectors { get; set; }
         public int UncorrectableErrors { get; set; }
+        public int? SsdLifeRemainingPercent { get; set; }
     }
 }

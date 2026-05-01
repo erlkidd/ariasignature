@@ -1,4 +1,12 @@
 # ----------------------------
+# Node (web SPA)
+# ----------------------------
+src/web/node_modules/
+src/web/tsconfig.tsbuildinfo
+# SPA build output (генерируется npm run build перед publish)
+src/service/AriaSignature.Service/wwwroot/
+
+# ----------------------------
 # Build outputs
 # ----------------------------
 bin/

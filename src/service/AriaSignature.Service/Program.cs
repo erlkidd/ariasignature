@@ -4,11 +4,13 @@ using AriaSignature.Service.Jobs;
 using Quartz;
 using AriaSignature.Service;
 using Serilog;
+using Microsoft.Extensions.Hosting;
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.Services.Configure<HostOptions>(options => options.ServicesStartConcurrently = false);
 builder.Services.AddWindowsService(options =>
 {
-    options.ServiceName = "AriaSignature Service";
+    options.ServiceName = "AriaSignatureService";
 });
 
 Log.Logger = new LoggerConfiguration()

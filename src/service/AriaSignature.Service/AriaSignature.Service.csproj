@@ -17,6 +17,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\api\AriaSignature.Api\AriaSignature.Api.csproj" />
     <ProjectReference Include="..\..\core\AriaSignature.Application\AriaSignature.Application.csproj" />
     <ProjectReference Include="..\..\core\AriaSignature.Infrastructure\AriaSignature.Infrastructure.csproj" />

@@ -114,8 +114,8 @@ public sealed class BackupService : IBackupService
         return dueLogs;
     }
 
-    public Task<IReadOnlyCollection<BackupLog>> GetLogsAsync(CancellationToken cancellationToken)
+    public Task<IReadOnlyCollection<BackupLog>> GetLogsAsync(BackupExecutionStatus? status, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken)
     {
-        return _repository.GetLogsAsync(cancellationToken);
+        return _repository.GetLogsAsync(status, fromUtc, toUtc, cancellationToken);
     }
 }
