@@ -1,5 +1,20 @@
 # Руководство разработчика AriaSignature
 
+**Версия релиза в репозитории:** 0.2.1.
+
+## Версионирование релиза (обязательная синхронизация)
+
+При смене номера версии обновляйте **все** следующие места одним коммитом:
+
+| Место | Назначение |
+|--------|------------|
+| `Directory.Build.props` | `Version`, `AssemblyVersion`, `FileVersion`, `InformationalVersion` для всех .NET-сборок |
+| `installer/inno/AriaSignature.iss` | `#define MyAppVersion` (версия в свойствах установщика) |
+| `src/web/package.json` и `src/web/package-lock.json` | поле `version` у корневого пакета `ariasignature-web` |
+| `docs/API.md`, `docs/USER_GUIDE.md` | строка с номером текущего релиза (этот документ — по необходимости) |
+
+Параллельно кратко зафиксируйте изменения в `docs/DEVELOPMENT_NOTES.md`. Ветка разработки: `test/agent-work`; в `production` сливает владелец.
+
 ## Ветвление и поставка
 
 - Основная релизная ветка: `production`.

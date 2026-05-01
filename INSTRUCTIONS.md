@@ -8,6 +8,8 @@
 
 ## Проект: **AriaSignature (Windows Desktop Application)**
 
+**Актуальная версия в репозитории:** 0.2.1 — единый номер в `Directory.Build.props`, установщике Inno (`MyAppVersion`) и `src/web/package.json`; документация в `docs/` обновляется параллельно; Git: ветка разработки `test/agent-work`, релизная `production`.
+
 ---
 
 ## 1. Общие требования

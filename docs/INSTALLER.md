@@ -1,5 +1,7 @@
 # Руководство по установщику AriaSignature
 
+**Версия установщика** задаётся `#define MyAppVersion` в `AriaSignature.iss` и должна совпадать с `Directory.Build.props` (сейчас **0.2.1**).
+
 ## Требования
 
 - Windows 10/11 x64.
