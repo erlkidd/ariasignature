@@ -1,0 +1,72 @@
+# ----------------------------
+# Node (web SPA)
+# ----------------------------
+src/web/node_modules/
+src/web/tsconfig.tsbuildinfo
+# SPA build output (генерируется npm run build перед publish)
+src/service/AriaSignature.Service/wwwroot/
+
+# ----------------------------
+# Build outputs
+# ----------------------------
+bin/
+obj/
+publish/
+artifacts/
+out/
+
+# ----------------------------
+# .NET / NuGet
+# ----------------------------
+packages/
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json
+
+# ----------------------------
+# IDE / Editor
+# ----------------------------
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.rsuser
+
+# ----------------------------
+# Test / Coverage
+# ----------------------------
+TestResults/
+*.trx
+coverage/
+*.coverage
+*.coveragexml
+*.opencover.xml
+
+# ----------------------------
+# Runtime data (generated locally)
+# ----------------------------
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+logs/
+*.log
+
+# ----------------------------
+# OS / temp
+# ----------------------------
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+*.cache
+
+# ----------------------------
+# Installer runtime payloads (kept out of git)
+# ----------------------------
+installer/webview2/*.exe
