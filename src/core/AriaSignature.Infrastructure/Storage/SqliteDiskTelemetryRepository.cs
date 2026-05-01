@@ -164,6 +164,38 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
         return metrics;
     }
 
+    public async Task<int> ClearSmartMetricsAsync(Guid diskId, CancellationToken cancellationToken)
+    {
+        var affectedRows = 0;
+        await ExecuteWithBusyRetryAsync(async () =>
+        {
+            await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+            var command = connection.CreateCommand();
+            command.CommandText = """
+                DELETE FROM SmartMetrics
+                WHERE DiskId = $DiskId;
+                """;
+            command.Parameters.AddWithValue("$DiskId", diskId.ToString());
+            affectedRows = await command.ExecuteNonQueryAsync(cancellationToken);
+        }, cancellationToken);
+
+        return affectedRows;
+    }
+
+    public async Task<int> ClearAllSmartMetricsAsync(CancellationToken cancellationToken)
+    {
+        var affectedRows = 0;
+        await ExecuteWithBusyRetryAsync(async () =>
+        {
+            await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+            var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM SmartMetrics;";
+            affectedRows = await command.ExecuteNonQueryAsync(cancellationToken);
+        }, cancellationToken);
+
+        return affectedRows;
+    }
+
     private static void BindDisk(SqliteCommand command, Disk disk, bool temperatureNotNull)
     {
         command.Parameters.AddWithValue("$Id", disk.Id.ToString());

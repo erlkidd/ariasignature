@@ -8,4 +8,6 @@ public interface IDiskTelemetryService
     Task<IReadOnlyCollection<Disk>> GetDisksAsync(CancellationToken cancellationToken);
     Task<Disk?> GetDiskByIdAsync(Guid id, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<SmartMetric>> GetSmartMetricsAsync(Guid id, CancellationToken cancellationToken);
+    Task<int> ClearSmartMetricsAsync(Guid id, CancellationToken cancellationToken);
+    Task<int> ClearAllSmartMetricsAsync(CancellationToken cancellationToken);
 }

@@ -110,18 +110,48 @@ public static class WindowsServiceEnsure
             RunScBestEffort(scPath, $"delete {ServiceName}");
             Thread.Sleep(1000);
 
-            var createArgs =
-                $"create {ServiceName} binPath= \"{serviceExePath}\" start= auto DisplayName= \"AriaSignature\" obj= LocalSystem";
-            if (!RunSc(scPath, createArgs, out var createExit, out var createStdErr) && createExit != 1073)
+            var createAttempts = new[]
             {
-                error = $"sc create failed ({createExit}): {createStdErr}";
+                $"create {ServiceName} binPath= \"{serviceExePath}\" start= auto DisplayName= \"AriaSignature\" obj= LocalSystem",
+                $"create {ServiceName} binPath= \"{serviceExePath}\" start= auto DisplayName= \"AriaSignature Service\" obj= LocalSystem",
+                $"create {ServiceName} binPath= \"{serviceExePath}\" start= auto obj= LocalSystem"
+            };
+
+            var created = false;
+            var lastCreateExit = -1;
+            var lastCreateOutput = string.Empty;
+            foreach (var createArgs in createAttempts)
+            {
+                if (RunSc(scPath, createArgs, out var createExit, out var createOutput))
+                {
+                    created = true;
+                    break;
+                }
+
+                lastCreateExit = createExit;
+                lastCreateOutput = createOutput;
+                if (createExit == 1073)
+                {
+                    created = true;
+                    break;
+                }
+
+                if (createExit != 1078)
+                {
+                    break;
+                }
+            }
+
+            if (!created)
+            {
+                error = $"sc create failed ({lastCreateExit}): {lastCreateOutput}";
                 return false;
             }
 
             RunScBestEffort(scPath, $"failure {ServiceName} reset= 86400 actions= restart/5000/restart/5000/restart/5000");
-            if (!RunSc(scPath, $"start {ServiceName}", out var startExit, out var startStdErr) && startExit != 1056)
+            if (!RunSc(scPath, $"start {ServiceName}", out var startExit, out var startOutput) && startExit != 1056)
             {
-                error = $"sc start failed ({startExit}): {startStdErr}";
+                error = $"sc start failed ({startExit}): {startOutput}";
                 return false;
             }
 
@@ -216,15 +246,16 @@ public static class WindowsServiceEnsure
         return null;
     }
 
-    private static bool RunSc(string scPath, string args, out int exitCode, out string stdErr)
+    private static bool RunSc(string scPath, string args, out int exitCode, out string output)
     {
-        stdErr = string.Empty;
+        output = string.Empty;
         var psi = new ProcessStartInfo
         {
             FileName = scPath,
             Arguments = args,
             UseShellExecute = false,
             CreateNoWindow = true,
+            RedirectStandardOutput = true,
             RedirectStandardError = true
         };
         using var proc = Process.Start(psi);
@@ -234,9 +265,15 @@ public static class WindowsServiceEnsure
             return false;
         }
 
+        var stdOut = proc.StandardOutput.ReadToEnd();
+        var stdErr = proc.StandardError.ReadToEnd();
         proc.WaitForExit(20000);
         exitCode = proc.ExitCode;
-        stdErr = proc.StandardError.ReadToEnd();
+        output = string.IsNullOrWhiteSpace(stdErr)
+            ? stdOut
+            : string.IsNullOrWhiteSpace(stdOut)
+                ? stdErr
+                : $"{stdOut}{Environment.NewLine}{stdErr}";
         return exitCode == 0;
     }
 }

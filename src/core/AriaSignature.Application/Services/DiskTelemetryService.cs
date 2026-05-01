@@ -34,4 +34,14 @@ public sealed class DiskTelemetryService : IDiskTelemetryService
     {
         return _repository.GetSmartMetricsAsync(id, cancellationToken);
     }
+
+    public Task<int> ClearSmartMetricsAsync(Guid id, CancellationToken cancellationToken)
+    {
+        return _repository.ClearSmartMetricsAsync(id, cancellationToken);
+    }
+
+    public Task<int> ClearAllSmartMetricsAsync(CancellationToken cancellationToken)
+    {
+        return _repository.ClearAllSmartMetricsAsync(cancellationToken);
+    }
 }

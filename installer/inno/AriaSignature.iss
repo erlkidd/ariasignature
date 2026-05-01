@@ -2,7 +2,7 @@
 ; Build binaries first, then run this script in Inno Setup Compiler.
 
 #define MyAppName "AriaSignature"
-#define MyAppVersion "0.2.5"
+#define MyAppVersion "0.2.6"
 #define MyAppPublisher "AriaSignature"
 #define MyAppExeName "AriaSignature.UI.exe"
 #define MyServiceExeName "AriaSignature.Service.exe"
@@ -175,8 +175,11 @@ procedure InstallServiceOrAbort();
 var
   BinPath: string;
   CreateParams: string;
+  CreateParamsAlt: string;
+  CreateParamsNoDisplay: string;
   Attempt: Integer;
   Created: Boolean;
+  Started: Boolean;
 begin
   if not IsAdminInstallMode then
   begin
@@ -191,6 +194,8 @@ begin
 
   { binPath в кавычках (AddQuotes): иначе "Program Files" ломает sc create и служба не регистрируется }
   CreateParams := 'create ' + ServiceName + ' binPath= ' + AddQuotes(BinPath) + ' start= auto DisplayName= "AriaSignature" obj= LocalSystem';
+  CreateParamsAlt := 'create ' + ServiceName + ' binPath= ' + AddQuotes(BinPath) + ' start= auto DisplayName= "AriaSignature Service" obj= LocalSystem';
+  CreateParamsNoDisplay := 'create ' + ServiceName + ' binPath= ' + AddQuotes(BinPath) + ' start= auto obj= LocalSystem';
 
   Created := False;
   for Attempt := 1 to 8 do
@@ -203,9 +208,30 @@ begin
 
     Log(Format('sc create retry %d failed with code %d', [Attempt, LastScExitCode]));
     if (LastScExitCode <> SC_MARKED_FOR_DELETE) and
-       (LastScExitCode <> SC_ALREADY_EXISTS) then
+       (LastScExitCode <> SC_ALREADY_EXISTS) and
+       (LastScExitCode <> 1078) then
     begin
       Break;
+    end;
+
+    if LastScExitCode = 1078 then
+    begin
+      Log('sc create returned 1078 (display name conflict), retry with alternate DisplayName.');
+      if ExecSc(CreateParamsAlt, 0, -1) then
+      begin
+        Created := True;
+        Break;
+      end;
+
+      if LastScExitCode = 1078 then
+      begin
+        Log('sc create still returned 1078, retry without DisplayName.');
+        if ExecSc(CreateParamsNoDisplay, 0, -1) then
+        begin
+          Created := True;
+          Break;
+        end;
+      end;
     end;
 
     Sleep(1500);
@@ -225,12 +251,32 @@ begin
 
   if not ExecSc(Format('failure %s reset= 86400 actions= restart/5000/restart/5000/restart/5000', [ServiceName]), 0, -1) then
   begin
-    RaiseException('Не удалось настроить recovery policy службы AriaSignatureService');
+    Log('Warning: failed to configure recovery policy for AriaSignatureService; installer continues.');
   end;
 
-  if not ExecSc(Format('start %s', [ServiceName]), 0, SC_ACCEPTABLE_ALREADY_RUNNING) then
+  Started := False;
+  for Attempt := 1 to 12 do
   begin
-    RaiseException('Не удалось запустить службу AriaSignatureService');
+    if ExecSc(Format('start %s', [ServiceName]), 0, SC_ACCEPTABLE_ALREADY_RUNNING) then
+    begin
+      Started := True;
+      Break;
+    end;
+
+    Log(Format('sc start retry %d failed with code %d', [Attempt, LastScExitCode]));
+    Sleep(1500);
+  end;
+
+  if not Started then
+  begin
+    Log('Warning: AriaSignatureService was installed but did not start during setup.');
+    SuppressibleMsgBox(
+      'Служба AriaSignature установлена, но не была запущена автоматически.'#13#10 +
+      'Это не критично: откройте services.msc и запустите AriaSignatureService вручную, ' +
+      'либо просто запустите AriaSignature.UI от имени администратора — UI попробует восстановить службу.',
+      mbInformation,
+      MB_OK,
+      IDOK);
   end;
 end;
 

@@ -98,7 +98,15 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                             WmiUsed = wmiUsed,
                             StorageReliabilityUsed = storageUsed,
                             TelemetryConfidence = ComputeTelemetryConfidence(smartCtlUsed, storageUsed, wmiUsed, hadTelemetry),
-                            TelemetryDegradationReason = BuildTelemetryDegradationReason(smartCtlUsed, storageUsed, wmiUsed, hadTelemetry, smartCtlData),
+                            TelemetryDegradationReason = BuildTelemetryDegradationReason(
+                                smartCtlUsed,
+                                storageUsed,
+                                wmiUsed,
+                                hadTelemetry,
+                                smartCtlData,
+                                physicalIndex,
+                                model,
+                                serial),
                             Status = status,
                             UpdatedAtUtc = DateTimeOffset.UtcNow
                         });
@@ -469,6 +477,11 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
 
         if (src is null)
         {
+            src = FindBestSmartCtlSnapshot(model, serial, pnpDeviceId, smartCtlData);
+        }
+
+        if (src is null)
+        {
             return false;
         }
 
@@ -493,6 +506,84 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         }
 
         return true;
+    }
+
+    private static SmartCtlLowLevelReader.Snapshot? FindBestSmartCtlSnapshot(
+        string model,
+        string serial,
+        string pnpDeviceId,
+        SmartCtlLowLevelReader.ReadResult smartCtlData)
+    {
+        var modelTokens = Tokenize(model);
+        var serialUpper = serial.Trim().ToUpperInvariant();
+        var pnpUpper = pnpDeviceId.Trim().ToUpperInvariant();
+
+        SmartCtlLowLevelReader.Snapshot? best = null;
+        var bestScore = 0;
+        foreach (var candidate in smartCtlData.ByIdentity.Values)
+        {
+            var score = 0;
+            var cModel = candidate.Model.Trim().ToUpperInvariant();
+            var cSerial = candidate.Serial.Trim().ToUpperInvariant();
+            if (!string.IsNullOrWhiteSpace(serialUpper) && !string.IsNullOrWhiteSpace(cSerial))
+            {
+                if (serialUpper.Equals(cSerial, StringComparison.OrdinalIgnoreCase))
+                {
+                    score += 200;
+                }
+                else if (serialUpper.Contains(cSerial, StringComparison.OrdinalIgnoreCase) ||
+                         cSerial.Contains(serialUpper, StringComparison.OrdinalIgnoreCase))
+                {
+                    score += 120;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(pnpUpper))
+            {
+                if (!string.IsNullOrWhiteSpace(cSerial) && pnpUpper.Contains(cSerial, StringComparison.OrdinalIgnoreCase))
+                {
+                    score += 80;
+                }
+                if (!string.IsNullOrWhiteSpace(cModel) && pnpUpper.Contains(cModel, StringComparison.OrdinalIgnoreCase))
+                {
+                    score += 60;
+                }
+            }
+
+            foreach (var token in modelTokens)
+            {
+                if (cModel.Contains(token, StringComparison.OrdinalIgnoreCase))
+                {
+                    score += 15;
+                }
+            }
+
+            if (score <= bestScore)
+            {
+                continue;
+            }
+
+            best = candidate;
+            bestScore = score;
+        }
+
+        return bestScore >= 60 ? best : null;
+    }
+
+    private static IReadOnlyCollection<string> Tokenize(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return Array.Empty<string>();
+        }
+
+        return value
+            .ToUpperInvariant()
+            .Split([' ', '\t', '_', '-', '/', '\\', '.', ','], StringSplitOptions.RemoveEmptyEntries)
+            .Where(t => t.Length >= 4)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToArray();
     }
 
     private static SmartAttributes CopySmartAttributes(SmartAttributes s) =>
@@ -833,7 +924,10 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         bool storageUsed,
         bool wmiUsed,
         bool hadTelemetry,
-        SmartCtlLowLevelReader.ReadResult smartCtlData)
+        SmartCtlLowLevelReader.ReadResult smartCtlData,
+        int? physicalIndex,
+        string model,
+        string serial)
     {
         if (smartCtlUsed)
         {
@@ -849,12 +943,46 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                 return "smartctl недоступен или не вернул устройства; используется WMI fallback.";
             }
 
-            return "smartctl не сопоставлен с диском, используются WMI/Storage fallback-метрики.";
+            var attempted = BuildMatchAttemptHint(physicalIndex, model, serial);
+            return $"smartctl не сопоставлен с диском ({attempted}), используются WMI/Storage fallback-метрики.";
         }
 
         return hadTelemetry
             ? "Метрики получены частично, возможны ограничения контроллера."
-            : "Телеметрия недоступна: диск/контроллер не отдает SMART-атрибуты.";
+            : "Телеметрия недоступна: диск/контроллер не отдает SMART-атрибуты. " +
+              "Рекомендуется проверить режим контроллера (AHCI/RST), драйвер чипсета/NVMe и доступность SMART в BIOS.";
+    }
+
+    private static string BuildMatchAttemptHint(int? physicalIndex, string model, string serial)
+    {
+        var parts = new List<string>();
+        if (physicalIndex is int idx)
+        {
+            parts.Add($@"PhysicalDrive{idx}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(model))
+        {
+            parts.Add($"model:{TrimForHint(model, 28)}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(serial))
+        {
+            parts.Add($"serial:{TrimForHint(serial, 20)}");
+        }
+
+        return parts.Count == 0 ? "идентификаторы отсутствуют" : string.Join(", ", parts);
+    }
+
+    private static string TrimForHint(string value, int maxLen)
+    {
+        var normalized = value.Trim();
+        if (normalized.Length <= maxLen)
+        {
+            return normalized;
+        }
+
+        return normalized[..maxLen] + "...";
     }
 
     private static int EstimateHealth(int reallocated, int pending, int uncorrectable, int? ssdLife)

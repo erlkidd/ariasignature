@@ -1,4 +1,30 @@
-# AriaSignature — development notes
+# AriaSignature — журнал разработки
+
+## Release 0.2.6
+
+### SMART история и операторские действия
+- Добавлены операции очистки SMART-истории:
+  - локально по выбранному диску;
+  - глобально по всем дискам.
+- В API добавлены endpoint-операции:
+  - `DELETE /api/v1/disks/{id}/smart`;
+  - `DELETE /api/v1/disks/smart`.
+- В UI добавлены кнопки очистки SMART-истории с подтверждением операции и обновлением представления после удаления записей.
+
+### UI и терминология
+- Заголовок карточки обновлен на «Карточка диска».
+- Терминология раздела выровнена на «Диски».
+- В карточке диска исключен показатель «Достоверность» из отображаемых операторских параметров.
+
+### Installer/Service hardening
+- Устранен сценарий финальной ошибки установки при позднем старте службы: запуск службы после install выполняется с retry и не блокирует завершение установки при некритическом сценарии.
+- Для `sc create` добавлен fallback-алгоритм обработки `1078` (конфликт display name) через альтернативный `DisplayName` и режим без `DisplayName`.
+- UI self-heal пути регистрации службы расширены для более устойчивой обработки ответов `sc.exe`.
+
+### Документация и релизная дисциплина
+- Документы синхронизированы по версии `0.2.6`.
+- Спецификация `INSTRUCTIONS.md` переведена и унифицирована в техническом русскоязычном стиле.
+- Добавлен формализованный `CHANGELOG.md` и выровнен с текущими release notes.
 
 ## Release 0.2.5
 
@@ -81,10 +107,10 @@
 
 ## Release 0.2.1
 
-- Stabilized API startup and Swagger compatibility.
-- Hardened WMI telemetry collection and refresh endpoint behavior.
-- Improved installer service registration flow (`sc create`, quoting, verification).
-- Synchronized versions across build artifacts and docs.
+- Стабилизирован запуск API и совместимость Swagger.
+- Усилен сбор телеметрии через WMI и поведение endpoint обновления.
+- Улучшен путь регистрации службы в installer (`sc create`, quoting, verification).
+- Синхронизированы версии между сборочными артефактами и документацией.
 
 ## Branching policy
 

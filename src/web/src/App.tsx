@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
+const UI_BUILD_VERSION = "0.2.6";
 
 type DiskRow = {
   id: string;
@@ -65,6 +66,18 @@ interface SettingsDto {
   apiPort: number;
   smartMonitoringCron: string;
   note: string;
+}
+
+interface ServiceStatusDto {
+  status?: string;
+  version?: string;
+  timestampUtc?: string;
+}
+
+interface ClearSmartResponse {
+  cleared?: boolean;
+  scope?: string;
+  deleted?: number;
 }
 
 type CreateJobField =
@@ -270,6 +283,7 @@ export default function App() {
   const [windowsService, setWindowsService] = useState<WindowsServiceStatus | null>(null);
 
   const [settings, setSettings] = useState<SettingsDto | null>(null);
+  const [serviceVersion, setServiceVersion] = useState<string | null>(null);
   const [launchAtStartup, setLaunchAtStartup] = useState(false);
 
   const [jobName, setJobName] = useState("");
@@ -403,7 +417,7 @@ export default function App() {
     try {
       const d = await apiSend<DiskRow[]>("/disks/refresh", "POST");
       setDisks(d);
-      setStatus(`Накопители обновлены: ${d.length}`);
+      setStatus(`Диски обновлены: ${d.length}`);
     } catch (e) {
       showErr(e);
     }
@@ -442,13 +456,22 @@ export default function App() {
     }
   }, []);
 
+  const refreshServiceVersion = useCallback(async () => {
+    try {
+      const s = await apiGet<ServiceStatusDto>("/status");
+      setServiceVersion(s.version?.trim() || null);
+    } catch {
+      setServiceVersion(null);
+    }
+  }, []);
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 
   useEffect(() => {
     const initialLoad = async () => {
-      await Promise.all([refreshDisks(), refreshJobs(), refreshSettings()]);
+      await Promise.all([refreshDisks(), refreshJobs(), refreshSettings(), refreshServiceVersion()]);
       try {
         const l = await apiGet<BackupLog[]>("/backups/logs");
         setLogs(l);
@@ -458,7 +481,7 @@ export default function App() {
     };
     void initialLoad();
     postToHost({ action: "getAutostart" });
-  }, [refreshDisks, refreshJobs, refreshSettings]);
+  }, [refreshDisks, refreshJobs, refreshSettings, refreshServiceVersion]);
 
   useEffect(() => {
     if (tab !== "backup") {
@@ -561,6 +584,39 @@ export default function App() {
     try {
       const m = await apiGet<SmartRow[]>(`/disks/${disk.id}/smart`);
       setSmart(m);
+    } catch (e) {
+      showErr(e);
+    }
+  };
+
+  const clearSelectedSmartHistory = async () => {
+    if (!selectedDisk) return;
+    if (!confirm(`Очистить историю SMART для диска «${selectedDisk.model}»?`)) return;
+    setError(null);
+    try {
+      const result = await apiSend<ClearSmartResponse>(`/disks/${selectedDisk.id}/smart`, "DELETE");
+      await loadSmart(selectedDisk);
+      setStatus(`История SMART очищена для выбранного диска: ${result.deleted ?? 0} записей.`);
+    } catch (e) {
+      showErr(e);
+    }
+  };
+
+  const clearAllSmartHistory = async () => {
+    if (
+      !confirm(
+        "Очистить всю историю SMART по всем дискам? Это действие удалит накопленные записи и не может быть отменено."
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    try {
+      const result = await apiSend<ClearSmartResponse>("/disks/smart", "DELETE");
+      if (selectedDisk) {
+        await loadSmart(selectedDisk);
+      }
+      setStatus(`Глобальная история SMART очищена: ${result.deleted ?? 0} записей.`);
     } catch (e) {
       showErr(e);
     }
@@ -733,13 +789,13 @@ export default function App() {
           <div className="header-titles">
             <h1>AriaSignature</h1>
             <p className="subtitle">
-              Диагностика накопителей и резервное копирование. Локальная панель управления.
+              Диагностика дисков и резервное копирование. Локальная панель управления.
             </p>
           </div>
         </div>
         <nav className="tabs">
           <button className={tab === "disks" ? "active" : ""} onClick={() => setTab("disks")}>
-            Накопители
+            Диски
           </button>
           <button className={tab === "backup" ? "active" : ""} onClick={() => setTab("backup")}>
             Архивация
@@ -779,8 +835,7 @@ export default function App() {
               Обновить данные
             </button>
             <span className="hint">
-              Сбор телеметрии, выполнение архивации и журналирование выполняет служба AriaSignatureService. Панель предназначена
-              для локального контроля состояния и администрирования.
+              Сбор телеметрии, выполнение архивации и журналирование.
             </span>
           </div>
           <div className="grid2">
@@ -818,7 +873,7 @@ export default function App() {
               </table>
             </div>
             <div className="detail">
-              <h2>Карточка</h2>
+              <h2>Карточка диска</h2>
               {!selectedDisk && <p className="muted">Выберите диск.</p>}
               {selectedDisk && (
                 <>
@@ -847,12 +902,20 @@ export default function App() {
                     </dd>
                     <dt>Источник телеметрии</dt>
                     <dd>{formatTelemetrySource(selectedDisk)}</dd>
-                    <dt>Достоверность</dt>
-                    <dd>{selectedDisk.telemetryConfidence}%</dd>
                     <dt>Диагностика</dt>
                     <dd>{selectedDisk.telemetryDegradationReason || "—"}</dd>
                   </dl>
-                  <h3>История SMART (последние записи)</h3>
+                  <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                    <h3>История SMART (последние записи)</h3>
+                    <div className="row">
+                      <button type="button" className="secondary" onClick={() => void clearSelectedSmartHistory()}>
+                        Очистить историю диска
+                      </button>
+                      <button type="button" className="danger" onClick={() => void clearAllSmartHistory()}>
+                        Очистить всю историю SMART
+                      </button>
+                    </div>
+                  </div>
                   <table className="data compact">
                     <thead>
                       <tr>
@@ -1355,7 +1418,7 @@ export default function App() {
             <img className="about-logo" src="./logo.png" width={120} height={120} alt="" />
             <h2>AriaSignature</h2>
             <p className="hint">
-              Локальная панель для мониторинга накопителей и резервного копирования баз 1С. Служба Windows предоставляет
+              Локальная панель для мониторинга дисков и резервного копирования баз 1С. Служба Windows предоставляет
               HTTP API для интеграций.
             </p>
             <p>
@@ -1534,7 +1597,7 @@ export default function App() {
       )}
 
       <footer className="footer">
-        <span>AriaSignature v0.2.5</span>
+        <span>AriaSignature v{serviceVersion ?? UI_BUILD_VERSION}</span>
         <a href="/swagger" target="_blank" rel="noreferrer">
           Swagger / OpenAPI
         </a>

@@ -189,6 +189,31 @@ public static class AriaApiExtensions
             .WithName("GetDiskSmart")
             .WithOpenApi();
 
+        api.MapDelete("/disks/{id:guid}/smart", async (Guid id, IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
+        {
+            var disk = await telemetry.GetDiskByIdAsync(id, cancellationToken);
+            if (disk is null)
+            {
+                return Results.Problem(
+                    title: "Диск не найден",
+                    detail: $"Очистка истории SMART невозможна: диск '{id}' не найден",
+                    statusCode: StatusCodes.Status404NotFound);
+            }
+
+            var deleted = await telemetry.ClearSmartMetricsAsync(id, cancellationToken);
+            return Results.Ok(new { cleared = true, scope = "disk", diskId = id, deleted });
+        })
+            .WithName("ClearDiskSmart")
+            .WithOpenApi();
+
+        api.MapDelete("/disks/smart", async (IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
+        {
+            var deleted = await telemetry.ClearAllSmartMetricsAsync(cancellationToken);
+            return Results.Ok(new { cleared = true, scope = "all", deleted });
+        })
+            .WithName("ClearAllSmart")
+            .WithOpenApi();
+
         api.MapGet("/backups", async (IBackupService backups, CancellationToken cancellationToken) =>
             Results.Ok(await backups.GetJobsAsync(cancellationToken)))
             .WithName("GetBackups")

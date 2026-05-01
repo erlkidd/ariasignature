@@ -85,6 +85,8 @@ public sealed class SmartCtlLowLevelReader
             }
         }
 
+        ProbePhysicalDrives(exe, byIdentity, byPhysicalIndex);
+
         return new ReadResult(byIdentity, byPhysicalIndex);
     }
 
@@ -141,6 +143,9 @@ public sealed class SmartCtlLowLevelReader
         {
             Add("auto");
             Add("sat");
+            Add("sat,auto");
+            Add("sat,12");
+            Add("sat,16");
             Add("scsi");
             Add("ata");
             Add("nvme");
@@ -148,6 +153,11 @@ public sealed class SmartCtlLowLevelReader
             Add("usbsunplus");
             Add("usbprolific");
             Add("sntjmicron");
+            Add("sntasmedia");
+            Add("sntrealtek");
+            Add("jmb39x");
+            Add("megaraid,0");
+            Add("megaraid,1");
         }
 
         if (up.Contains("NVME", StringComparison.Ordinal))
@@ -162,6 +172,56 @@ public sealed class SmartCtlLowLevelReader
         }
 
         return list;
+    }
+
+    private void ProbePhysicalDrives(
+        string exe,
+        IDictionary<string, Snapshot> byIdentity,
+        IDictionary<int, Snapshot> byPhysicalIndex)
+    {
+        for (var idx = 0; idx < 16; idx++)
+        {
+            if (byPhysicalIndex.ContainsKey(idx))
+            {
+                continue;
+            }
+
+            var name = $@"\\.\PhysicalDrive{idx}";
+            var doc = TryReadDeviceWithFallbacks(exe, name, null);
+            if (doc is null)
+            {
+                continue;
+            }
+
+            var snap = ParseSnapshot(doc.RootElement, name);
+            if (snap is null)
+            {
+                continue;
+            }
+
+            if (!HasAnyTelemetrySignal(snap))
+            {
+                continue;
+            }
+
+            var physicalIndex = snap.PhysicalDriveIndex ?? idx;
+            byPhysicalIndex[physicalIndex] = snap;
+            if (!string.IsNullOrWhiteSpace(snap.Serial) || !string.IsNullOrWhiteSpace(snap.Model))
+            {
+                byIdentity[BuildIdentityKey(snap.Model, snap.Serial)] = snap;
+            }
+        }
+    }
+
+    private static bool HasAnyTelemetrySignal(Snapshot snapshot)
+    {
+        return snapshot.TemperatureCelsius is > 0
+               || snapshot.PowerOnHours > 0
+               || snapshot.PowerCycleCount > 0
+               || snapshot.ReallocatedSectors > 0
+               || snapshot.PendingSectors > 0
+               || snapshot.UncorrectableErrors > 0
+               || snapshot.SsdLifeRemainingPercent is >= 0;
     }
 
     private Snapshot? ParseSnapshot(JsonElement root, string deviceName)

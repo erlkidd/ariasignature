@@ -1,139 +1,143 @@
-# AriaSignature — Product Technical Specification
+# AriaSignature — техническая спецификация продукта
 
-Version: 0.2.2  
-Status: Active baseline
+Версия: 0.2.6  
+Статус: актуальная базовая спецификация
 
-## 1. Product objective
+## 1. Назначение продукта
 
-AriaSignature is a Windows desktop product with a service-first runtime model.  
-The system must:
-- continuously collect disk telemetry;
-- execute backup jobs by schedule;
-- expose produced operational data through a stable local REST API;
-- provide a user-friendly local UI for setup and monitoring.
+AriaSignature — локальный продукт для Windows с моделью `service-first`.  
+Система должна:
+- непрерывно собирать телеметрию дисков;
+- выполнять задания резервного копирования по расписанию;
+- публиковать произведенные данные через локальный REST API;
+- предоставлять операторскую панель для настройки и контроля.
 
-The target operating mode is autonomous execution at customer site after initial setup.
+Целевой режим эксплуатации — автономная работа на стороне заказчика после первичной настройки.
 
-## 2. Scope
+## 2. Границы продукта
 
-### Included
-- Disk diagnostics (HDD/SSD/NVMe, best-effort USB).
-- Backup orchestration for 1C file databases and MSSQL.
-- Job scheduling, execution logging, retention.
-- Local API publication for external consumers.
-- Installer, Windows service registration, tray workflow, autostart.
+### Включено
+- диагностика дисков (HDD/SSD/NVMe, USB — best effort);
+- оркестрация резервного копирования 1С (`.1CD`) и MSSQL;
+- планирование, журналирование и retention;
+- публикация данных через локальный API;
+- установка/обновление/удаление, регистрация службы, работа через трей и автозапуск.
 
-### Excluded
-- External transport/integration logic outside local API boundary.
-- Cloud backend responsibility.
-- Vendor-specific dashboards outside product UI.
+### Исключено
+- внешняя интеграционная логика за пределами локального API-контура;
+- ответственность за облачную инфраструктуру;
+- вендорские панели мониторинга вне интерфейса продукта.
 
-## 3. Architecture constraints
+## 3. Архитектурные ограничения
 
-- `AriaSignature.Service` is the execution core.
-- `AriaSignature.UI` is an operator console, not the execution engine.
-- API contract is versioned and served by service (`/api/v1`).
-- Local persistence is SQLite.
-- UI uses the same API contracts as external integrations.
+- `AriaSignature.Service` — единственный исполнительный контур.
+- `AriaSignature.UI` — операторская панель, не выполняющая диагностику/backup самостоятельно.
+- API-контракт версионируется и обслуживается службой (`/api/v1`).
+- Локальное хранилище — SQLite.
+- UI использует тот же API-контур, что и внешние интеграции.
 
-## 4. Runtime requirements
+## 4. Runtime-требования
 
-- OS: Windows 10/11 x64.
-- Service must auto-start after OS reboot.
-- Tray mode must support background operation without active main window.
-- Single-instance policy for UI process is mandatory.
-- Product must remain operational if UI is closed.
+- ОС: Windows 10/11 x64.
+- Служба запускается автоматически после перезагрузки ОС.
+- UI работает в single-instance режиме.
+- Закрытие UI не должно останавливать выполнение службы.
+- Трей-режим обеспечивает фоновую работу без открытого главного окна.
 
-## 5. Functional requirements
+## 5. Функциональные требования
 
-### 5.1 Disk diagnostics
-- Collect model, serial, interface, media type, capacity, free/used space.
-- Collect temperature, health estimate, SSD life, power-on hours, power cycles.
-- Collect SMART counters (reallocated, pending, uncorrectable, related metrics).
-- Maintain status classification (`ok` / `warning` / `critical`).
-- Support manual and scheduled refresh.
-- Persist history for SMART/telemetry trends.
+### 5.1 Диагностика дисков
+- Собирать модель, серийный номер, интерфейс, тип носителя, объем, свободное/занятое пространство.
+- Собирать температуру, оценку здоровья, ресурс SSD, наработку и число включений.
+- Собирать SMART-счетчики (reallocated, pending, uncorrectable и связанные показатели).
+- Поддерживать статусы (`ok` / `warning` / `critical`).
+- Поддерживать ручное и плановое обновление.
+- Вести историю SMART.
+- Поддерживать очистку SMART-истории:
+  - по выбранному диску;
+  - глобально по всем дискам (операция повышенного риска, только с подтверждением).
 
-Data sources (priority merge):
+Источники данных (по приоритету):
+- `smartctl` (низкоуровневый primary);
 - WMI (`Win32_DiskDrive`, `MSStorageDriver_*`);
-- Storage Reliability counters (`MSFT_StorageReliabilityCounter`);
-- low-level SMART/NVMe via `smartctl` when available.
+- Storage Reliability (`MSFT_StorageReliabilityCounter`).
 
-### 5.2 Backup management
-- Support backup job types:
-  - `file` (1C `.1CD`);
+### 5.2 Резервное копирование
+- Поддерживать типы задач:
+  - `file` (1С `.1CD`);
   - `msSql` (SQL Server backup flow).
-- Support CRUD operations for jobs.
-- Support manual run and schedule-driven run.
-- Enforce retention count with automatic cleanup.
-- Record execution logs (status, timestamps, size, message).
+- Поддерживать CRUD задач.
+- Поддерживать ручной и плановый запуск.
+- Применять retention с автоматической очисткой старых копий.
+- Вести журнал выполнения (статус, время, размер, сообщение).
 
-### 5.3 Settings and operations
-- Configure API port and diagnostic schedule.
-- Configure UI autostart.
-- Provide service status and control actions from UI.
-- Keep all operational actions available through UI without script usage.
+### 5.3 Настройки и эксплуатация
+- Настройка порта API и расписания диагностики.
+- Настройка автозапуска UI.
+- Контроль статуса и базовые команды управления службой из UI.
+- Выполнение операторских сценариев без внешних скриптов.
 
-## 6. API requirements
+## 6. Требования к API
 
-- REST + JSON, local bind by default.
-- Version prefix: `/api/v1`.
-- OpenAPI/Swagger must be available.
-- Stable contracts, backward-safe evolution.
-- Error contract: `application/problem+json`.
+- REST + JSON, локальная публикация по умолчанию.
+- Префикс версии: `/api/v1`.
+- Доступен OpenAPI/Swagger.
+- Контракты эволюционируют без необъявленных breaking-изменений.
+- Формат ошибок: `application/problem+json`.
 
-Minimum endpoint groups:
-- service status;
-- settings;
-- disks + smart history;
-- backup jobs;
-- backup logs.
+Минимальные группы endpoint:
+- статус сервиса;
+- настройки;
+- диски и история SMART;
+- задачи архивации;
+- журнал архивации.
 
-## 7. Non-functional requirements
+## 7. Нефункциональные требования
 
-- No stubs as final implementation.
-- Deterministic install/upgrade/uninstall behavior.
-- Input validation for all write operations.
-- Structured logging for service execution paths.
-- Build reproducibility via release gate script.
+- Отсутствие заглушек в итоговой поставке.
+- Предсказуемое поведение install/upgrade/uninstall.
+- Валидация входных данных для write-операций.
+- Структурированное логирование ключевых путей выполнения.
+- Воспроизводимая сборка через release-gate.
 
-## 8. Build, release and versioning
+## 8. Сборка, релиз и версионирование
 
-Mandatory version synchronization:
+Обязательная синхронизация версии:
 - `Directory.Build.props`;
 - `installer/inno/AriaSignature.iss`;
-- `src/web/package.json` and lockfile;
-- user/API docs versions.
+- `src/web/package.json` и `src/web/package-lock.json`;
+- версии документов в `docs/*`.
 
-Release gate entry point:
+Точка входа release-gate:
 - `scripts/release-gate.ps1`
 
-Expected artifact:
+Целевой артефакт:
 - `artifacts/installer/AriaSignature-Setup.exe`
 
-## 9. Branching and delivery policy
+## 9. Политика ветвления и поставки
 
-- Development branch: `test/agent-work`.
-- Release branch: `production`.
-- Merge to `production` is owner-controlled.
+- рабочая ветка: `test/agent-work`;
+- релизная ветка: `production`;
+- merge в `production` выполняет владелец репозитория.
 
-## 10. Documentation governance
+## 10. Политика документации
 
-Documentation is part of the deliverable and must be updated in the same change set as behavior/contract changes.
+Документация является частью поставки и обновляется в том же change set, что и изменения поведения/контрактов.
 
-Required docs set:
-- `docs/USER_GUIDE.md`
-- `docs/API.md`
-- `docs/DEVELOPER_GUIDE.md`
-- `docs/INSTALLER.md`
-- `docs/RELEASE_GATE.md`
-- `docs/DEVELOPMENT_NOTES.md`
+Обязательный набор:
+- `docs/USER_GUIDE.md`;
+- `docs/API.md`;
+- `docs/DEVELOPER_GUIDE.md`;
+- `docs/INSTALLER.md`;
+- `docs/RELEASE_GATE.md`;
+- `docs/DEVELOPMENT_NOTES.md`;
+- `CHANGELOG.md`.
 
-## 11. Definition of done
+## 11. Definition of Done
 
-A change is complete only if:
-- functional behavior is implemented;
-- tests/build pass;
-- installer build succeeds;
-- API contract remains consistent;
-- documentation reflects actual state.
+Изменение считается завершенным, если:
+- функциональность реализована полностью;
+- сборка и тесты проходят;
+- инсталлятор собирается;
+- API-контракт согласован с реализацией;
+- документация отражает фактическое состояние системы.
