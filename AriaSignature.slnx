@@ -1,0 +1,21 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/api/">
+    <Project Path="src/api/AriaSignature.Api/AriaSignature.Api.csproj" />
+  </Folder>
+  <Folder Name="/src/core/">
+    <Project Path="src/core/AriaSignature.Application/AriaSignature.Application.csproj" />
+    <Project Path="src/core/AriaSignature.Domain/AriaSignature.Domain.csproj" />
+    <Project Path="src/core/AriaSignature.Infrastructure/AriaSignature.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/service/">
+    <Project Path="src/service/AriaSignature.Service/AriaSignature.Service.csproj" />
+  </Folder>
+  <Folder Name="/src/ui/">
+    <Project Path="src/ui/AriaSignature.UI/AriaSignature.UI.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AriaSignature.ApiTests/AriaSignature.ApiTests.csproj" />
+    <Project Path="tests/AriaSignature.UnitTests/AriaSignature.UnitTests.csproj" />
+  </Folder>
+</Solution>
