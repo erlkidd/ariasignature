@@ -242,6 +242,12 @@ export default function App() {
         if (data?.action === "autostart" && typeof data.enabled === "boolean") {
           setLaunchAtStartup(data.enabled);
         }
+        if (data?.action === "pickedFile" && typeof data.path === "string") {
+          setFileSource(data.path);
+        }
+        if (data?.action === "pickedFolder" && typeof data.path === "string") {
+          setDestFolder(data.path);
+        }
       } catch {
         /* ignore */
       }
@@ -522,7 +528,17 @@ export default function App() {
               {jobType === "file" ? (
                 <label>
                   Путь к файлу .1CD
-                  <input value={fileSource} onChange={(e) => setFileSource(e.target.value)} placeholder="D:\Base\1Cv8.1CD" />
+                  <div className="row" style={{ alignItems: "stretch" }}>
+                    <input
+                      style={{ flex: 1 }}
+                      value={fileSource}
+                      onChange={(e) => setFileSource(e.target.value)}
+                      placeholder="D:\Base\1Cv8.1CD"
+                    />
+                    <button type="button" className="secondary" onClick={() => postToHost({ action: "pickFile" })}>
+                      Обзор…
+                    </button>
+                  </div>
                 </label>
               ) : (
                 <div className="box">
@@ -571,7 +587,17 @@ export default function App() {
               )}
               <label>
                 Папка для архивов (полный путь)
-                <input value={destFolder} onChange={(e) => setDestFolder(e.target.value)} placeholder="D:\Backups\1C" />
+                <div className="row" style={{ alignItems: "stretch" }}>
+                  <input
+                    style={{ flex: 1 }}
+                    value={destFolder}
+                    onChange={(e) => setDestFolder(e.target.value)}
+                    placeholder="D:\Backups\1C"
+                  />
+                  <button type="button" className="secondary" onClick={() => postToHost({ action: "pickFolder" })}>
+                    Папка…
+                  </button>
+                </div>
               </label>
               <label>
                 Хранить копий (ротация)

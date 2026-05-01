@@ -123,6 +123,32 @@ public partial class MainWindow : Window
                 var payload = JsonSerializer.Serialize(new { action = "autostart", enabled = _startup.IsEnabled() });
                 Browser.CoreWebView2?.PostWebMessageAsString(payload);
             }
+            else if (action == "pickFile")
+            {
+                var dlg = new Microsoft.Win32.OpenFileDialog
+                {
+                    Filter = "База 1С (*.1CD)|*.1CD|Все файлы (*.*)|*.*",
+                    CheckFileExists = true
+                };
+
+                if (dlg.ShowDialog() == true)
+                {
+                    var payload = JsonSerializer.Serialize(new { action = "pickedFile", path = dlg.FileName });
+                    Browser.CoreWebView2?.PostWebMessageAsString(payload);
+                }
+            }
+            else if (action == "pickFolder")
+            {
+                using var dlg = new System.Windows.Forms.FolderBrowserDialog
+                {
+                    Description = "Папка для архивов"
+                };
+                if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK && !string.IsNullOrEmpty(dlg.SelectedPath))
+                {
+                    var payload = JsonSerializer.Serialize(new { action = "pickedFolder", path = dlg.SelectedPath });
+                    Browser.CoreWebView2?.PostWebMessageAsString(payload);
+                }
+            }
         }
         catch
         {
