@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-AriaSignature.Service-795bcbec-1799-4114-b45e-29d9f2200ec9</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.7" />
+    <PackageReference Include="Quartz.Extensions.Hosting" Version="3.15.1" />
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="Serilog.Settings.Configuration" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\api\AriaSignature.Api\AriaSignature.Api.csproj" />
+    <ProjectReference Include="..\..\core\AriaSignature.Application\AriaSignature.Application.csproj" />
+    <ProjectReference Include="..\..\core\AriaSignature.Infrastructure\AriaSignature.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>
