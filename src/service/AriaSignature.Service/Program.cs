@@ -5,8 +5,10 @@ using Quartz;
 using AriaSignature.Service;
 using Serilog;
 using Microsoft.Extensions.Hosting;
+using System.Diagnostics;
 
 var builder = Host.CreateApplicationBuilder(args);
+var startupStopwatch = Stopwatch.StartNew();
 builder.Services.Configure<HostOptions>(options =>
 {
     options.ServicesStartConcurrently = false;
@@ -26,11 +28,11 @@ Log.Logger = new LoggerConfiguration()
 builder.Services.AddSerilog();
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure();
+builder.Services.AddHostedService<LocalApiHostedService>();
 builder.Services.AddHostedService<DatabaseInitializationHostedService>();
 builder.Services.AddHostedService<TelemetryWarmupHostedService>();
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddHostedService<BackupSchedulerHostedService>();
-builder.Services.AddHostedService<LocalApiHostedService>();
 builder.Services.AddQuartz(options =>
 {
     var jobKey = new JobKey("smart-refresh-job");
@@ -45,4 +47,6 @@ builder.Services.AddQuartz(options =>
 builder.Services.AddQuartzHostedService(options => options.WaitForJobsToComplete = true);
 
 var host = builder.Build();
+var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+logger.LogInformation("Host built in {ElapsedMs} ms; running service startup pipeline", startupStopwatch.ElapsedMilliseconds);
 host.Run();

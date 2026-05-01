@@ -31,6 +31,7 @@ public partial class MainWindow : Window
 
     private async void OnLoadedAsync(object sender, RoutedEventArgs e)
     {
+        var startupSw = Stopwatch.StartNew();
         var serviceExePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "service", "AriaSignature.Service.exe"));
         var baseUrl = await ResolveApiBaseAsync() ?? DefaultApiBase;
 
@@ -110,7 +111,7 @@ public partial class MainWindow : Window
             }
         });
 
-        var (apiReady, apiDetail) = await WaitApiReadyAsync(baseUrl, TimeSpan.FromSeconds(20));
+        var (apiReady, apiDetail) = await WaitApiReadyAsync(baseUrl, TimeSpan.FromSeconds(45));
         if (!apiReady)
         {
             RenderFallbackPage(
@@ -118,7 +119,8 @@ public partial class MainWindow : Window
                 "Локальный API пока не готов. Окно не будет пустым: приложение продолжит ожидание и автоматически откроет интерфейс.",
                 baseUrl,
                 null,
-                apiDetail);
+                apiDetail,
+                $"Ожидание API после запуска: {startupSw.Elapsed.TotalSeconds:F0} c");
             StartApiRecoveryLoop(baseUrl);
             return;
         }
@@ -134,8 +136,10 @@ public partial class MainWindow : Window
         var token = _startupRetryCts.Token;
         _ = Task.Run(async () =>
         {
+            var attempts = 0;
             while (!token.IsCancellationRequested)
             {
+                attempts++;
                 var (ready, detail) = await WaitApiReadyAsync(baseUrl, TimeSpan.FromSeconds(3));
                 if (ready)
                 {
@@ -153,7 +157,8 @@ public partial class MainWindow : Window
                         "Локальный API пока не готов. Приложение продолжает автоматическое восстановление.",
                         baseUrl,
                         null,
-                        detail);
+                        detail,
+                        $"Этап: ожидание ответа API, попытка #{attempts}");
                 });
 
                 await Task.Delay(2000, token);
@@ -161,7 +166,7 @@ public partial class MainWindow : Window
         }, token);
     }
 
-    private void RenderFallbackPage(string title, string details, string baseUrl, int? code = null, string? codeName = null, string? probeDetail = null)
+    private void RenderFallbackPage(string title, string details, string baseUrl, int? code = null, string? codeName = null, string? probeDetail = null, string? stage = null)
     {
         if (Browser.CoreWebView2 is null)
         {
@@ -174,6 +179,9 @@ public partial class MainWindow : Window
         var probeText = string.IsNullOrWhiteSpace(probeDetail)
             ? string.Empty
             : "<p>Диагностика запуска API: <code>" + System.Net.WebUtility.HtmlEncode(probeDetail) + "</code></p>";
+        var stageText = string.IsNullOrWhiteSpace(stage)
+            ? string.Empty
+            : "<p>Текущий этап: <strong>" + System.Net.WebUtility.HtmlEncode(stage) + "</strong></p>";
         var html =
             "<!DOCTYPE html><html lang=\"ru\"><head><meta charset=\"utf-8\"/><title>AriaSignature</title>" +
             "<style>body{font-family:Segoe UI,sans-serif;padding:24px;background:#111;color:#eee;max-width:760px}" +
@@ -183,6 +191,7 @@ public partial class MainWindow : Window
             "<p>Ожидаемый адрес: <code>" + System.Net.WebUtility.HtmlEncode($"{baseUrl.TrimEnd('/')}/") + "</code></p>" +
             errorCodeText +
             probeText +
+            stageText +
             "<p class=\"muted\">Проверьте службу AriaSignatureService и доступность localhost. " +
             "После восстановления сервиса окно автоматически загрузит интерфейс.</p></body></html>";
         Browser.CoreWebView2.NavigateToString(html);
