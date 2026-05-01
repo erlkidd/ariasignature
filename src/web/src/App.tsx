@@ -423,12 +423,18 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    void refreshDisks();
-    void refreshJobs();
-    void refreshLogs();
-    void refreshSettings();
+    const initialLoad = async () => {
+      await Promise.all([refreshDisks(), refreshJobs(), refreshSettings()]);
+      try {
+        const l = await apiGet<BackupLog[]>("/backups/logs");
+        setLogs(l);
+      } catch (e) {
+        showErr(e);
+      }
+    };
+    void initialLoad();
     postToHost({ action: "getAutostart" });
-  }, [refreshDisks, refreshJobs, refreshLogs, refreshSettings]);
+  }, [refreshDisks, refreshJobs, refreshSettings]);
 
   useEffect(() => {
     if (tab !== "backup") {
@@ -462,6 +468,13 @@ export default function App() {
       window.clearInterval(id);
     };
   }, [tab, refreshJobs, refreshLogs]);
+
+  useEffect(() => {
+    if (tab !== "backup" || backupPageTab !== "history" || backupBottomTab !== "journal") {
+      return;
+    }
+    void refreshLogs();
+  }, [tab, backupPageTab, backupBottomTab, logFilterStatus, refreshLogs]);
 
   useEffect(() => {
     const chromeWebview = (

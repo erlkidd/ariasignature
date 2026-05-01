@@ -115,6 +115,13 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             AppendLogicalDriveFallback(disks, smartSnapshot, cancellationToken);
         }
 
+        if (disks.Count > 0 && disks.All(d => d.HealthPercent is null && d.TemperatureCelsius <= 0))
+        {
+            _logger.LogWarning(
+                "Disk telemetry collected without SMART signals. " +
+                "Check smartctl deployment and WMI availability on this host.");
+        }
+
         return Task.FromResult<IReadOnlyCollection<Disk>>(disks);
     }
 
@@ -258,7 +265,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "WMI MSFT_StorageReliabilityCounter недоступен (возможна старая ОС или политика).");
+            _logger.LogWarning(ex, "WMI MSFT_StorageReliabilityCounter недоступен (возможна старая ОС, политика или права).");
         }
 
         return map;

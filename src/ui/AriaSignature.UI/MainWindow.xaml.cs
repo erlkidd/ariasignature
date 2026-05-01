@@ -366,6 +366,16 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (WindowState == WindowState.Maximized)
+        {
+            // Поведение как у системного окна: начать перетаскивание из Maximized.
+            var point = e.GetPosition(this);
+            var widthRatio = ActualWidth > 0 ? point.X / ActualWidth : 0.5;
+            WindowState = WindowState.Normal;
+            Left = Math.Max(0, e.GetPosition(null).X - (RestoreBounds.Width * widthRatio));
+            Top = Math.Max(0, e.GetPosition(null).Y - 12);
+        }
+
         DragMove();
     }
 

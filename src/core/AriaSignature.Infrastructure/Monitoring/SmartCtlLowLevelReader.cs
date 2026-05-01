@@ -8,6 +8,8 @@ namespace AriaSignature.Infrastructure.Monitoring;
 public sealed class SmartCtlLowLevelReader
 {
     private readonly ILogger<SmartCtlLowLevelReader> _logger;
+    private bool _missingLogged;
+    private bool _detectedLogged;
 
     public SmartCtlLowLevelReader(ILogger<SmartCtlLowLevelReader> logger)
     {
@@ -19,7 +21,20 @@ public sealed class SmartCtlLowLevelReader
         var exe = ResolveSmartCtlExecutable();
         if (string.IsNullOrEmpty(exe))
         {
+            if (!_missingLogged)
+            {
+                _logger.LogWarning(
+                    "smartctl.exe not found. Low-level SMART/NVMe telemetry is disabled. " +
+                    "Expected one of: ARIASIGNATURE_SMARTCTL, service/smartctl/smartctl.exe, PATH.");
+                _missingLogged = true;
+            }
             return ReadResult.Empty;
+        }
+
+        if (!_detectedLogged)
+        {
+            _logger.LogInformation("Low-level SMART source enabled via smartctl: {Path}", exe);
+            _detectedLogged = true;
         }
 
         var devicesDoc = RunSmartCtlJson(exe, "--scan-open", "-j");
@@ -32,6 +47,7 @@ public sealed class SmartCtlLowLevelReader
         var byPhysicalIndex = new Dictionary<int, Snapshot>();
         if (!devicesDoc.RootElement.TryGetProperty("devices", out var devicesEl) || devicesEl.ValueKind != JsonValueKind.Array)
         {
+            _logger.LogWarning("smartctl scan returned no devices array.");
             return new ReadResult(byIdentity, byPhysicalIndex);
         }
 
@@ -221,16 +237,18 @@ public sealed class SmartCtlLowLevelReader
     private static string? ResolveSmartCtlExecutable()
     {
         var env = Environment.GetEnvironmentVariable("ARIASIGNATURE_SMARTCTL");
-        if (!string.IsNullOrWhiteSpace(env))
+        if (!string.IsNullOrWhiteSpace(env) && File.Exists(env))
         {
             return env;
         }
 
         var baseDir = AppContext.BaseDirectory;
+        var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         var candidates = new[]
         {
             Path.Combine(baseDir, "smartctl", "smartctl.exe"),
             Path.Combine(baseDir, "smartctl.exe"),
+            Path.Combine(pf, "AriaSignature", "service", "smartctl", "smartctl.exe"),
             "smartctl.exe"
         };
 

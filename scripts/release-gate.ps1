@@ -25,7 +25,7 @@ dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c $Configurati
 Write-Host "5/6 Publish service..."
 dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c $Configuration -o .\publish\service
 
-Write-Host "6/7 Prepare WebView2 bootstrapper..."
+Write-Host "6/8 Prepare WebView2 bootstrapper..."
 $webView2Dir = ".\installer\webview2"
 $webView2Exe = Join-Path $webView2Dir "MicrosoftEdgeWebView2Setup.exe"
 if (-not (Test-Path $webView2Exe)) {
@@ -35,7 +35,48 @@ if (-not (Test-Path $webView2Exe)) {
     Invoke-WebRequest -Uri $url -OutFile $webView2Exe
 }
 
-Write-Host "7/7 Build installer..."
+Write-Host "7/8 Prepare smartctl runtime..."
+$smartCtlDir = ".\installer\smartctl"
+$smartCtlExe = Join-Path $smartCtlDir "smartctl.exe"
+if (-not (Test-Path $smartCtlExe)) {
+    $smartCtlCmd = Get-Command smartctl -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue
+    if ($smartCtlCmd) {
+        New-Item -Path $smartCtlDir -ItemType Directory -Force | Out-Null
+        Copy-Item -Path $smartCtlCmd -Destination $smartCtlExe -Force
+    }
+    else {
+        $tmpRoot = ".\installer\smartctl-temp"
+        $extractRoot = Join-Path $tmpRoot "extract"
+        $setupExe = Join-Path $tmpRoot "smartmontools-setup.exe"
+        New-Item -Path $tmpRoot -ItemType Directory -Force | Out-Null
+        $downloadUrl = "https://github.com/smartmontools/smartmontools/releases/download/RELEASE_7_5/smartmontools-7.5.win32-setup.exe"
+        Write-Host "Downloading smartmontools setup from GitHub releases..."
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $setupExe
+
+        $sevenZip = Get-Command 7z -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue
+        if (-not $sevenZip) {
+            throw "7z not found. Install 7-Zip CLI or provide smartctl.exe in PATH/installer\\smartctl."
+        }
+
+        Remove-Item -Path $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
+        New-Item -Path $extractRoot -ItemType Directory -Force | Out-Null
+        & $sevenZip x $setupExe "-o$((Resolve-Path $extractRoot).Path)" -y | Out-Null
+
+        $candidate = Join-Path $extractRoot "bin\smartctl.exe"
+        if (-not (Test-Path $candidate)) {
+            throw "Failed to extract smartctl.exe from smartmontools setup package."
+        }
+
+        New-Item -Path $smartCtlDir -ItemType Directory -Force | Out-Null
+        Copy-Item -Path $candidate -Destination $smartCtlExe -Force
+        $drivedb = Join-Path $extractRoot "bin\drivedb.h"
+        if (Test-Path $drivedb) {
+            Copy-Item -Path $drivedb -Destination (Join-Path $smartCtlDir "drivedb.h") -Force
+        }
+    }
+}
+
+Write-Host "8/8 Build installer..."
 $isccPath = Get-Command iscc -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue
 if (-not $isccPath) {
     $fallback = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
