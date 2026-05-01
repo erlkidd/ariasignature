@@ -1,53 +1,52 @@
-# AriaSignature Installer Guide
+# Руководство по установщику AriaSignature
 
-## Prerequisites
+## Требования
 
 - Windows 10/11 x64.
-- Inno Setup 6 installed.
-- .NET publish artifacts prepared for UI and Service projects.
+- Установлен Inno Setup 6.
+- Подготовлены publish-артефакты UI и службы.
 
-## Build publish artifacts
+## Подготовка publish-артефактов
 
-Run from repository root:
+Запускать из корня репозитория:
 
 ```powershell
 dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c Release -o .\publish\ui
 dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c Release -o .\publish\service
 ```
 
-## Build installer package
+## Сборка установщика
 
-- Open `installer/inno/AriaSignature.iss` in Inno Setup Compiler.
-- Build the installer.
-- Output package appears in `artifacts/installer`.
-- For automated RC run use: `.\scripts\release-gate.ps1`.
+- Откройте `installer/inno/AriaSignature.iss` в Inno Setup Compiler и выполните сборку.
+- Готовый файл появляется в `artifacts/installer`.
+- Для полного автоматического прогона используйте `.\scripts\release-gate.ps1`.
 
-## Elevation and permissions
+## Права и безопасность
 
-- Installer requires administrator rights (`PrivilegesRequired=admin`).
-- Service is installed with auto-start and restart-on-failure policy.
-- Uninstaller stops/deletes service and removes installed files.
+- Установщик требует права администратора (`PrivilegesRequired=admin`).
+- Служба устанавливается с автостартом и политикой восстановления.
+- Деинсталлятор корректно останавливает и удаляет службу.
 
-## Service behavior during install
+## Поведение службы при установке/обновлении
 
-- Installer performs deterministic stop/delete of old `AriaSignatureService` instance before re-registering (upgrade-safe idempotent flow).
-- Service is re-created with auto-start and recovery policy (`restart`).
-- Service starts immediately after installation; setup stops with an explicit error if service registration/start fails.
+- Перед регистрацией новой службы выполняется deterministic stop/delete предыдущей версии.
+- Служба создается заново с автостартом и recovery policy.
+- При ошибке регистрации или запуска установщик завершает процесс с явной ошибкой.
 
-## Service behavior during uninstall
+## Поведение при удалении
 
-- Uninstall executes best-effort stop/delete for `AriaSignatureService`.
-- Missing-service and already-stopped states are treated as acceptable (idempotent uninstall path).
-- Runtime SQLite/log data inside installation directory is removed together with `{app}`.
+- На uninstall выполняется best-effort stop/delete `AriaSignatureService`.
+- Состояния «службы нет» и «служба уже остановлена» считаются допустимыми.
+- Данные внутри каталога установки (`{app}`), включая SQLite и логи, удаляются.
 
-## Tray autostart behavior
+## Автозапуск и трей
 
-- Installer can add a startup shortcut in `commonstartup`.
-- Startup shortcut launches UI with `--tray`.
-- Closing window sends app to tray; full exit is available from tray menu.
+- Установщик может добавить ярлык автозапуска в `commonstartup`.
+- Ярлык запускает UI с параметром `--tray`.
+- Закрытие окна сворачивает приложение в трей, полный выход выполняется через меню трея.
 
-## Icon notes
+## Иконки
 
-- Source visual asset is root `icon.png`.
-- Unified `icon.ico` is used for exe/window/tray/shortcuts/installer.
-- `SetupIconFile` is enabled in `AriaSignature.iss`.
+- Исходный ресурс: `icon.png` (корень репозитория).
+- Единый `icon.ico` используется в exe, окне, трее, ярлыках и установщике.
+- В скрипте включен `SetupIconFile`.

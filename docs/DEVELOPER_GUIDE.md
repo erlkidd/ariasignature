@@ -1,94 +1,111 @@
-# AriaSignature Developer Guide
+# Руководство разработчика AriaSignature
 
-## Branching and delivery
+## Ветвление и поставка
 
-- Primary release branch: `production`.
-- Development branch for implementation work: `test/agent-work`.
-- Every implementation increment is committed and pushed to `test/agent-work`.
-- Promotion to `production` is a manual merge by repository owner.
+- Основная релизная ветка: `production`.
+- Рабочая ветка разработки: `test/agent-work`.
+- Все изменения коммитятся и пушатся в `test/agent-work`.
+- Слияние в `production` выполняется владельцем репозитория.
 
-## Current architecture baseline
+## Архитектура
 
-- Service-first model: `AriaSignature.Service` is the runtime host.
-- Local API is self-hosted by service process on `127.0.0.1`.
-- API versioning baseline path: `/api/v1`.
-- Layered projects are split into domain/application/infrastructure/api/ui.
+- Модель `service-first`:
+  - служба `AriaSignature.Service` — центр бизнес-логики;
+  - UI — клиент панели управления;
+  - API — канал публикации данных наружу.
+- API запускается локально внутри сервисного процесса.
+- Версионирование API: `/api/v1`.
+- Структура решения: `domain` / `application` / `infrastructure` / `api` / `ui`.
 
-## Implemented skeleton behavior
+## Модуль диагностики дисков
 
-- Service runs heartbeat background worker.
-- Service starts and stops local API lifecycle as hosted service.
-- SMART refresh is scheduled with Quartz job (`SmartRefreshJob`) using cron from config.
-- API exposes baseline endpoints for disks, SMART, backups, logs, and status.
-- Swagger/OpenAPI endpoint is enabled for local integration testing.
+- `IDiskTelemetryCollector` отвечает за сбор телеметрии.
+- `WmiDiskTelemetryCollector` читает:
+  - сведения о физических дисках;
+  - SMART-атрибуты;
+  - привязку логических томов к физическим накопителям.
+- `DiskTelemetryService` управляет refresh/query сценариями.
+- `SqliteDiskTelemetryRepository` хранит срезы дисков и историю SMART.
 
-## SMART module
+## Модуль архивации
 
-- `IDiskTelemetryCollector` collects physical disk inventory.
-- `WmiDiskTelemetryCollector` reads Win32 disk metadata, SMART ATA attributes, and per-physical-disk volume mapping via WMI on Windows.
-- `DiskTelemetryService` orchestrates refresh and query operations.
-- `SqliteDiskTelemetryRepository` stores disk snapshots and SMART history.
+- `IBackupService` предоставляет CRUD и запуск задач.
+- `BackupService` реализует:
+  - повторные попытки выполнения;
+  - ведение журналов;
+  - плановые запуски через scheduler.
+- `BackupExecutor` поддерживает:
+  - `File` архивирование;
+  - `MsSql` backup.
+- Результат архивирования упаковывается в `.rar`, временные сырые файлы удаляются.
+- Применяется retention-политика хранения копий.
 
-## Backup module
+## Валидация API для задач архивации
 
-- `IBackupService` provides backup job CRUD and execution APIs.
-- `BackupService` applies retry policy (3 attempts) and writes execution logs.
-- `BackupExecutor` supports file copy backups and MSSQL `BACKUP DATABASE` flow.
-- Final backup artifacts are packaged into `.rar`; temporary raw files are removed.
-- Retention policy is applied after each successful backup run.
-- `BackupSchedulerHostedService` polls due cron jobs and runs them automatically.
-- API validation now includes type-specific checks for `File` vs `MsSql`.
+- Общие проверки:
+  - обязательные поля;
+  - корректный cron;
+  - корректный retention.
+- Типовые проверки:
+  - `File`: абсолютный путь и существование файла источника;
+  - `MsSql`: валидная строка подключения, доступность подключения и базы.
+- Проверка папки назначения:
+  - абсолютный путь;
+  - доступ на запись;
+  - запрет конфликтного source/destination.
 
-## Data persistence
+## Хранилище данных
 
-- SQLite is used as the primary local storage engine.
-- Schema is initialized on service startup by `DatabaseInitializationHostedService`.
-- Repositories for disks/SMART and backup jobs/logs are backed by SQLite tables.
+- Используется SQLite.
+- Инициализация схемы выполняется на старте службы.
+- В таблицах хранятся:
+  - диски и SMART-история;
+  - задачи архивации;
+  - логи выполнения.
 
-## UI baseline (MVVM)
+## UI (WPF + MVVM)
 
-- WPF shell now uses MVVM data binding with `MainViewModel`.
-- Main window includes required tabs: Disks, Backup, Settings.
-- No business logic is implemented in `code-behind`.
-- Root `icon.png` is linked as UI resource (`Assets/icon.png`).
-- UI pulls live data from local API via `AriaApiClient` and manual refresh command.
-- UI does not use direct local disk probing anymore; disk data source is only the service API.
-- Backup creation UI supports task type selection (`File` / `MsSql`) with source semantics per type.
-- Backup jobs in UI support inline update, enable/disable toggle, manual run, and delete.
-- App resources include `Themes/AriaTheme.xaml` as a shared visual dictionary.
-- Theme switching (`Светлая`/`Тёмная`) is available at runtime from settings.
-- Startup behavior is user-configurable in settings (HKCU Run registration).
+- Основной ViewModel: `MainViewModel`.
+- Вкладки: накопители, архивация, настройки.
+- UI получает данные только из service API.
+- Поддерживается:
+  - создание/редактирование/включение/выключение/удаление/ручной запуск задач;
+  - выбор темы;
+  - управление автозапуском;
+  - интерактивный выбор файлов и папок для `File` сценария.
 
-## Icon asset policy
+## Иконки и визуальные ресурсы
 
-- Source icon file is tracked in repository root as `icon.png`.
-- The same icon will be propagated to:
-  - Desktop UI executable and resources.
-  - Tray icon.
-  - Installer branding.
+- Исходник: `icon.png` в корне репозитория.
+- Производный файл: `icon.ico`.
+- Единый `icon.ico` используется для:
+  - exe;
+  - иконки окна;
+  - иконки в трее;
+  - ярлыков;
+  - установщика.
 
-## Installer baseline
+## Установщик
 
-- Inno Setup script is available at `installer/inno/AriaSignature.iss`.
-- Script installs UI and service binaries from publish folders.
-- Script registers Windows service and starts it after installation.
-- Installer and uninstaller UX language is fixed to Russian.
+- Скрипт: `installer/inno/AriaSignature.iss`.
+- Установщик:
+  - требует права администратора;
+  - ставит UI и сервис;
+  - регистрирует и запускает службу;
+  - на uninstall выполняет корректный stop/delete службы.
+- Язык установщика и деинсталлятора: русский.
 
-## Localization requirement
+## Локализация
 
-- Mandatory language for installer, uninstaller, and UI runtime text is Russian.
-- Any newly added user-facing strings must be introduced in Russian by default.
+- Все пользовательские тексты (UI/installer/uninstaller) — на русском языке.
+- Новые пользовательские строки добавляются на русском по умолчанию.
 
-## Production readiness checkpoints
+## Тесты и release gate
 
-- Installer runs with admin elevation and configures service recovery.
-- Application supports startup in tray mode via `--tray`.
-- Window close action minimizes to tray; hard exit is tray-menu driven.
-- Service executes telemetry warmup on startup to avoid empty first API response.
-
-## Testing baseline
-
-- API integration tests run via `WebApplicationFactory`.
-- API tests validate status/disks endpoints, backup CRUD/run, and problem+json not-found semantics.
-- Release gate automation script is available at `scripts/release-gate.ps1`.
-- RC checklist is documented in `docs/RELEASE_GATE.md`.
+- Интеграционные API-тесты запускаются через `WebApplicationFactory`.
+- Проверяются:
+  - статус и диски;
+  - сценарии задач архивации;
+  - semantics `problem+json`.
+- Автоматизированный gate: `scripts/release-gate.ps1`.
+- Чеклист RC: `docs/RELEASE_GATE.md`.

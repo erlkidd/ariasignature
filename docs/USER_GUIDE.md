@@ -1,44 +1,62 @@
-# AriaSignature User Guide (Draft)
+# Руководство пользователя AriaSignature
 
-## What this system does
+## Назначение
 
-AriaSignature is a local Windows service and desktop application for:
+AriaSignature — локальная служба Windows и настольное приложение для:
 
-- Monitoring HDD/SSD health metrics.
-- Scheduling and running 1C backup tasks.
-- Providing local API integration for 1C workflows.
+- мониторинга состояния HDD/SSD;
+- создания и выполнения задач архивации 1С;
+- публикации данных наружу через локальный API для интеграции с внешними системами (например, расширением в 1С).
 
-## Runtime model
+## Как работает система
 
-- The core service is always the source of truth.
-- Desktop UI is a control panel and does not execute business logic directly.
-- API is local-only and available on localhost.
+- Источник истины — служба `AriaSignature.Service`.
+- Интерфейс `AriaSignature.UI` только управляет службой и отображает её данные.
+- API работает локально на `localhost` и отдает наружу уже собранные данные и результаты операций.
 
-## Current available functionality
+## Что доступно в интерфейсе
 
-- Service process skeleton is operational.
-- Local API base path is `/api/v1`.
-- Core status endpoint is available at `/api/v1/status`.
-- Disk inventory endpoint is available at `/api/v1/disks`.
-- SMART history endpoint is available at `/api/v1/disks/{id}/smart`.
-- Backup tasks can be created/updated/deleted from API.
-- Manual backup run endpoint is available at `/api/v1/backups/{id}/run`.
-- Backup execution logs are available at `/api/v1/backups/logs`.
-- Configuration and operational data are persisted in local SQLite storage.
-- Desktop UI contains tabs for disks, backup, and settings.
-- Application runs with tray icon support for quick restore/exit actions.
-- UI can refresh operational data from local API with status of last sync.
-- Disk table shows SMART-oriented fields (health, temperature, power-on hours, power cycles, sector error counters).
-- In backup form you can select backup type: `.1CD` file copy or `MSSQL` backup mode.
-- Для `.1CD` доступен выбор файла и папки назначения через интерактивные диалоги.
-- In backup grid you can edit task fields, toggle enable/disable, run task immediately, and delete task.
-- В шапке UI есть live-индикаторы: количество дисков, задач и ошибок архивации.
-- Для расписания доступен режим `Пользовательский` с ручным Cron.
-- Not-found and validation API errors are returned as structured problem responses.
-- В настройках есть переключение темы (светлая/тёмная) и управление автозапуском.
-- Ошибки валидации и запуска показываются сразу в интерфейсе.
+- Вкладка **Накопители**:
+  - список дисков;
+  - ключевые SMART-поля (здоровье, температура, часы работы, циклы включения, счетчики ошибок);
+  - быстрые индикаторы в шапке (диски, задачи, ошибки).
+- Вкладка **Архивация**:
+  - создание задач `File` (`.1CD`) и `MsSql`;
+  - интерактивный выбор файла источника и папки назначения для `File`;
+  - редактирование существующих задач;
+  - включение/выключение задачи;
+  - ручной запуск задачи;
+  - удаление задачи;
+  - просмотр журнала выполнения.
+- Вкладка **Настройки**:
+  - переключение темы (светлая/тёмная);
+  - включение/выключение автозапуска;
+  - просмотр базового URL API и параметров обновления.
 
-## Planned next capabilities
+## Логика архивации
 
-- Expand hardware diagnostics depth further toward HDS-level detail (vendor-specific nuances).
-- Add richer disk details panel with SMART attribute timeline visualization.
+- Для `File`:
+  - задается путь к файлу базы (обычно `.1CD`);
+  - задается папка назначения;
+  - результат упаковывается в `.rar`.
+- Для `MsSql`:
+  - задается строка подключения;
+  - перед сохранением задачи проверяется доступность подключения и базы;
+  - создается backup, затем результат упаковывается в `.rar`.
+- Для обеих схем:
+  - работает политика хранения копий (Retention);
+  - ошибки отображаются в UI и логируются.
+
+## API для внешней интеграции
+
+- Базовый путь API: `/api/v1`.
+- Основные разделы:
+  - состояние сервиса (`/status`);
+  - диски и SMART (`/disks`, `/disks/{id}`, `/disks/{id}/smart`);
+  - задачи архивации (`/backups`);
+  - логи архивации (`/backups/logs`).
+
+## Поведение при ошибках
+
+- Ошибки валидации и выполнения показываются пользователю в интерфейсе.
+- API возвращает структурированные ошибки в формате `application/problem+json`.
