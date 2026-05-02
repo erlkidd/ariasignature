@@ -13,4 +13,5 @@ public interface IBackupService
     Task<BackupLog> RunJobAsync(Guid id, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<BackupLog>> RunDueJobsAsync(DateTimeOffset nowUtc, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<BackupLog>> GetLogsAsync(BackupExecutionStatus? status, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken);
+    Task<int> ClearAllLogsAsync(CancellationToken cancellationToken);
 }

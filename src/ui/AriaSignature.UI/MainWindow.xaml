@@ -42,6 +42,27 @@
             </Grid>
         </Border>
 
-        <wv2:WebView2 Grid.Row="1" x:Name="Browser" />
+        <Grid Grid.Row="1">
+            <wv2:WebView2 x:Name="Browser" />
+            <Border x:Name="WebViewLoadingOverlay" Background="#1E1F2A" Panel.ZIndex="1">
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="520" Margin="24">
+                    <ProgressBar IsIndeterminate="True" Height="4" Margin="0,0,0,16" Foreground="#6B9EFF" Background="#2F3347" BorderThickness="0" />
+                    <TextBlock x:Name="LoadingOverlayMessage"
+                               Text="Инициализация WebView2…"
+                               Foreground="#EEF1FA"
+                               FontSize="17"
+                               FontWeight="SemiBold"
+                               TextWrapping="Wrap"
+                               TextAlignment="Center" />
+                    <TextBlock x:Name="LoadingOverlayHint"
+                               Text="При первом запуске это может занять до минуты. Убедитесь, что установлен WebView2 Runtime."
+                               Foreground="#9AA3B2"
+                               FontSize="14"
+                               Margin="0,12,0,0"
+                               TextWrapping="Wrap"
+                               TextAlignment="Center" />
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

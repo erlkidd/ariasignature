@@ -2,7 +2,7 @@
 ; Build binaries first, then run this script in Inno Setup Compiler.
 
 #define MyAppName "AriaSignature"
-#define MyAppVersion "0.7.0"
+#define MyAppVersion "0.8.5"
 #define MyAppPublisher "AriaSignature"
 #define MyAppExeName "AriaSignature.UI.exe"
 #define MyServiceExeName "AriaSignature.Service.exe"
@@ -25,7 +25,7 @@ PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
 UninstallDisplayIcon={app}\ui\{#MyAppExeName}
-SetupIconFile=..\..\icon.ico
+SetupIconFile=..\..\assets\branding\icon.ico
 CloseApplications=yes
 CloseApplicationsFilter=AriaSignature.UI.exe,AriaSignature.Service.exe,AriaSignature.Api.exe
 RestartApplications=no

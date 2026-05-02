@@ -190,6 +190,20 @@ public sealed class SqliteBackupJobRepository : IBackupJobRepository
         return await ReadLogs(reader, cancellationToken);
     }
 
+    public async Task<int> ClearAllLogsAsync(CancellationToken cancellationToken)
+    {
+        var deleted = 0;
+        await ExecuteWithBusyRetryAsync(async () =>
+        {
+            await using var connection = await _connectionFactory.OpenAsync(cancellationToken);
+            var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM BackupLogs;";
+            deleted = await command.ExecuteNonQueryAsync(cancellationToken);
+        }, cancellationToken);
+
+        return deleted;
+    }
+
     private static void BindJob(Microsoft.Data.Sqlite.SqliteCommand command, BackupJob job)
     {
         command.Parameters.AddWithValue("$Id", job.Id.ToString());

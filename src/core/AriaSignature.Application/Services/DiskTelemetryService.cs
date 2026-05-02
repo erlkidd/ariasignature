@@ -14,10 +14,15 @@ public sealed class DiskTelemetryService : IDiskTelemetryService
         _repository = repository;
     }
 
-    public async Task RefreshAsync(CancellationToken cancellationToken)
+    public Task RefreshAsync(CancellationToken cancellationToken)
+    {
+        return RefreshAsync(appendHistory: true, cancellationToken);
+    }
+
+    public async Task RefreshAsync(bool appendHistory, CancellationToken cancellationToken)
     {
         var disks = await _collector.CollectAsync(cancellationToken);
-        await _repository.UpsertDisksAsync(disks, cancellationToken);
+        await _repository.UpsertDisksAsync(disks, appendHistory, cancellationToken);
     }
 
     public Task<IReadOnlyCollection<Disk>> GetDisksAsync(CancellationToken cancellationToken)

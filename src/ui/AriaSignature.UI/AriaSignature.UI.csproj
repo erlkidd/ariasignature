@@ -11,11 +11,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="..\..\..\icon.png" Link="Assets\icon.png">
+    <Content Include="..\..\..\assets\branding\icon.png" Link="Assets\icon.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </Content>
-    <Content Include="..\..\..\icon.ico" Link="Assets\icon.ico">
+    <Content Include="..\..\..\assets\branding\icon.ico" Link="Assets\icon.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>Always</CopyToPublishDirectory>
     </Content>
@@ -28,7 +28,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
-    <ApplicationIcon>..\..\..\icon.ico</ApplicationIcon>
+    <ApplicationIcon>..\..\..\assets\branding\icon.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 

@@ -67,6 +67,14 @@ Thumbs.db
 *.cache
 
 # ----------------------------
+# Local / tooling (not part of product build)
+# ----------------------------
+skills/
+.cursor/
+
+# ----------------------------
 # Installer runtime payloads (kept out of git)
 # ----------------------------
 installer/webview2/*.exe
+installer/smartctl/smartctl.exe
+installer/smartctl/drivedb.h

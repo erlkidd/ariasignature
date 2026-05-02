@@ -79,9 +79,6 @@ public static class AriaApiExtensions
             var outboundCron = dict.GetValueOrDefault(AppSettingsOutboundKeys.Cron)
                 ?? configuration.GetValue<string>("OutboundSync:Cron")
                 ?? "0 0/30 * * * ?";
-            var bearerStored = dict.GetValueOrDefault(AppSettingsOutboundKeys.BearerToken);
-            var customHeaderName = dict.GetValueOrDefault(AppSettingsOutboundKeys.CustomHeaderName) ?? string.Empty;
-            var customHeaderValueStored = dict.GetValueOrDefault(AppSettingsOutboundKeys.CustomHeaderValue);
             return Results.Ok(new
             {
                 apiPort = port,
@@ -90,9 +87,6 @@ public static class AriaApiExtensions
                 outboundSyncEnabled = outboundEnabled,
                 outboundSyncUrl = outboundUrl,
                 outboundSyncCron = outboundCron,
-                outboundBearerToken = string.IsNullOrEmpty(bearerStored) ? null : AppSettingsOutboundKeys.SecretMaskedSentinel,
-                outboundCustomHeaderName = customHeaderName,
-                outboundCustomHeaderValue = string.IsNullOrEmpty(customHeaderValueStored) ? null : AppSettingsOutboundKeys.SecretMaskedSentinel,
             });
         })
         .WithName("GetSettings")
@@ -201,27 +195,6 @@ public static class AriaApiExtensions
                 catch (Exception ex)
                 {
                     log.LogWarning(ex, "Не удалось перепланировать исходящую синхронизацию в Quartz; значение сохранено в базе");
-                }
-            }
-
-            if (body.OutboundBearerToken is not null)
-            {
-                if (body.OutboundBearerToken != AppSettingsOutboundKeys.SecretMaskedSentinel)
-                {
-                    await settings.SetAsync(AppSettingsOutboundKeys.BearerToken, body.OutboundBearerToken.Trim(), cancellationToken);
-                }
-            }
-
-            if (body.OutboundCustomHeaderName is not null)
-            {
-                await settings.SetAsync(AppSettingsOutboundKeys.CustomHeaderName, body.OutboundCustomHeaderName.Trim(), cancellationToken);
-            }
-
-            if (body.OutboundCustomHeaderValue is not null)
-            {
-                if (body.OutboundCustomHeaderValue != AppSettingsOutboundKeys.SecretMaskedSentinel)
-                {
-                    await settings.SetAsync(AppSettingsOutboundKeys.CustomHeaderValue, body.OutboundCustomHeaderValue.Trim(), cancellationToken);
                 }
             }
 

@@ -59,11 +59,16 @@ public sealed class BackupService : IBackupService
         var start = DateTimeOffset.UtcNow;
         BackupExecutionResult result = new(false, "Запуск архивации не выполнялся", null);
 
-        // Retry policy required by specification.
+        // Retry policy; блокировка файла не должна приводить к тройному копированию.
         for (var attempt = 1; attempt <= 3; attempt++)
         {
             result = await _executor.ExecuteAsync(job, cancellationToken);
             if (result.IsSuccess)
+            {
+                break;
+            }
+
+            if (IsFileLockOrAccessPathFailure(result.Message))
             {
                 break;
             }
@@ -91,7 +96,8 @@ public sealed class BackupService : IBackupService
     public async Task<IReadOnlyCollection<BackupLog>> RunDueJobsAsync(DateTimeOffset nowUtc, CancellationToken cancellationToken)
     {
         var jobs = await _repository.GetJobsAsync(cancellationToken);
-        var dueLogs = new List<BackupLog>();
+        var minuteWindowStart = new DateTimeOffset(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, nowUtc.Minute, 0, TimeSpan.Zero);
+        var dueIds = new List<Guid>();
 
         foreach (var job in jobs.Where(j => j.IsEnabled))
         {
@@ -111,17 +117,36 @@ public sealed class BackupService : IBackupService
             }
 
             var jobLogs = await _repository.GetLogsByJobAsync(job.Id, cancellationToken);
-            var minuteWindowStart = new DateTimeOffset(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, nowUtc.Minute, 0, TimeSpan.Zero);
             if (jobLogs.Any(log => log.StartTimeUtc >= minuteWindowStart))
             {
                 continue;
             }
 
-            var logResult = await RunJobAsync(job.Id, cancellationToken);
-            dueLogs.Add(logResult);
+            dueIds.Add(job.Id);
         }
 
-        return dueLogs;
+        if (dueIds.Count == 0)
+        {
+            return Array.Empty<BackupLog>();
+        }
+
+        var tasks = dueIds.Select(id => RunJobAsync(id, cancellationToken)).ToArray();
+        var logs = await Task.WhenAll(tasks);
+        return logs;
+    }
+
+    private static bool IsFileLockOrAccessPathFailure(string message)
+    {
+        if (string.IsNullOrEmpty(message))
+        {
+            return false;
+        }
+
+        return message.Contains("файл занят другим процессом", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("не удалось прочитать исходный файл", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("не удалось записать временную копию", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("нет доступа к исходному файлу", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("нет доступа при записи временной копии", StringComparison.OrdinalIgnoreCase);
     }
 
     public Task<IReadOnlyCollection<BackupLog>> GetLogsAsync(BackupExecutionStatus? status, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken)

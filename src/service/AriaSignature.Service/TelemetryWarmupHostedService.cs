@@ -21,7 +21,7 @@ public sealed class TelemetryWarmupHostedService : IHostedService
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, warmupTimeoutCts.Token);
             try
             {
-                await _diskTelemetryService.RefreshAsync(linkedCts.Token);
+                await _diskTelemetryService.RefreshAsync(appendHistory: false, linkedCts.Token);
                 _logger.LogInformation("Initial disk telemetry warmup completed");
             }
             catch (OperationCanceledException) when (warmupTimeoutCts.IsCancellationRequested)

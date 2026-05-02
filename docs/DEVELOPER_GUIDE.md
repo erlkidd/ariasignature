@@ -1,6 +1,6 @@
 # AriaSignature — руководство разработчика
 
-Версия документа: 0.7.0.
+Версия документа: 0.8.5.
 
 ## 1. Цель и принцип работы
 
@@ -59,7 +59,7 @@ AriaSignature реализует `service-first` модель:
 ## 5. Снимок системы и исходящая синхронизация
 
 - `ISystemInfoService`: Windows — `WindowsSystemInfoService` (WMI `Win32_OperatingSystem`, `Win32_ComputerSystem`, `Win32_Processor`, `Win32_VideoController` + активные адреса `NetworkInterface`); иначе — `NoopSystemInfoService`.
-- Ключи настроек SQLite: `OutboundSync:Enabled`, `OutboundSync:Url`, `OutboundSync:Cron`, `OutboundSync:BearerToken`, `OutboundSync:CustomHeaderName`, `OutboundSync:CustomHeaderValue` (дефолты задаются в `SqliteDatabaseInitializer`).
+- Ключи настроек SQLite: `OutboundSync:Enabled`, `OutboundSync:Url`, `OutboundSync:Cron` (дефолты задаются в `SqliteDatabaseInitializer`).
 - Quartz: job `outbound-sync-job`, триггер `outbound-sync-trigger`, перепланирование через `IOutboundSyncCronApplier` / `QuartzOutboundSyncCronApplier`; после старта — `OutboundSyncCronSyncHostedService` подтягивает cron из БД.
 - Реализация отправки: `OutboundSyncJob`, именованный `HttpClient` `AriaOutboundSync`, payload `OutboundTelemetryPayload` (JSON).
 
@@ -83,7 +83,10 @@ Startup-пайплайн оптимизирован под быстрый отк
 - `Directory.Build.props`;
 - `installer/inno/AriaSignature.iss` (`MyAppVersion`);
 - `src/web/package.json` и lockfile;
-- `docs/API.md` и `docs/USER_GUIDE.md`.
+- `src/web/src/App.tsx` (константа `UI_BUILD_VERSION`);
+- `docs/API.md`, `docs/USER_GUIDE.md` и при необходимости прочие документы с номером версии в шапке (`INSTALLER.md`, `RELEASE_GATE.md`, `INSTRUCTIONS.md`).
+
+Иконки приложения и установщика: `assets/branding/icon.ico`, `assets/branding/icon.png` (подключение в `src/ui/AriaSignature.UI/AriaSignature.UI.csproj` и `SetupIconFile` в `installer/inno/AriaSignature.iss`).
 
 Изменения релиза фиксировать в `docs/DEVELOPMENT_NOTES.md`.
 

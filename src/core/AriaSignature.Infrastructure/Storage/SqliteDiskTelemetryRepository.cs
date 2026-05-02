@@ -10,13 +10,15 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
 {
     private readonly SqliteConnectionFactory _connectionFactory;
     private const int MaxBusyRetries = 5;
+    private const int MaxSmartMetricsPerDisk = 200;
+    private const int MaxSmartMetricsGlobal = 1200;
 
     public SqliteDiskTelemetryRepository(SqliteConnectionFactory connectionFactory)
     {
         _connectionFactory = connectionFactory;
     }
 
-    public async Task UpsertDisksAsync(IReadOnlyCollection<Disk> disks, CancellationToken cancellationToken)
+    public async Task UpsertDisksAsync(IReadOnlyCollection<Disk> disks, bool appendHistory, CancellationToken cancellationToken)
     {
         await ExecuteWithBusyRetryAsync(async () =>
         {
@@ -58,38 +60,59 @@ public sealed class SqliteDiskTelemetryRepository : IDiskTelemetryRepository
                 BindDisk(upsert, disk, disksTemperatureNotNull);
                 await upsert.ExecuteNonQueryAsync(cancellationToken);
 
-                var metric = connection.CreateCommand();
-                metric.Transaction = transaction;
-                metric.CommandText = """
-                    INSERT INTO SmartMetrics (DiskId, TemperatureCelsius, HealthPercent, ReallocatedSectors, PendingSectors, UncorrectableErrors, Status, TimestampUtc)
-                    VALUES ($DiskId, $TemperatureCelsius, $HealthPercent, $ReallocatedSectors, $PendingSectors, $UncorrectableErrors, $Status, $TimestampUtc);
-                    """;
-                metric.Parameters.AddWithValue("$DiskId", disk.Id.ToString());
-                metric.Parameters.AddWithValue(
-                    "$TemperatureCelsius",
-                    disk.TemperatureCelsius.HasValue
-                        ? disk.TemperatureCelsius.Value
-                        : metricsTemperatureNotNull ? 0 : (object)DBNull.Value);
-                metric.Parameters.AddWithValue("$HealthPercent", disk.HealthPercent.HasValue ? disk.HealthPercent.Value : (object)DBNull.Value);
-                metric.Parameters.AddWithValue("$ReallocatedSectors", disk.ReallocatedSectors);
-                metric.Parameters.AddWithValue("$PendingSectors", disk.PendingSectors);
-                metric.Parameters.AddWithValue("$UncorrectableErrors", disk.UncorrectableErrors);
-                metric.Parameters.AddWithValue("$Status", (int)disk.Status);
-                metric.Parameters.AddWithValue("$TimestampUtc", disk.UpdatedAtUtc.UtcDateTime.ToString("O"));
-                await metric.ExecuteNonQueryAsync(cancellationToken);
+                if (appendHistory)
+                {
+                    var metric = connection.CreateCommand();
+                    metric.Transaction = transaction;
+                    metric.CommandText = """
+                        INSERT INTO SmartMetrics (DiskId, TemperatureCelsius, HealthPercent, ReallocatedSectors, PendingSectors, UncorrectableErrors, Status, TimestampUtc)
+                        VALUES ($DiskId, $TemperatureCelsius, $HealthPercent, $ReallocatedSectors, $PendingSectors, $UncorrectableErrors, $Status, $TimestampUtc);
+                        """;
+                    metric.Parameters.AddWithValue("$DiskId", disk.Id.ToString());
+                    metric.Parameters.AddWithValue(
+                        "$TemperatureCelsius",
+                        disk.TemperatureCelsius.HasValue
+                            ? disk.TemperatureCelsius.Value
+                            : metricsTemperatureNotNull ? 0 : (object)DBNull.Value);
+                    metric.Parameters.AddWithValue("$HealthPercent", disk.HealthPercent.HasValue ? disk.HealthPercent.Value : (object)DBNull.Value);
+                    metric.Parameters.AddWithValue("$ReallocatedSectors", disk.ReallocatedSectors);
+                    metric.Parameters.AddWithValue("$PendingSectors", disk.PendingSectors);
+                    metric.Parameters.AddWithValue("$UncorrectableErrors", disk.UncorrectableErrors);
+                    metric.Parameters.AddWithValue("$Status", (int)disk.Status);
+                    metric.Parameters.AddWithValue("$TimestampUtc", disk.UpdatedAtUtc.UtcDateTime.ToString("O"));
+                    await metric.ExecuteNonQueryAsync(cancellationToken);
+                }
             }
 
-            var trimMetrics = connection.CreateCommand();
-            trimMetrics.Transaction = transaction;
-            trimMetrics.CommandText = """
-                DELETE FROM SmartMetrics
-                WHERE Id NOT IN (
-                    SELECT Id FROM SmartMetrics
-                    ORDER BY TimestampUtc DESC
-                    LIMIT 5000
-                );
-                """;
-            await trimMetrics.ExecuteNonQueryAsync(cancellationToken);
+            if (appendHistory)
+            {
+                var trimPerDisk = connection.CreateCommand();
+                trimPerDisk.Transaction = transaction;
+                trimPerDisk.CommandText = $"""
+                    DELETE FROM SmartMetrics
+                    WHERE Id IN (
+                        SELECT Id FROM (
+                            SELECT Id,
+                                   ROW_NUMBER() OVER (PARTITION BY DiskId ORDER BY TimestampUtc DESC) AS rn
+                            FROM SmartMetrics
+                        ) AS perDisk
+                        WHERE perDisk.rn > {MaxSmartMetricsPerDisk}
+                    );
+                    """;
+                await trimPerDisk.ExecuteNonQueryAsync(cancellationToken);
+
+                var trimMetrics = connection.CreateCommand();
+                trimMetrics.Transaction = transaction;
+                trimMetrics.CommandText = $"""
+                    DELETE FROM SmartMetrics
+                    WHERE Id NOT IN (
+                        SELECT Id FROM SmartMetrics
+                        ORDER BY TimestampUtc DESC
+                        LIMIT {MaxSmartMetricsGlobal}
+                    );
+                    """;
+                await trimMetrics.ExecuteNonQueryAsync(cancellationToken);
+            }
 
             await transaction.CommitAsync(cancellationToken);
         }, cancellationToken);

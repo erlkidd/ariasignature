@@ -4,7 +4,7 @@ namespace AriaSignature.Application.Abstractions;
 
 public interface IDiskTelemetryRepository
 {
-    Task UpsertDisksAsync(IReadOnlyCollection<Disk> disks, CancellationToken cancellationToken);
+    Task UpsertDisksAsync(IReadOnlyCollection<Disk> disks, bool appendHistory, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<Disk>> GetDisksAsync(CancellationToken cancellationToken);
     Task<Disk?> GetDiskAsync(Guid diskId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<SmartMetric>> GetSmartMetricsAsync(Guid diskId, CancellationToken cancellationToken);

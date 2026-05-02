@@ -2,8 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
-const UI_BUILD_VERSION = "0.7.0";
-const SETTINGS_SECRET_SENTINEL = "***";
+const UI_BUILD_VERSION = "0.8.5";
 
 type DiskRow = {
   id: string;
@@ -70,9 +69,6 @@ interface SettingsDto {
   outboundSyncEnabled: boolean;
   outboundSyncUrl: string;
   outboundSyncCron: string;
-  outboundBearerToken: string | null;
-  outboundCustomHeaderName: string;
-  outboundCustomHeaderValue: string | null;
 }
 
 interface NetworkAddressInfoDto {
@@ -462,10 +458,11 @@ export default function App() {
   const [smartCustomCron, setSmartCustomCron] = useState("0 0 * * * ?");
 
   const [systemInfo, setSystemInfo] = useState<SystemInfoDto | null>(null);
-  const [outboundBearerDraft, setOutboundBearerDraft] = useState("");
-  const [outboundBearerDirty, setOutboundBearerDirty] = useState(false);
-  const [outboundCustomHeaderValueDraft, setOutboundCustomHeaderValueDraft] = useState("");
-  const [outboundCustomHeaderValueDirty, setOutboundCustomHeaderValueDirty] = useState(false);
+  const [outboundScheduleMode, setOutboundScheduleMode] = useState<SmartScheduleMode>("interval");
+  const [outboundIntervalMin, setOutboundIntervalMin] = useState(30);
+  const [outboundHour, setOutboundHour] = useState(2);
+  const [outboundMinute, setOutboundMinute] = useState(0);
+  const [outboundCustomCron, setOutboundCustomCron] = useState("0 0/30 * * * ?");
 
   const cronValue = useMemo(() => {
     if (useAdvancedCron && advancedCron.trim()) return advancedCron.trim();
@@ -629,9 +626,6 @@ export default function App() {
         outboundSyncEnabled: Boolean(s.outboundSyncEnabled),
         outboundSyncUrl: s.outboundSyncUrl ?? "",
         outboundSyncCron: s.outboundSyncCron ?? "0 0/30 * * * ?",
-        outboundCustomHeaderName: s.outboundCustomHeaderName ?? "",
-        outboundBearerToken: s.outboundBearerToken ?? null,
-        outboundCustomHeaderValue: s.outboundCustomHeaderValue ?? null,
       });
     } catch (e) {
       showErr(e);
@@ -778,6 +772,19 @@ export default function App() {
     setSmartCustomCron(serverCron);
   }, [settings?.smartMonitoringCron]);
 
+  useEffect(() => {
+    if (!settings?.outboundSyncCron) {
+      return;
+    }
+    const serverCron = settings.outboundSyncCron;
+    const parsed = parseSmartCron(serverCron);
+    setOutboundScheduleMode(parsed.mode);
+    setOutboundIntervalMin(parsed.intervalMin);
+    setOutboundHour(parsed.hour);
+    setOutboundMinute(parsed.minute);
+    setOutboundCustomCron(serverCron);
+  }, [settings?.outboundSyncCron]);
+
   const smartCronPreview = useMemo(
     () => buildSmartCron(smartScheduleMode, smartIntervalMin, smartHour, smartMinute, smartCustomCron),
     [smartScheduleMode, smartIntervalMin, smartHour, smartMinute, smartCustomCron]
@@ -785,6 +792,13 @@ export default function App() {
 
   const savedSmartCron = useMemo(() => (settings?.smartMonitoringCron ?? "").trim(), [settings?.smartMonitoringCron]);
   const smartCronMatchesSaved = savedSmartCron === smartCronPreview.trim();
+
+  const outboundCronPreview = useMemo(
+    () => buildSmartCron(outboundScheduleMode, outboundIntervalMin, outboundHour, outboundMinute, outboundCustomCron),
+    [outboundScheduleMode, outboundIntervalMin, outboundHour, outboundMinute, outboundCustomCron]
+  );
+  const savedOutboundCron = useMemo(() => (settings?.outboundSyncCron ?? "").trim(), [settings?.outboundSyncCron]);
+  const outboundCronMatchesSaved = savedOutboundCron === outboundCronPreview.trim();
 
   const totalSmartPages = useMemo(
     () => Math.max(1, Math.ceil(smart.length / smartPageSize)),
@@ -1025,21 +1039,10 @@ export default function App() {
         smartMonitoringCron: smartCronPreview,
         outboundSyncEnabled: settings.outboundSyncEnabled,
         outboundSyncUrl: settings.outboundSyncUrl,
-        outboundSyncCron: settings.outboundSyncCron,
-        outboundCustomHeaderName: settings.outboundCustomHeaderName,
+        outboundSyncCron: outboundCronPreview,
       };
-      if (outboundBearerDirty) {
-        body.outboundBearerToken = outboundBearerDraft;
-      }
-      if (outboundCustomHeaderValueDirty) {
-        body.outboundCustomHeaderValue = outboundCustomHeaderValueDraft;
-      }
       await apiSend("/settings", "PUT", body);
       await refreshSettings();
-      setOutboundBearerDirty(false);
-      setOutboundBearerDraft("");
-      setOutboundCustomHeaderValueDirty(false);
-      setOutboundCustomHeaderValueDraft("");
       setStatus(
         "Настройки записаны. Расписание обновления дисков и исходящей синхронизации применено сразу. При смене порта перезапустите службу."
       );
@@ -1148,93 +1151,150 @@ export default function App() {
 
       {tab === "system" && (
         <section className="panel">
-          <div className="toolbar">
-            <button
-              type="button"
-              onClick={() => {
-                setError(null);
-                void (async () => {
-                  try {
-                    const s = await apiGet<SystemInfoDto>("/system");
-                    setSystemInfo(s);
-                    setStatus("Данные о системе обновлены.");
-                  } catch (e) {
-                    showErr(e);
-                  }
-                })();
-              }}
-            >
-              Обновить
-            </button>
-          </div>
-          {!systemInfo && <p className="muted">Загрузка…</p>}
-          {systemInfo && (
-            <>
-              <h2>Компьютер и ОС</h2>
-              <dl className="kv">
-                <dt>Имя хоста</dt>
-                <dd>{systemInfo.hostName}</dd>
-                <dt>DNS host name</dt>
-                <dd>{systemInfo.dnsHostName?.trim() || "—"}</dd>
-                <dt>ОС</dt>
-                <dd>{systemInfo.osCaption?.trim() || "—"}</dd>
-                <dt>Версия ОС</dt>
-                <dd>{systemInfo.osVersion?.trim() || "—"}</dd>
-                <dt>Версия агента</dt>
-                <dd>{systemInfo.agentVersion}</dd>
-                <dt>Снимок (UTC)</dt>
-                <dd className="mono small">{systemInfo.collectedAtUtc}</dd>
-              </dl>
-              <h2>Процессор и память</h2>
-              <dl className="kv">
-                <dt>Процессор</dt>
-                <dd>{systemInfo.processorName?.trim() || "—"}</dd>
-                <dt>Логических процессоров</dt>
-                <dd>{systemInfo.logicalProcessors ?? "—"}</dd>
-                <dt>ОЗУ всего</dt>
-                <dd>
-                  {systemInfo.totalRamBytes != null ? formatBytes(systemInfo.totalRamBytes) : "—"}
-                </dd>
-                <dt>ОЗУ доступно</dt>
-                <dd>
-                  {systemInfo.availableRamBytes != null ? formatBytes(systemInfo.availableRamBytes) : "—"}
-                </dd>
-              </dl>
-              <h2>Видеокарта</h2>
-              {systemInfo.videoControllers.length === 0 ? (
-                <p className="muted">Данные недоступны.</p>
-              ) : (
-                <ul className="simple-list">
-                  {systemInfo.videoControllers.map((name, i) => (
-                    <li key={i}>{name}</li>
-                  ))}
-                </ul>
-              )}
-              <h2>Сетевые адреса</h2>
-              {systemInfo.networkAddresses.length === 0 ? (
-                <p className="muted">Активные интерфейсы не найдены.</p>
-              ) : (
-                <table className="data compact">
-                  <thead>
-                    <tr>
-                      <th>Интерфейс</th>
-                      <th>Семейство</th>
-                      <th>Адрес</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {systemInfo.networkAddresses.map((n, i) => (
-                      <tr key={`${n.address}-${i}`}>
-                        <td>{n.interfaceDescription?.trim() || "—"}</td>
-                        <td>{n.family}</td>
-                        <td className="mono">{n.address}</td>
+          <div className="section-stack">
+            <div className="toolbar">
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  void (async () => {
+                    try {
+                      const s = await apiGet<SystemInfoDto>("/system");
+                      setSystemInfo(s);
+                      setStatus("Данные о системе обновлены.");
+                    } catch (e) {
+                      showErr(e);
+                    }
+                  })();
+                }}
+              >
+                Обновить
+              </button>
+            </div>
+            {!systemInfo && <p className="muted">Загрузка…</p>}
+            {systemInfo && (
+              <>
+                <div className="system-info-section">
+                  <h3>Компьютер и ОС</h3>
+                  <table className="data info-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Параметр</th>
+                        <th scope="col">Значение</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </>
-          )}
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>Имя хоста</td>
+                        <td>{systemInfo.hostName}</td>
+                      </tr>
+                      <tr>
+                        <td>DNS host name</td>
+                        <td>{systemInfo.dnsHostName?.trim() || "—"}</td>
+                      </tr>
+                      <tr>
+                        <td>ОС</td>
+                        <td>{systemInfo.osCaption?.trim() || "—"}</td>
+                      </tr>
+                      <tr>
+                        <td>Версия ОС</td>
+                        <td>{systemInfo.osVersion?.trim() || "—"}</td>
+                      </tr>
+                      <tr>
+                        <td>Версия агента</td>
+                        <td>{systemInfo.agentVersion}</td>
+                      </tr>
+                      <tr>
+                        <td>Снимок (UTC)</td>
+                        <td className="mono small">{systemInfo.collectedAtUtc}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div className="system-info-section">
+                  <h3>Процессор и память</h3>
+                  <table className="data info-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Параметр</th>
+                        <th scope="col">Значение</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>Процессор</td>
+                        <td>{systemInfo.processorName?.trim() || "—"}</td>
+                      </tr>
+                      <tr>
+                        <td>Логических процессоров</td>
+                        <td>{systemInfo.logicalProcessors ?? "—"}</td>
+                      </tr>
+                      <tr>
+                        <td>ОЗУ всего</td>
+                        <td>
+                          {systemInfo.totalRamBytes != null ? formatBytes(systemInfo.totalRamBytes) : "—"}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>ОЗУ доступно</td>
+                        <td>
+                          {systemInfo.availableRamBytes != null ? formatBytes(systemInfo.availableRamBytes) : "—"}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div className="system-info-section">
+                  <h3>Видеокарта</h3>
+                  {systemInfo.videoControllers.length === 0 ? (
+                    <p className="muted">Данные недоступны.</p>
+                  ) : (
+                    <table className="data info-table">
+                      <thead>
+                        <tr>
+                          <th>№</th>
+                          <th>Устройство</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {systemInfo.videoControllers.map((name, i) => (
+                          <tr key={i}>
+                            <td className="mono">{i + 1}</td>
+                            <td>{name}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+                <div className="system-info-section">
+                  <h3>Сетевые адреса</h3>
+                  {systemInfo.networkAddresses.length === 0 ? (
+                    <p className="muted">Активные интерфейсы не найдены.</p>
+                  ) : (
+                    <table className="data compact info-table">
+                      <thead>
+                        <tr>
+                          <th>Интерфейс</th>
+                          <th>Семейство</th>
+                          <th>Адрес</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {systemInfo.networkAddresses.map((n, i) => (
+                          <tr key={`${n.address}-${i}`}>
+                            <td>{n.interfaceDescription?.trim() || "—"}</td>
+                            <td>{n.family}</td>
+                            <td className="mono">{n.address}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </section>
       )}
 
@@ -1418,7 +1478,7 @@ export default function App() {
                     <th>Вкл</th>
                     <th>Вид задачи</th>
                     <th>
-                      {backupTopTab === "configure" ? "Путь к базе / База данных" : "Папка архивов"}
+                      {backupTopTab === "configure" ? "Путь к базе / База данных" : "Папка архива"}
                     </th>
                     <th>Периодичность</th>
                     <th>Время</th>
@@ -1505,7 +1565,7 @@ export default function App() {
                   />
                 </label>
                 <label>
-                  Папка архивов
+                  {backupTopTab === "active" ? "Папка архива" : "Папка архивов"}
                   <input
                     value={selectedJob.destination}
                     onChange={(e) => setSelectedJob({ ...selectedJob, destination: e.target.value })}
@@ -1900,7 +1960,7 @@ export default function App() {
             />
           </label>
           <label>
-            Обновление SMART
+            Обновление дисков
             <select
               value={smartScheduleMode}
               onChange={(e) => setSmartScheduleMode(e.target.value as SmartScheduleMode)}
@@ -1991,9 +2051,7 @@ export default function App() {
 
           <h2>Исходящая синхронизация (POST)</h2>
           <p className="hint">
-            Данные о системе, дисках и архивации отправляются на ваш сервер по расписанию. Локальный API (GET) продолжает
-            работать как раньше; этот режим необязателен. Заголовки Authorization и дополнительный ключ используются{" "}
-            <strong>только</strong> для исходящих запросов на указанный URL, не для доступа к локальной панели.
+            Данные о системе, дисках и архивации отправляются на ваш сервер по расписанию.
           </p>
           <label className="check">
             <input
@@ -2012,70 +2070,100 @@ export default function App() {
             />
           </label>
           <label>
-            Расписание (Quartz cron, шесть полей)
-            <input
-              value={settings.outboundSyncCron}
-              onChange={(e) => setSettings({ ...settings, outboundSyncCron: e.target.value })}
-              placeholder="0 0/30 * * * ?"
-              className="mono"
-            />
-          </label>
-          <p className="hint">
-            Справка по формату:{" "}
-            <a
-              href="https://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html"
-              target="_blank"
-              rel="noreferrer"
+            Расписание отправки
+            <select
+              value={outboundScheduleMode}
+              onChange={(e) => setOutboundScheduleMode(e.target.value as SmartScheduleMode)}
             >
-              Quartz CronTrigger
-            </a>
-            . Пример каждые 30 минут: <span className="mono">0 0/30 * * * ?</span>
-          </p>
-          <label>
-            Bearer token (опционально)
-            <input
-              type="password"
-              autoComplete="off"
-              value={outboundBearerDraft}
-              onChange={(e) => {
-                setOutboundBearerDraft(e.target.value);
-                setOutboundBearerDirty(true);
-              }}
-              placeholder={
-                settings.outboundBearerToken === SETTINGS_SECRET_SENTINEL
-                  ? "Оставьте пустым, чтобы не менять; введите новый — чтобы заменить"
-                  : "Не задан"
-              }
-            />
+              <option value="interval">Каждые N минут</option>
+              <option value="daily">Ежедневно в указанное время</option>
+              <option value="custom">Расширенный режим (Quartz)</option>
+            </select>
           </label>
-          <label>
-            Доп. заголовок: имя
-            <input
-              value={settings.outboundCustomHeaderName}
-              onChange={(e) => setSettings({ ...settings, outboundCustomHeaderName: e.target.value })}
-              placeholder="X-Api-Key"
-            />
-          </label>
-          <label>
-            Доп. заголовок: значение
-            <input
-              type="password"
-              autoComplete="off"
-              value={outboundCustomHeaderValueDraft}
-              onChange={(e) => {
-                setOutboundCustomHeaderValueDraft(e.target.value);
-                setOutboundCustomHeaderValueDirty(true);
-              }}
-              placeholder={
-                settings.outboundCustomHeaderValue === SETTINGS_SECRET_SENTINEL
-                  ? "Оставьте пустым, чтобы не менять; введите новый — чтобы заменить"
-                  : "Не задано"
-              }
-            />
-          </label>
+          {outboundScheduleMode === "interval" && (
+            <label>
+              Интервал
+              <select
+                value={outboundIntervalMin}
+                onChange={(e) => {
+                  setOutboundIntervalMin(Number(e.target.value));
+                }}
+              >
+                <option value={5}>Каждые 5 минут</option>
+                <option value={10}>Каждые 10 минут</option>
+                <option value={15}>Каждые 15 минут</option>
+                <option value={30}>Каждые 30 минут</option>
+                <option value={60}>Каждый час</option>
+              </select>
+            </label>
+          )}
+          {outboundScheduleMode === "daily" && (
+            <div className="row">
+              <label>
+                Час
+                <input
+                  type="number"
+                  min={0}
+                  max={23}
+                  value={outboundHour}
+                  onChange={(e) => {
+                    const h = Math.max(0, Math.min(23, Number(e.target.value) || 0));
+                    setOutboundHour(h);
+                  }}
+                />
+              </label>
+              <label>
+                Минута
+                <input
+                  type="number"
+                  min={0}
+                  max={59}
+                  value={outboundMinute}
+                  onChange={(e) => {
+                    const m = Math.max(0, Math.min(59, Number(e.target.value) || 0));
+                    setOutboundMinute(m);
+                  }}
+                />
+              </label>
+            </div>
+          )}
+          {outboundScheduleMode === "custom" && (
+            <>
+              <label>
+                Cron Quartz
+                <input
+                  value={outboundCustomCron}
+                  onChange={(e) => setOutboundCustomCron(e.target.value)}
+                  placeholder="0 0/30 * * * ?"
+                  className="mono"
+                />
+              </label>
+              <p className="hint">
+                Расширенный режим: вручную задаётся выражение Quartz (шесть полей через пробел). Значение сохраняется в
+                базу как расписание исходящей отправки.
+              </p>
+              <p className="hint">
+                Формат: <span className="mono">секунда минута час день_месяца месяц день_недели</span>. Пример каждые 30
+                минут: <span className="mono">0 0/30 * * * ?</span>. Справка:{" "}
+                <a
+                  href="https://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Quartz CronTrigger
+                </a>
+                .
+              </p>
+            </>
+          )}
           <p className="hint">
-            Секретные поля не отправляются обратно в открытом виде: при сохранении без правок не трогайте пароли —
-            они останутся в базе. Символ «{SETTINGS_SECRET_SENTINEL}» в API означает «уже сохранено».
+            В базе сохранено: <span className="mono">{savedOutboundCron || "—"}</span>
+            {!outboundCronMatchesSaved && (
+              <>
+                {" "}
+                · после сохранения будет: <span className="mono">{outboundCronPreview.trim() || "—"}</span>
+              </>
+            )}
           </p>
           <button type="button" onClick={() => void saveSettings()}>
             Сохранить в базу настроек

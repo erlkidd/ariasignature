@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -97,27 +96,10 @@ public sealed class OutboundSyncJob : IJob
             },
         };
 
-        var bearer = dict.GetValueOrDefault(AppSettingsOutboundKeys.BearerToken)?.Trim();
-        var headerName = dict.GetValueOrDefault(AppSettingsOutboundKeys.CustomHeaderName)?.Trim();
-        var headerValue = dict.GetValueOrDefault(AppSettingsOutboundKeys.CustomHeaderValue);
-
         try
         {
             var client = _httpClientFactory.CreateClient(HttpClientName);
-            using var request = new HttpRequestMessage(HttpMethod.Post, uri);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            if (!string.IsNullOrEmpty(bearer))
-            {
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
-            }
-
-            if (!string.IsNullOrEmpty(headerName) && headerValue is not null)
-            {
-                request.Headers.TryAddWithoutValidation(headerName, headerValue);
-            }
-
-            request.Content = JsonContent.Create(payload, options: JsonOptions);
-            using var response = await client.SendAsync(request, cancellationToken);
+            using var response = await client.PostAsJsonAsync(uri, payload, JsonOptions, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 var body = await response.Content.ReadAsStringAsync(cancellationToken);

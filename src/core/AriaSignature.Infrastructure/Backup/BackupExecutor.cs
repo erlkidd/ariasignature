@@ -22,6 +22,8 @@ public sealed class BackupExecutor : IBackupExecutor
 
     private static async Task<BackupExecutionResult> ExecuteFileBackupAsync(BackupJob job, CancellationToken cancellationToken)
     {
+        string? stagingPath = null;
+        string? stagingFolder = null;
         try
         {
             if (!File.Exists(job.Source))
@@ -36,17 +38,67 @@ public sealed class BackupExecutor : IBackupExecutor
             var baseName = Path.GetFileNameWithoutExtension(job.Source);
             var archivePrefix = SanitizeFileName(job.Name);
             var runStamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
-            var tmpFileName = $"{baseName}_{runStamp}{extension}";
-            var tmpPath = Path.Combine(destinationDirectory, tmpFileName);
 
-            await using var source = File.Open(job.Source, FileMode.Open, FileAccess.Read, FileShare.Read);
-            await using var destination = File.Open(tmpPath, FileMode.Create, FileAccess.Write, FileShare.None);
-            await source.CopyToAsync(destination, cancellationToken);
-            await destination.FlushAsync(cancellationToken);
+            var stagingRoot = Path.Combine(Path.GetTempPath(), "AriaSignature");
+            Directory.CreateDirectory(stagingRoot);
+            stagingFolder = Path.Combine(stagingRoot, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(stagingFolder);
+
+            var leafFileName = Path.GetFileName(job.Source);
+            if (string.IsNullOrWhiteSpace(leafFileName))
+            {
+                leafFileName = $"{SanitizeFileName(baseName)}{extension}";
+            }
+            else
+            {
+                leafFileName = SanitizeFileName(leafFileName);
+            }
+
+            stagingPath = Path.Combine(stagingFolder, leafFileName);
+
+            Stream sourceStream;
+            try
+            {
+                sourceStream = new FileStream(job.Source, FileMode.Open, FileAccess.Read, FileShare.Read);
+            }
+            catch (IOException ex)
+            {
+                return new BackupExecutionResult(
+                    false,
+                    $"Ошибка файловой архивации: не удалось прочитать исходный файл — {DescribeFileIoForOperator(ex)}",
+                    null);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return new BackupExecutionResult(false, $"Ошибка файловой архивации: нет доступа к исходному файлу — {ex.Message}", null);
+            }
+
+            await using (sourceStream)
+            {
+                try
+                {
+                    await using var destination = new FileStream(stagingPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                    await sourceStream.CopyToAsync(destination, cancellationToken);
+                    await destination.FlushAsync(cancellationToken);
+                }
+                catch (IOException ex)
+                {
+                    return new BackupExecutionResult(
+                        false,
+                        $"Ошибка файловой архивации: не удалось записать временную копию — {DescribeFileIoForOperator(ex)}",
+                        null);
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    return new BackupExecutionResult(
+                        false,
+                        $"Ошибка файловой архивации: нет доступа при записи временной копии — {ex.Message}",
+                        null);
+                }
+            }
 
             var archivePath = BuildArchivePath(destinationDirectory, archivePrefix, runStamp);
-            var archiveResult = PackToRar(tmpPath, archivePath, cancellationToken);
-            File.Delete(tmpPath);
+            var archiveResult = PackToRar(stagingPath, archivePath, cancellationToken);
             if (!archiveResult.success)
             {
                 return new BackupExecutionResult(false, archiveResult.message, null);
@@ -60,6 +112,68 @@ public sealed class BackupExecutor : IBackupExecutor
         catch (Exception ex)
         {
             return new BackupExecutionResult(false, $"Ошибка файловой архивации: {DescribeException(ex)}", null);
+        }
+        finally
+        {
+            TryDeleteStagingFile(stagingPath);
+            TryDeleteStagingFolder(stagingFolder);
+        }
+    }
+
+    private static string DescribeFileIoForOperator(IOException ex)
+    {
+        return IsFileSharingViolation(ex)
+            ? "файл занят другим процессом; повторите позже"
+            : ex.Message;
+    }
+
+    private static void TryDeleteStagingFile(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+
+                return;
+            }
+            catch
+            {
+                Thread.Sleep(50 * attempt);
+            }
+        }
+    }
+
+    private static void TryDeleteStagingFolder(string? folderPath)
+    {
+        if (string.IsNullOrEmpty(folderPath))
+        {
+            return;
+        }
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            try
+            {
+                if (Directory.Exists(folderPath))
+                {
+                    Directory.Delete(folderPath, recursive: false);
+                }
+
+                return;
+            }
+            catch
+            {
+                Thread.Sleep(50 * attempt);
+            }
         }
     }
 
@@ -92,6 +206,7 @@ public sealed class BackupExecutor : IBackupExecutor
             }
 
             await using var command = new SqlCommand(sql, connection);
+            command.CommandTimeout = 0;
             command.Parameters.AddWithValue("@path", tmpBakPath);
             await command.ExecuteNonQueryAsync(cancellationToken);
 
@@ -126,6 +241,18 @@ public sealed class BackupExecutor : IBackupExecutor
             if (current is IOException io && IsFileSharingViolation(io))
             {
                 return "файл занят другим процессом; повторите позже";
+            }
+
+            if (current is SqlException sql)
+            {
+                var msg = sql.Message ?? "";
+                if (sql.Number == -2
+                    || msg.Contains("Timeout", StringComparison.OrdinalIgnoreCase)
+                    || msg.Contains("timeout", StringComparison.OrdinalIgnoreCase)
+                    || msg.Contains("истекло время ожидания", StringComparison.OrdinalIgnoreCase))
+                {
+                    return "истекло время ожидания выполнения команды SQL; для больших баз резервное копирование может занять продолжительное время";
+                }
             }
         }
 
@@ -193,7 +320,7 @@ public sealed class BackupExecutor : IBackupExecutor
             StartInfo = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = RarExecutable,
-                Arguments = $"a -ep1 -inul \"{destinationRarPath}\" \"{sourceFilePath}\"",
+                Arguments = $"a -ep -inul \"{destinationRarPath}\" \"{sourceFilePath}\"",
                 UseShellExecute = false,
                 RedirectStandardError = true,
                 RedirectStandardOutput = true,

@@ -1,5 +1,6 @@
 ﻿using System.Threading;
 using System.Windows;
+using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 using Drawing = System.Drawing;
 
@@ -133,7 +134,10 @@ public partial class App : System.Windows.Application
 
         if (wasMaximized)
         {
-            window.WindowState = WindowState.Maximized;
+            _ = window.Dispatcher.BeginInvoke(() =>
+            {
+                window.WindowState = WindowState.Maximized;
+            }, DispatcherPriority.ApplicationIdle);
         }
         else if (window.WindowState == WindowState.Minimized)
         {

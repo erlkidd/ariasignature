@@ -1,11 +1,14 @@
 ﻿using System.IO;
 using System.Diagnostics;
 using System.Net.Http;
+using System.Threading;
+using System.Runtime.InteropServices;
 using System.ServiceProcess;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Media.Imaging;
 using System.Windows.Input;
+using System.Windows.Interop;
 using AriaSignature.UI.Services;
 using Microsoft.Web.WebView2.Core;
 
@@ -13,27 +16,75 @@ namespace AriaSignature.UI;
 
 public partial class MainWindow : Window
 {
+    private const int WmGetMinMaxInfo = 0x0024;
+    private static readonly IntPtr MonitorDefaultToNearest = new(2);
     private const string DefaultApiBase = "http://127.0.0.1:5160";
     private readonly App _app;
     private readonly StartupRegistrationService _startup = new();
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(8) };
     private CancellationTokenSource? _startupRetryCts;
+    private bool _expectStartupLoadingHtml;
 
     public MainWindow(App app)
     {
         _app = app;
         InitializeComponent();
         TrySetWindowIcon();
+        SourceInitialized += OnSourceInitialized;
         Loaded += OnLoadedAsync;
         Closing += OnClosingToTray;
         StateChanged += (_, _) => MaxRestoreButton.Content = WindowState == WindowState.Maximized ? "❐" : "□";
+    }
+
+    private void OnSourceInitialized(object? sender, EventArgs e)
+    {
+        if (PresentationSource.FromVisual(this) is HwndSource source)
+        {
+            source.AddHook(WndProc);
+        }
+    }
+
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == WmGetMinMaxInfo)
+        {
+            WmGetMinMaxInfoHandler(hwnd, lParam);
+            handled = true;
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private static void WmGetMinMaxInfoHandler(IntPtr hwnd, IntPtr lParam)
+    {
+        var mmi = Marshal.PtrToStructure<MinMaxInfo>(lParam);
+        var monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
+        if (monitor != IntPtr.Zero)
+        {
+            var monitorInfo = new MonitorInfo();
+            monitorInfo.Size = Marshal.SizeOf<MonitorInfo>();
+            if (GetMonitorInfo(monitor, ref monitorInfo))
+            {
+                var workArea = monitorInfo.WorkArea;
+                var monitorArea = monitorInfo.MonitorArea;
+                mmi.MaxPosition.X = Math.Abs(workArea.Left - monitorArea.Left);
+                mmi.MaxPosition.Y = Math.Abs(workArea.Top - monitorArea.Top);
+                mmi.MaxSize.X = Math.Abs(workArea.Right - workArea.Left);
+                mmi.MaxSize.Y = Math.Abs(workArea.Bottom - workArea.Top);
+            }
+        }
+
+        Marshal.StructureToPtr(mmi, lParam, true);
     }
 
     private async void OnLoadedAsync(object sender, RoutedEventArgs e)
     {
         var startupSw = Stopwatch.StartNew();
         var serviceExePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "service", "AriaSignature.Service.exe"));
-        var baseUrl = await ResolveApiBaseAsync() ?? DefaultApiBase;
+        ShowLoadingOverlay("Проверка адреса API…", "Краткий запрос к локальному сервису…");
+        var baseUrl = await ResolveApiBaseAsync();
+
+        ShowLoadingOverlay("Инициализация WebView2…", "При первом запуске это может занять до минуты. Убедитесь, что установлен WebView2 Runtime.");
 
         try
         {
@@ -43,10 +94,26 @@ public partial class MainWindow : Window
                 "WebView2");
             Directory.CreateDirectory(userDataFolder);
             var env = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
-            await Browser.EnsureCoreWebView2Async(env);
+            using var ensureCts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            await Browser.EnsureCoreWebView2Async(env).WaitAsync(ensureCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            HideLoadingOverlay();
+            System.Windows.MessageBox.Show(
+                "Превышено время ожидания инициализации WebView2 (2 минуты).\n\n" +
+                "Проверьте:\n" +
+                "— установлен Evergreen WebView2 Runtime;\n" +
+                "— доступ к папке %LocalAppData%\\AriaSignature\\WebView2;\n" +
+                "— антивирус не блокирует процесс.",
+                "AriaSignature",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
         }
         catch (Exception ex)
         {
+            HideLoadingOverlay();
             System.Windows.MessageBox.Show(
                 $"Не удалось инициализировать WebView2.\nПроверьте, что установлен «Evergreen WebView2 Runtime», и что есть доступ к папке профиля в %LocalAppData%.\n{ex.Message}",
                 "AriaSignature",
@@ -68,30 +135,9 @@ public partial class MainWindow : Window
                 // ignore
             }
         };
-        Browser.CoreWebView2.NavigationCompleted += (_, e) =>
-        {
-            if (!e.IsSuccess)
-            {
-                RenderFallbackPage(
-                    "Не удалось открыть панель",
-                    "UI не получил страницу от локального API. Сервис должен быть запущен и доступен на localhost.",
-                    baseUrl,
-                    (int)e.WebErrorStatus,
-                    e.WebErrorStatus.ToString());
-                StartApiRecoveryLoop(baseUrl);
-                return;
-            }
+        Browser.CoreWebView2.NavigationCompleted += (_, navArgs) => OnBrowserNavigationCompleted(navArgs, baseUrl);
 
-            try
-            {
-                var payload = JsonSerializer.Serialize(new { action = "autostart", enabled = _startup.IsEnabled() });
-                Browser.CoreWebView2.PostWebMessageAsString(payload);
-            }
-            catch
-            {
-                // ignore
-            }
-        };
+        RenderStartupLoadingPage();
 
         // Не блокируем UI на старте: WebView2/fallback должны отрисоваться сразу,
         // даже если служба запускается долго.
@@ -125,7 +171,81 @@ public partial class MainWindow : Window
             return;
         }
 
+        _expectStartupLoadingHtml = false;
         Browser.Source = new Uri($"{baseUrl.TrimEnd('/')}/");
+    }
+
+    private void ShowLoadingOverlay(string message, string? hint = null)
+    {
+        LoadingOverlayMessage.Text = message;
+        if (!string.IsNullOrEmpty(hint))
+        {
+            LoadingOverlayHint.Text = hint;
+        }
+
+        WebViewLoadingOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void HideLoadingOverlay()
+    {
+        WebViewLoadingOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void OnBrowserNavigationCompleted(CoreWebView2NavigationCompletedEventArgs e, string baseUrl)
+    {
+        if (!e.IsSuccess)
+        {
+            HideLoadingOverlay();
+            _expectStartupLoadingHtml = false;
+            RenderFallbackPage(
+                "Не удалось открыть панель",
+                "UI не получил страницу от локального API. Сервис должен быть запущен и доступен на localhost.",
+                baseUrl,
+                (int)e.WebErrorStatus,
+                e.WebErrorStatus.ToString());
+            StartApiRecoveryLoop(baseUrl);
+            return;
+        }
+
+        var uri = Browser.CoreWebView2?.Source ?? string.Empty;
+        if (uri.StartsWith("http://127.0.0.1", StringComparison.OrdinalIgnoreCase)
+            || uri.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            HideLoadingOverlay();
+            _expectStartupLoadingHtml = false;
+            TryPostAutostartPayload();
+            return;
+        }
+
+        if (_expectStartupLoadingHtml
+            && (string.IsNullOrEmpty(uri) || uri.StartsWith("about:", StringComparison.OrdinalIgnoreCase)))
+        {
+            ShowLoadingOverlay("Подключение к сервису…", "Ожидаем ответ локального API…");
+            TryPostAutostartPayload();
+            return;
+        }
+
+        HideLoadingOverlay();
+        _expectStartupLoadingHtml = false;
+        TryPostAutostartPayload();
+    }
+
+    private void TryPostAutostartPayload()
+    {
+        try
+        {
+            if (Browser.CoreWebView2 is null)
+            {
+                return;
+            }
+
+            var payload = JsonSerializer.Serialize(new { action = "autostart", enabled = _startup.IsEnabled() });
+            Browser.CoreWebView2.PostWebMessageAsString(payload);
+        }
+        catch
+        {
+            // ignore
+        }
     }
 
     private void StartApiRecoveryLoop(string baseUrl)
@@ -145,6 +265,7 @@ public partial class MainWindow : Window
                 {
                     await Dispatcher.InvokeAsync(() =>
                     {
+                        _expectStartupLoadingHtml = false;
                         Browser.Source = new Uri($"{baseUrl.TrimEnd('/')}/");
                     });
                     return;
@@ -166,12 +287,37 @@ public partial class MainWindow : Window
         }, token);
     }
 
+    private void RenderStartupLoadingPage()
+    {
+        if (Browser.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        _expectStartupLoadingHtml = true;
+        ShowLoadingOverlay("Подключение к сервису…", "Ожидаем ответ локального API…");
+
+        const string html =
+            "<!DOCTYPE html><html lang=\"ru\"><head><meta charset=\"utf-8\"/><title>AriaSignature</title>" +
+            "<style>body{font-family:Segoe UI,sans-serif;padding:48px;background:#2F3347;color:#EEF1FA;font-size:18px;max-width:720px;margin:0 auto}" +
+            ".spin{display:inline-block;width:18px;height:18px;border:3px solid #5c6378;border-top-color:#8af;border-radius:50%;" +
+            "animation:a 0.9s linear infinite;vertical-align:middle;margin-right:12px}" +
+            "@keyframes a{to{transform:rotate(360deg)}} .muted{color:#bcc3d4;font-size:15px;margin-top:16px}</style></head><body>" +
+            "<p><span class=\"spin\"></span>Загрузка панели…</p>" +
+            "<p class=\"muted\">Подключение к локальному сервису AriaSignature.</p>" +
+            "</body></html>";
+        Browser.CoreWebView2.NavigateToString(html);
+    }
+
     private void RenderFallbackPage(string title, string details, string baseUrl, int? code = null, string? codeName = null, string? probeDetail = null, string? stage = null)
     {
         if (Browser.CoreWebView2 is null)
         {
             return;
         }
+
+        _expectStartupLoadingHtml = false;
+        HideLoadingOverlay();
 
         var errorCodeText = code is int c
             ? $"<p>Код ошибки WebView2: <strong>{c}</strong> ({System.Net.WebUtility.HtmlEncode(codeName ?? "unknown")})</p>"
@@ -232,24 +378,29 @@ public partial class MainWindow : Window
         return (false, lastDetail);
     }
 
-    private static async Task<string?> ResolveApiBaseAsync()
+    private static async Task<string> ResolveApiBaseAsync()
     {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         try
         {
-            using var response = await Http.GetAsync($"{DefaultApiBase}/api/v1/settings");
+            using var response = await Http.GetAsync($"{DefaultApiBase}/api/v1/settings", cts.Token);
             if (!response.IsSuccessStatusCode)
             {
                 return DefaultApiBase;
             }
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            using var doc = await JsonDocument.ParseAsync(stream);
+            await using var stream = await response.Content.ReadAsStreamAsync(cts.Token);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cts.Token);
             if (doc.RootElement.TryGetProperty("apiPort", out var portEl) &&
                 portEl.TryGetInt32(out var port) &&
                 port is > 0 and < 65536)
             {
                 return $"http://127.0.0.1:{port}";
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // таймаут или отмена — сразу используем порт по умолчанию
         }
         catch
         {
@@ -324,6 +475,26 @@ public partial class MainWindow : Window
                 {
                     var payload = JsonSerializer.Serialize(new { action = "pickedFolder", path = dlg.SelectedPath });
                     Browser.CoreWebView2?.PostWebMessageAsString(payload);
+                }
+            }
+            else if (action == "openFolder" && root.TryGetProperty("path", out var pathEl))
+            {
+                var folderPath = pathEl.GetString();
+                if (string.IsNullOrWhiteSpace(folderPath) || !Path.IsPathRooted(folderPath) || !Directory.Exists(folderPath))
+                {
+                    return;
+                }
+
+                try
+                {
+                    Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folderPath}\"")
+                    {
+                        UseShellExecute = true
+                    });
+                }
+                catch
+                {
+                    // ignore shell launch errors
                 }
             }
         }
@@ -461,12 +632,19 @@ public partial class MainWindow : Window
             // Поведение как у системного окна: начать перетаскивание из Maximized.
             var point = e.GetPosition(this);
             var widthRatio = ActualWidth > 0 ? point.X / ActualWidth : 0.5;
+            var cursor = GetCursorScreenDip();
             WindowState = WindowState.Normal;
-            Left = Math.Max(0, e.GetPosition(null).X - (RestoreBounds.Width * widthRatio));
-            Top = Math.Max(0, e.GetPosition(null).Y - 12);
+            Left = cursor.X - (RestoreBounds.Width * widthRatio);
+            Top = cursor.Y - 12;
         }
-
-        DragMove();
+        try
+        {
+            DragMove();
+        }
+        catch
+        {
+            // Ignore drag race with state transitions.
+        }
     }
 
     private void MinimizeButton_Click(object sender, RoutedEventArgs e)
@@ -488,5 +666,66 @@ public partial class MainWindow : Window
     {
         WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
         MaxRestoreButton.Content = WindowState == WindowState.Maximized ? "❐" : "□";
+    }
+
+    private System.Windows.Point GetCursorScreenDip()
+    {
+        if (!GetCursorPos(out var screenPx))
+        {
+            return new System.Windows.Point(Left + (ActualWidth / 2), Top + 10);
+        }
+
+        var source = PresentationSource.FromVisual(this);
+        if (source?.CompositionTarget is null)
+        {
+            return new System.Windows.Point(screenPx.X, screenPx.Y);
+        }
+
+        var dip = source.CompositionTarget.TransformFromDevice.Transform(new System.Windows.Point(screenPx.X, screenPx.Y));
+        return dip;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out WinPoint point);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, IntPtr flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo monitorInfo);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WinPoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MinMaxInfo
+    {
+        public WinPoint Reserved;
+        public WinPoint MaxSize;
+        public WinPoint MaxPosition;
+        public WinPoint MinTrackSize;
+        public WinPoint MaxTrackSize;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorInfo
+    {
+        public int Size;
+        public WinRect MonitorArea;
+        public WinRect WorkArea;
+        public int Flags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WinRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
     }
 }
