@@ -4,6 +4,17 @@
 
 Формат основан на категориях: `Added`, `Changed`, `Fixed`, `Docs`.
 
+## [0.9.1] - 2026-05-02
+
+### Changed
+
+- Версия продукта **0.9.1** (сборки .NET, установщик Inno Setup, SPA, константа UI).
+- Ссылка «MIT» на странице «О системе» ведёт на `https://github.com/erlkidd/AriaSignature/LICENSE`.
+
+### Docs
+
+- Ветка **production** приведена к содержимому **test/agent-work** (первый рабочий релиз в основной ветке).
+
 ## [0.9.0] - 2026-05-02
 
 ### Changed

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
-const UI_BUILD_VERSION = "0.9.0";
+const UI_BUILD_VERSION = "0.9.1";
 
 type DiskRow = {
   id: string;
@@ -1903,7 +1903,7 @@ export default function App() {
             </p>
             <p className="muted">
               Лицензия:{" "}
-              <a href={`${GITHUB_REPO_URL}/blob/main/LICENSE`} target="_blank" rel="noreferrer">
+              <a href="https://github.com/erlkidd/AriaSignature/LICENSE" target="_blank" rel="noreferrer">
                 MIT
               </a>{" "}
               — свободное использование с сохранением уведомления об авторских правах.

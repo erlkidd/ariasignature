@@ -1,5 +1,15 @@
 # AriaSignature — журнал разработки
 
+## Release 0.9.1
+
+### Highlights
+
+- Релиз **0.9.1**: слияние **test/agent-work** в **production**; ссылка MIT в UI на LICENSE репозитория GitHub.
+
+### Documentation sync
+
+- Документы синхронизированы по версии `0.9.1`.
+
 ## Release 0.9.0
 
 ### Highlights
