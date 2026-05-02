@@ -30,6 +30,42 @@ public sealed class ApiEndpointsTests : IClassFixture<TestWebApplicationFactory>
         var response = await _client.GetAsync("/api/v1/status");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var doc = await JsonDocument.ParseAsync(stream);
+        Assert.True(doc.RootElement.TryGetProperty("status", out var st));
+        Assert.Equal("Running", st.GetString());
+    }
+
+    [Fact]
+    public async Task SystemEndpoint_ReturnsOk_WithExpectedShape()
+    {
+        var response = await _client.GetAsync("/api/v1/system");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var doc = await JsonDocument.ParseAsync(stream);
+        var root = doc.RootElement;
+        Assert.True(root.TryGetProperty("hostName", out var host) && host.GetString()?.Length > 0);
+        Assert.True(root.TryGetProperty("agentVersion", out _));
+        Assert.True(root.TryGetProperty("networkAddresses", out var addrs) && addrs.ValueKind == JsonValueKind.Array);
+        Assert.True(root.TryGetProperty("videoControllers", out var vc) && vc.ValueKind == JsonValueKind.Array);
+    }
+
+    [Fact]
+    public async Task SettingsEndpoint_ReturnsOk_WithBindAndPort()
+    {
+        var response = await _client.GetAsync("/api/v1/settings");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var doc = await JsonDocument.ParseAsync(stream);
+        var root = doc.RootElement;
+        Assert.True(root.TryGetProperty("apiPort", out var port) && port.TryGetInt32(out var p) && p > 0);
+        Assert.True(root.TryGetProperty("apiBind", out var bind) &&
+                    (string.Equals(bind.GetString(), "all", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(bind.GetString(), "loopback", StringComparison.OrdinalIgnoreCase)));
+        Assert.True(root.TryGetProperty("apiSharedSecret", out var secret) && secret.ValueKind == JsonValueKind.String);
+        Assert.True(root.TryGetProperty("smartMonitoringCron", out var cron) && !string.IsNullOrWhiteSpace(cron.GetString()));
     }
 
     [Fact]
