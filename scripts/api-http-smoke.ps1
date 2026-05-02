@@ -13,11 +13,26 @@ if (-not $SkipRun) {
     $db = Join-Path $env:TEMP ("aria_smoke_" + [guid]::NewGuid().ToString("N") + ".db")
     $env:ConnectionStrings__AriaSignature = "Data Source=$db"
     Write-Host "Starting API on $Url (DB: $db)..."
-    $proc = Start-Process -FilePath "dotnet" -ArgumentList @(
+    $proc = Start-Process -FilePath "dotnet" -WorkingDirectory $root -ArgumentList @(
         "run", "-c", "Release", "--project", $apiProj,
         "--urls", $Url, "--no-launch-profile"
     ) -PassThru -NoNewWindow
-    Start-Sleep -Seconds 8
+    $baseWait = "$Url/api/v1".TrimEnd('/')
+    $ready = $false
+    for ($i = 0; $i -lt 40; $i++) {
+        try {
+            $null = Invoke-WebRequest -Uri "$baseWait/status" -UseBasicParsing -TimeoutSec 5
+            $ready = $true
+            break
+        }
+        catch {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    if (-not $ready) {
+        if ($proc) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+        throw "API did not become ready on $Url within timeout."
+    }
 }
 
 $base = "$Url/api/v1".TrimEnd('/')
