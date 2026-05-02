@@ -35,8 +35,8 @@ public sealed class BackupExecutor : IBackupExecutor
             var extension = Path.GetExtension(job.Source);
             var baseName = Path.GetFileNameWithoutExtension(job.Source);
             var archivePrefix = SanitizeFileName(job.Name);
-            var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            var tmpFileName = $"{baseName}{extension}";
+            var runStamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
+            var tmpFileName = $"{baseName}_{runStamp}{extension}";
             var tmpPath = Path.Combine(destinationDirectory, tmpFileName);
 
             await using var source = File.Open(job.Source, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -44,7 +44,7 @@ public sealed class BackupExecutor : IBackupExecutor
             await source.CopyToAsync(destination, cancellationToken);
             await destination.FlushAsync(cancellationToken);
 
-            var archivePath = BuildArchivePath(destinationDirectory, archivePrefix, stamp);
+            var archivePath = BuildArchivePath(destinationDirectory, archivePrefix, runStamp);
             var archiveResult = PackToRar(tmpPath, archivePath, cancellationToken);
             File.Delete(tmpPath);
             if (!archiveResult.success)

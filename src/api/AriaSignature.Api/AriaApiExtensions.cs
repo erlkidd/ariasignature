@@ -74,7 +74,7 @@ public static class AriaApiExtensions
             {
                 apiPort = port,
                 smartMonitoringCron = cron,
-                note = "Изменение порта API вступает в силу после перезапуска службы AriaSignatureService. Расписание SMART в Quartz обновляется при следующем перезапуске службы."
+                note = "Изменение порта API вступает в силу после перезапуска службы AriaSignatureService. Расписание обновления дисков обновляется при следующем перезапуске службы."
             });
         })
         .WithName("GetSettings")
@@ -271,7 +271,7 @@ public static class AriaApiExtensions
         api.MapPost("/backups/{id:guid}/run", async (Guid id, IBackupService backups, CancellationToken cancellationToken) =>
         {
             var log = await backups.RunJobAsync(id, cancellationToken);
-            if (log.Status == BackupExecutionStatus.Failed && log.Message == "Backup job not found")
+            if (log.Status == BackupExecutionStatus.Failed && log.Message == "Задача архивации не найдена")
             {
                 return Results.NotFound(log);
             }
@@ -279,6 +279,14 @@ public static class AriaApiExtensions
             return Results.Accepted("/api/v1/backups/logs", log);
         })
             .WithName("RunBackup")
+            .WithOpenApi();
+
+        api.MapDelete("/backups/logs", async (IBackupService backups, CancellationToken cancellationToken) =>
+        {
+            var deleted = await backups.ClearAllLogsAsync(cancellationToken);
+            return Results.Ok(new { cleared = true, scope = "backup-logs", deleted });
+        })
+            .WithName("ClearBackupLogs")
             .WithOpenApi();
 
         api.MapGet("/backups/logs", async (string? status, DateTimeOffset? from, DateTimeOffset? to, IBackupService backups, CancellationToken cancellationToken) =>
