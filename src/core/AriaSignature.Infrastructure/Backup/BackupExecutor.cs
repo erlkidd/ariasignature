@@ -8,6 +8,7 @@ namespace AriaSignature.Infrastructure.Backup;
 public sealed class BackupExecutor : IBackupExecutor
 {
     private static readonly string? RarExecutable = ResolveRarExecutable();
+    private const string DefaultJobFileName = "rezervnaya-kopiya";
 
     public async Task<BackupExecutionResult> ExecuteAsync(BackupJob job, CancellationToken cancellationToken)
     {
@@ -15,7 +16,7 @@ public sealed class BackupExecutor : IBackupExecutor
         {
             BackupType.File => await ExecuteFileBackupAsync(job, cancellationToken),
             BackupType.MsSql => await ExecuteMsSqlBackupAsync(job, cancellationToken),
-            _ => new BackupExecutionResult(false, $"Unsupported backup type: {job.Type}", null)
+            _ => new BackupExecutionResult(false, $"Неподдерживаемый тип архивации: {job.Type}", null)
         };
     }
 
@@ -25,7 +26,7 @@ public sealed class BackupExecutor : IBackupExecutor
         {
             if (!File.Exists(job.Source))
             {
-                return new BackupExecutionResult(false, $"Source file not found: {job.Source}", null);
+                return new BackupExecutionResult(false, $"Исходный файл не найден: {job.Source}", null);
             }
 
             var destinationDirectory = job.Destination;
@@ -33,16 +34,17 @@ public sealed class BackupExecutor : IBackupExecutor
 
             var extension = Path.GetExtension(job.Source);
             var baseName = Path.GetFileNameWithoutExtension(job.Source);
-            var stamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
-            var tmpFileName = $"{baseName}_{stamp}{extension}";
+            var archivePrefix = SanitizeFileName(job.Name);
+            var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var tmpFileName = $"{baseName}{extension}";
             var tmpPath = Path.Combine(destinationDirectory, tmpFileName);
 
             await using var source = File.Open(job.Source, FileMode.Open, FileAccess.Read, FileShare.Read);
-            await using var destination = File.Open(tmpPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            await using var destination = File.Open(tmpPath, FileMode.Create, FileAccess.Write, FileShare.None);
             await source.CopyToAsync(destination, cancellationToken);
             await destination.FlushAsync(cancellationToken);
 
-            var archivePath = Path.Combine(destinationDirectory, $"{baseName}_{stamp}.rar");
+            var archivePath = BuildArchivePath(destinationDirectory, archivePrefix, stamp);
             var archiveResult = PackToRar(tmpPath, archivePath, cancellationToken);
             File.Delete(tmpPath);
             if (!archiveResult.success)
@@ -50,14 +52,14 @@ public sealed class BackupExecutor : IBackupExecutor
                 return new BackupExecutionResult(false, archiveResult.message, null);
             }
 
-            ApplyRetention(destinationDirectory, $"{baseName}_*", ".rar", Math.Max(job.RetentionCount, 1));
+            ApplyRetention(destinationDirectory, $"{archivePrefix}_*", ".rar", Math.Max(job.RetentionCount, 1));
             var fileSize = new FileInfo(archivePath).Length;
 
-            return new BackupExecutionResult(true, $"File backup completed: {archivePath}", fileSize);
+            return new BackupExecutionResult(true, $"Файловая архивация выполнена: {archivePath}", fileSize);
         }
         catch (Exception ex)
         {
-            return new BackupExecutionResult(false, $"File backup failed: {ex.Message}", null);
+            return new BackupExecutionResult(false, $"Ошибка файловой архивации: {DescribeException(ex)}", null);
         }
     }
 
@@ -69,13 +71,14 @@ public sealed class BackupExecutor : IBackupExecutor
 
             var builder = new SqlConnectionStringBuilder(job.Source);
             var databaseName = builder.InitialCatalog;
+            var archivePrefix = SanitizeFileName(job.Name);
             if (string.IsNullOrWhiteSpace(databaseName))
             {
-                return new BackupExecutionResult(false, "MSSQL backup requires Initial Catalog in Source connection string", null);
+                return new BackupExecutionResult(false, "Для MSSQL-архивации в строке подключения требуется параметр Initial Catalog", null);
             }
 
-            var stamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
-            var tmpBakPath = Path.Combine(job.Destination, $"{databaseName}_{stamp}.bak");
+            var runStamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
+            var tmpBakPath = Path.Combine(job.Destination, $"{archivePrefix}_{runStamp}.bak");
             var sql = $"BACKUP DATABASE [{databaseName}] TO DISK = @path WITH INIT, FORMAT, CHECKSUM";
 
             await using var connection = new SqlConnection(job.Source);
@@ -85,7 +88,7 @@ public sealed class BackupExecutor : IBackupExecutor
             var exists = await existsCommand.ExecuteScalarAsync(cancellationToken);
             if (exists is null || exists == DBNull.Value)
             {
-                return new BackupExecutionResult(false, $"MSSQL database not found: {databaseName}", null);
+                return new BackupExecutionResult(false, $"База MSSQL не найдена: {databaseName}", null);
             }
 
             await using var command = new SqlCommand(sql, connection);
@@ -94,10 +97,10 @@ public sealed class BackupExecutor : IBackupExecutor
 
             if (!File.Exists(tmpBakPath) || new FileInfo(tmpBakPath).Length == 0)
             {
-                return new BackupExecutionResult(false, "MSSQL backup produced empty .bak file", null);
+                return new BackupExecutionResult(false, "MSSQL-архивация создала пустой файл .bak", null);
             }
 
-            var archivePath = Path.Combine(job.Destination, $"{databaseName}_{stamp}.rar");
+            var archivePath = BuildArchivePath(job.Destination, archivePrefix, runStamp);
             var archiveResult = PackToRar(tmpBakPath, archivePath, cancellationToken);
             File.Delete(tmpBakPath);
             if (!archiveResult.success)
@@ -105,15 +108,35 @@ public sealed class BackupExecutor : IBackupExecutor
                 return new BackupExecutionResult(false, archiveResult.message, null);
             }
 
-            ApplyRetention(job.Destination, $"{databaseName}_*", ".rar", Math.Max(job.RetentionCount, 1));
+            ApplyRetention(job.Destination, $"{archivePrefix}_*", ".rar", Math.Max(job.RetentionCount, 1));
             long? fileSize = File.Exists(archivePath) ? new FileInfo(archivePath).Length : null;
 
-            return new BackupExecutionResult(true, $"MSSQL backup completed: {archivePath}", fileSize);
+            return new BackupExecutionResult(true, $"MSSQL-архивация выполнена: {archivePath}", fileSize);
         }
         catch (Exception ex)
         {
-            return new BackupExecutionResult(false, $"MSSQL backup failed: {ex.Message}", null);
+            return new BackupExecutionResult(false, $"Ошибка MSSQL-архивации: {DescribeException(ex)}", null);
         }
+    }
+
+    private static string DescribeException(Exception ex)
+    {
+        for (Exception? current = ex; current != null; current = current.InnerException)
+        {
+            if (current is not IOException io)
+            {
+                continue;
+            }
+
+            var m = io.Message ?? "";
+            if (m.Contains("being used by another process", StringComparison.OrdinalIgnoreCase)
+                || m.Contains("The process cannot access the file", StringComparison.OrdinalIgnoreCase))
+            {
+                return "файл занят другим процессом или недоступен; повторите позже";
+            }
+        }
+
+        return ex.Message;
     }
 
     private static void ApplyRetention(string directory, string patternPrefix, string extension, int retentionCount)
@@ -129,11 +152,29 @@ public sealed class BackupExecutor : IBackupExecutor
         }
     }
 
+    private static string BuildArchivePath(string directory, string archivePrefix, string stamp)
+    {
+        return Path.Combine(directory, $"{archivePrefix}_{stamp}.rar");
+    }
+
+    private static string SanitizeFileName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return DefaultJobFileName;
+        }
+
+        var invalid = Path.GetInvalidFileNameChars();
+        var chars = value.Trim().Select(ch => invalid.Contains(ch) ? '_' : ch).ToArray();
+        var sanitized = new string(chars).Trim('_', '.');
+        return string.IsNullOrWhiteSpace(sanitized) ? DefaultJobFileName : sanitized;
+    }
+
     private static (bool success, string message) PackToRar(string sourceFilePath, string destinationRarPath, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(RarExecutable))
         {
-            return (false, "Rar archiver not found. Install WinRAR and ensure Rar.exe is available in PATH.");
+            return (false, "Архиватор RAR не найден. Установите WinRAR и убедитесь, что Rar.exe доступен в PATH.");
         }
 
         if (File.Exists(destinationRarPath))
@@ -158,22 +199,22 @@ public sealed class BackupExecutor : IBackupExecutor
         process.WaitForExit();
         if (cancellationToken.IsCancellationRequested)
         {
-            return (false, "Backup archive packing cancelled");
+            return (false, "Упаковка архива отменена");
         }
 
         if (process.ExitCode != 0)
         {
             var output = process.StandardOutput.ReadToEnd();
             var error = process.StandardError.ReadToEnd();
-            return (false, $"Rar packing failed with code {process.ExitCode}. {output} {error}".Trim());
+            return (false, $"Ошибка упаковки RAR (код {process.ExitCode}). {output} {error}".Trim());
         }
 
         if (!File.Exists(destinationRarPath) || new FileInfo(destinationRarPath).Length == 0)
         {
-            return (false, "Rar archive was not created or is empty");
+            return (false, "RAR-архив не создан или пуст");
         }
 
-        return (true, "ok");
+        return (true, "Упаковка выполнена");
     }
 
     private static string? ResolveRarExecutable()

@@ -50,14 +50,14 @@ public sealed class BackupService : IBackupService
             {
                 JobId = id,
                 Status = BackupExecutionStatus.Failed,
-                Message = "Backup job not found",
+                Message = "Задача архивации не найдена",
                 StartTimeUtc = DateTimeOffset.UtcNow,
                 EndTimeUtc = DateTimeOffset.UtcNow
             };
         }
 
         var start = DateTimeOffset.UtcNow;
-        BackupExecutionResult result = new(false, "No execution performed", null);
+        BackupExecutionResult result = new(false, "Запуск архивации не выполнялся", null);
 
         // Retry policy required by specification.
         for (var attempt = 1; attempt <= 3; attempt++)
@@ -66,6 +66,11 @@ public sealed class BackupService : IBackupService
             if (result.IsSuccess)
             {
                 break;
+            }
+
+            if (attempt < 3)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(900), cancellationToken);
             }
         }
 
@@ -122,5 +127,10 @@ public sealed class BackupService : IBackupService
     public Task<IReadOnlyCollection<BackupLog>> GetLogsAsync(BackupExecutionStatus? status, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken)
     {
         return _repository.GetLogsAsync(status, fromUtc, toUtc, cancellationToken);
+    }
+
+    public Task<int> ClearAllLogsAsync(CancellationToken cancellationToken)
+    {
+        return _repository.ClearAllLogsAsync(cancellationToken);
     }
 }

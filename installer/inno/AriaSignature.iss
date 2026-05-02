@@ -2,7 +2,7 @@
 ; Build binaries first, then run this script in Inno Setup Compiler.
 
 #define MyAppName "AriaSignature"
-#define MyAppVersion "0.2.6"
+#define MyAppVersion "0.2.7"
 #define MyAppPublisher "AriaSignature"
 #define MyAppExeName "AriaSignature.UI.exe"
 #define MyServiceExeName "AriaSignature.Service.exe"
@@ -200,7 +200,7 @@ begin
   Created := False;
   for Attempt := 1 to 8 do
   begin
-    if ExecSc(CreateParams, 0, -1) then
+    if ExecSc(CreateParams, 0, SC_ALREADY_EXISTS) then
     begin
       Created := True;
       Break;
@@ -217,7 +217,7 @@ begin
     if LastScExitCode = 1078 then
     begin
       Log('sc create returned 1078 (display name conflict), retry with alternate DisplayName.');
-      if ExecSc(CreateParamsAlt, 0, -1) then
+      if ExecSc(CreateParamsAlt, 0, SC_ALREADY_EXISTS) then
       begin
         Created := True;
         Break;
@@ -226,7 +226,7 @@ begin
       if LastScExitCode = 1078 then
       begin
         Log('sc create still returned 1078, retry without DisplayName.');
-        if ExecSc(CreateParamsNoDisplay, 0, -1) then
+        if ExecSc(CreateParamsNoDisplay, 0, SC_ALREADY_EXISTS) then
         begin
           Created := True;
           Break;

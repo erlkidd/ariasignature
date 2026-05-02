@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
-const UI_BUILD_VERSION = "0.2.6";
+const UI_BUILD_VERSION = "0.2.7";
 
 type DiskRow = {
   id: string;
@@ -90,6 +90,7 @@ type CreateJobField =
   | "msPassword";
 type CreateJobFieldErrors = Partial<Record<CreateJobField, string>>;
 type SmartScheduleMode = "interval" | "daily" | "custom";
+const archivePathRegex = /([A-Za-z]:\\[^<>:"|?*\r\n]+?\.(?:rar|zip|7z|bak|1cd))/i;
 
 const quartzDays = [
   { v: "SUN", label: "Воскресенье" },
@@ -245,6 +246,77 @@ function jobTypeLabel(t: string): string {
   }
 }
 
+function formatBackupLogStatus(status: string): string {
+  switch ((status ?? "").trim().toLowerCase()) {
+    case "succeeded":
+      return "Успех";
+    case "failed":
+      return "Ошибка";
+    case "running":
+    case "inprogress":
+      return "Выполняется";
+    default:
+      return status || "—";
+  }
+}
+
+function extractFolderFromLogMessage(message: string): string | null {
+  const match = message?.match(archivePathRegex);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  const filePath = match[1];
+  const idx = Math.max(filePath.lastIndexOf("\\"), filePath.lastIndexOf("/"));
+  if (idx <= 0) {
+    return null;
+  }
+
+  return filePath.slice(0, idx);
+}
+
+function extractFolderFromPath(pathValue: string): string | null {
+  const value = (pathValue ?? "").trim();
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.replace(/\//g, "\\");
+  const idx = normalized.lastIndexOf("\\");
+  if (idx <= 0) {
+    return null;
+  }
+
+  return normalized.slice(0, idx);
+}
+
+function extractDatabaseNameFromSource(source: string): string | null {
+  const value = (source ?? "").trim();
+  if (!value) {
+    return null;
+  }
+
+  const parts = value.split(";").map((p) => p.trim()).filter(Boolean);
+  for (const part of parts) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) {
+      continue;
+    }
+
+    const key = part.slice(0, eq).trim().toLowerCase();
+    const val = part.slice(eq + 1).trim();
+    if (!val) {
+      continue;
+    }
+
+    if (key === "database" || key === "initial catalog") {
+      return val;
+    }
+  }
+
+  return null;
+}
+
 function postToHost(payload: unknown) {
   const w = window as unknown as { chrome?: { webview?: { postMessage: (m: string) => void } } };
   if (w.chrome?.webview) {
@@ -261,6 +333,7 @@ type WindowsServiceStatus = {
 };
 
 export default function App() {
+  const smartPageSize = 5;
   const [tab, setTab] = useState<"disks" | "backup" | "settings" | "about">("disks");
   const [theme, setTheme] = useState<"light" | "dark">(() =>
     localStorage.getItem("aria-theme") === "dark" ? "dark" : "light"
@@ -271,13 +344,14 @@ export default function App() {
   const [disks, setDisks] = useState<DiskRow[]>([]);
   const [selectedDisk, setSelectedDisk] = useState<DiskRow | null>(null);
   const [smart, setSmart] = useState<SmartRow[]>([]);
+  const [smartPage, setSmartPage] = useState(1);
 
   const [jobs, setJobs] = useState<BackupJob[]>([]);
   const [logs, setLogs] = useState<BackupLog[]>([]);
   const [logFilterStatus, setLogFilterStatus] = useState("");
   const [selectedJob, setSelectedJob] = useState<BackupJob | null>(null);
+  const [runningJobId, setRunningJobId] = useState<string | null>(null);
   const [backupTopTab, setBackupTopTab] = useState<"configure" | "active">("configure");
-  const [backupBottomTab, setBackupBottomTab] = useState<"journal" | "backups">("journal");
   const [backupPageTab, setBackupPageTab] = useState<"tasks" | "history" | "new">("tasks");
   const [svcLine, setSvcLine] = useState("");
   const [windowsService, setWindowsService] = useState<WindowsServiceStatus | null>(null);
@@ -321,10 +395,15 @@ export default function App() {
     [backupTopTab, jobs]
   );
 
-  const backupSuccessLogs = useMemo(
-    () => logs.filter((l) => l.status.toLowerCase() === "succeeded"),
-    [logs]
-  );
+  const lastLogByJobId = useMemo(() => {
+    const m = new Map<string, BackupLog>();
+    for (const logRow of logs) {
+      if (!m.has(logRow.jobId)) {
+        m.set(logRow.jobId, logRow);
+      }
+    }
+    return m;
+  }, [logs]);
 
   const advancedCronHelp = useMemo(
     () =>
@@ -423,6 +502,16 @@ export default function App() {
     }
   }, []);
 
+  const loadDisks = useCallback(async () => {
+    setError(null);
+    try {
+      const d = await apiGet<DiskRow[]>("/disks");
+      setDisks(d);
+    } catch (e) {
+      showErr(e);
+    }
+  }, []);
+
   const refreshJobs = useCallback(async () => {
     setError(null);
     try {
@@ -471,7 +560,7 @@ export default function App() {
 
   useEffect(() => {
     const initialLoad = async () => {
-      await Promise.all([refreshDisks(), refreshJobs(), refreshSettings(), refreshServiceVersion()]);
+      await Promise.all([loadDisks(), refreshJobs(), refreshSettings(), refreshServiceVersion()]);
       try {
         const l = await apiGet<BackupLog[]>("/backups/logs");
         setLogs(l);
@@ -481,7 +570,7 @@ export default function App() {
     };
     void initialLoad();
     postToHost({ action: "getAutostart" });
-  }, [refreshDisks, refreshJobs, refreshSettings, refreshServiceVersion]);
+  }, [loadDisks, refreshJobs, refreshSettings, refreshServiceVersion]);
 
   useEffect(() => {
     if (tab !== "backup") {
@@ -517,11 +606,11 @@ export default function App() {
   }, [tab, refreshJobs, refreshLogs]);
 
   useEffect(() => {
-    if (tab !== "backup" || backupPageTab !== "history" || backupBottomTab !== "journal") {
+    if (tab !== "backup" || backupPageTab !== "history") {
       return;
     }
     void refreshLogs();
-  }, [tab, backupPageTab, backupBottomTab, logFilterStatus, refreshLogs]);
+  }, [tab, backupPageTab, logFilterStatus, refreshLogs]);
 
   useEffect(() => {
     const chromeWebview = (
@@ -578,8 +667,26 @@ export default function App() {
     [smartScheduleMode, smartIntervalMin, smartHour, smartMinute, smartCustomCron]
   );
 
+  const totalSmartPages = useMemo(
+    () => Math.max(1, Math.ceil(smart.length / smartPageSize)),
+    [smart.length, smartPageSize]
+  );
+
+  const pagedSmart = useMemo(() => {
+    const safePage = Math.min(Math.max(1, smartPage), totalSmartPages);
+    const start = (safePage - 1) * smartPageSize;
+    return smart.slice(start, start + smartPageSize);
+  }, [smart, smartPage, totalSmartPages, smartPageSize]);
+
+  useEffect(() => {
+    if (smartPage > totalSmartPages) {
+      setSmartPage(totalSmartPages);
+    }
+  }, [smartPage, totalSmartPages]);
+
   const loadSmart = async (disk: DiskRow) => {
     setSelectedDisk(disk);
+    setSmartPage(1);
     setError(null);
     try {
       const m = await apiGet<SmartRow[]>(`/disks/${disk.id}/smart`);
@@ -591,12 +698,13 @@ export default function App() {
 
   const clearSelectedSmartHistory = async () => {
     if (!selectedDisk) return;
-    if (!confirm(`Очистить историю SMART для диска «${selectedDisk.model}»?`)) return;
+    if (!confirm(`Очистить историю диска для «${selectedDisk.model}»?`)) return;
     setError(null);
     try {
       const result = await apiSend<ClearSmartResponse>(`/disks/${selectedDisk.id}/smart`, "DELETE");
       await loadSmart(selectedDisk);
-      setStatus(`История SMART очищена для выбранного диска: ${result.deleted ?? 0} записей.`);
+      setSmartPage(1);
+      setStatus(`История диска очищена: ${result.deleted ?? 0} записей.`);
     } catch (e) {
       showErr(e);
     }
@@ -605,7 +713,7 @@ export default function App() {
   const clearAllSmartHistory = async () => {
     if (
       !confirm(
-        "Очистить всю историю SMART по всем дискам? Это действие удалит накопленные записи и не может быть отменено."
+        "Очистить всю историю дисков по всем устройствам? Это действие удалит накопленные записи и не может быть отменено."
       )
     ) {
       return;
@@ -616,7 +724,22 @@ export default function App() {
       if (selectedDisk) {
         await loadSmart(selectedDisk);
       }
-      setStatus(`Глобальная история SMART очищена: ${result.deleted ?? 0} записей.`);
+      setSmartPage(1);
+      setStatus(`Глобальная история дисков очищена: ${result.deleted ?? 0} записей.`);
+    } catch (e) {
+      showErr(e);
+    }
+  };
+
+  const clearAllBackupLogs = async () => {
+    if (!confirm("Очистить журнал задач архивации? Это действие удалит все записи журнала и не может быть отменено.")) {
+      return;
+    }
+    setError(null);
+    try {
+      const result = await apiSend<ClearSmartResponse>("/backups/logs", "DELETE");
+      await refreshLogs();
+      setStatus(`Журнал задач очищен: ${result.deleted ?? 0} записей.`);
     } catch (e) {
       showErr(e);
     }
@@ -719,12 +842,21 @@ export default function App() {
 
   const runJob = async (id: string) => {
     setError(null);
+    setRunningJobId(id);
     try {
-      await apiSend(`/backups/${id}/run`, "POST");
-      setStatus("Запуск архивации принят.");
+      const log = await apiSend<BackupLog>(`/backups/${id}/run`, "POST");
       await refreshLogs();
+      await refreshJobs();
+      const ok = (log.status ?? "").toLowerCase() === "succeeded";
+      setStatus(
+        ok
+          ? "Архивация завершена успешно."
+          : `Архивация завершена с ошибкой: ${log.message ?? "—"}`
+      );
     } catch (e) {
       showErr(e);
+    } finally {
+      setRunningJobId(null);
     }
   };
 
@@ -781,6 +913,49 @@ export default function App() {
     return x === "critical" ? "pill bad" : x === "warning" ? "pill warn" : "pill ok";
   };
 
+  const renderTaskPathCell = (job: BackupJob) => {
+    if (backupTopTab === "active") {
+      const destination = (job.destination ?? "").trim();
+      if (!destination) {
+        return "—";
+      }
+
+      return (
+        <div className="path-cell">
+          <span className="path-text">{destination}</span>
+          <button type="button" className="secondary" onClick={() => postToHost({ action: "openFolder", path: destination })}>
+            Открыть папку
+          </button>
+        </div>
+      );
+    }
+
+    if (job.type.toLowerCase() === "file") {
+      const sourceFolder = extractFolderFromPath(job.source);
+      if (!sourceFolder) {
+        return "—";
+      }
+
+      return (
+        <div className="path-cell">
+          <span className="path-text">{sourceFolder}</span>
+          <button type="button" className="secondary" onClick={() => postToHost({ action: "openFolder", path: sourceFolder })}>
+            Открыть папку
+          </button>
+        </div>
+      );
+    }
+
+    const dbName = extractDatabaseNameFromSource(job.source);
+    return dbName ? (
+      <div className="path-cell">
+        <span className="path-text">{dbName}</span>
+      </div>
+    ) : (
+      "—"
+    );
+  };
+
   return (
     <div className="app">
       <header className="header">
@@ -834,9 +1009,6 @@ export default function App() {
             <button type="button" onClick={() => void refreshDisks()}>
               Обновить данные
             </button>
-            <span className="hint">
-              Сбор телеметрии, выполнение архивации и журналирование.
-            </span>
           </div>
           <div className="grid2">
             <div>
@@ -895,24 +1067,19 @@ export default function App() {
                     <dd>
                       {formatPowerOnHours(selectedDisk.powerOnHours)}, включений {selectedDisk.powerCycleCount || "—"}
                     </dd>
-                    <dt>SMART</dt>
-                    <dd>
-                      Reallocated {selectedDisk.reallocatedSectors}, Pending {selectedDisk.pendingSectors}, Uncorrectable{" "}
-                      {selectedDisk.uncorrectableErrors}
-                    </dd>
                     <dt>Источник телеметрии</dt>
                     <dd>{formatTelemetrySource(selectedDisk)}</dd>
                     <dt>Диагностика</dt>
                     <dd>{selectedDisk.telemetryDegradationReason || "—"}</dd>
                   </dl>
                   <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                    <h3>История SMART (последние записи)</h3>
+                    <h3>История дисков</h3>
                     <div className="row">
                       <button type="button" className="secondary" onClick={() => void clearSelectedSmartHistory()}>
                         Очистить историю диска
                       </button>
                       <button type="button" className="danger" onClick={() => void clearAllSmartHistory()}>
-                        Очистить всю историю SMART
+                        Очистить всю историю дисков
                       </button>
                     </div>
                   </div>
@@ -925,7 +1092,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {smart.slice(0, 20).map((row, i) => (
+                      {pagedSmart.map((row, i) => (
                         <tr key={i}>
                           <td>{row.timestampUtc}</td>
                           <td>{formatTempC(row.temperatureCelsius)}</td>
@@ -934,6 +1101,24 @@ export default function App() {
                       ))}
                     </tbody>
                   </table>
+                  {smart.length > smartPageSize && (
+                    <div className="row" style={{ justifyContent: "flex-end", alignItems: "center", marginTop: 8, gap: 8 }}>
+                      <button type="button" className="secondary" disabled={smartPage <= 1} onClick={() => setSmartPage((p) => Math.max(1, p - 1))}>
+                        Назад
+                      </button>
+                      <span className="muted">
+                        Страница {smartPage} из {totalSmartPages}
+                      </span>
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={smartPage >= totalSmartPages}
+                        onClick={() => setSmartPage((p) => Math.min(totalSmartPages, p + 1))}
+                      >
+                        Вперед
+                      </button>
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -956,7 +1141,7 @@ export default function App() {
               className={backupPageTab === "history" ? "active" : ""}
               onClick={() => setBackupPageTab("history")}
             >
-              Журнал и копии
+              Журнал
             </button>
             <button
               type="button"
@@ -997,14 +1182,20 @@ export default function App() {
                     <th>Наименование</th>
                     <th>Вкл</th>
                     <th>Вид задачи</th>
+                    <th>
+                      {backupTopTab === "configure" ? "Путь к базе / База данных" : "Папка архивов"}
+                    </th>
                     <th>Периодичность</th>
                     <th>Время</th>
+                    <th>Последний запуск</th>
                     <th></th>
                   </tr>
                 </thead>
                 <tbody>
                   {backupJobsDisplayed.map((j) => {
                     const { periodicity, time } = cronToScheduleParts(j.scheduleCron);
+                    const last = lastLogByJobId.get(j.id);
+                    const running = runningJobId === j.id;
                     return (
                       <tr key={j.id} className={`backup-job-row ${selectedJob?.id === j.id ? "sel" : ""}`}>
                         <td>
@@ -1019,14 +1210,29 @@ export default function App() {
                           />
                         </td>
                         <td>{jobTypeLabel(j.type)}</td>
+                        <td>{renderTaskPathCell(j)}</td>
                         <td>{periodicity}</td>
                         <td className="mono">{time}</td>
+                        <td>
+                          {running ? (
+                            <span className="muted">Выполняется…</span>
+                          ) : last ? (
+                            <>
+                              <span>{formatBackupLogStatus(last.status)}</span>
+                              <span className="muted small" style={{ display: "block" }}>
+                                {new Date(last.endTimeUtc ?? last.startTimeUtc).toLocaleString()}
+                              </span>
+                            </>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
                         <td className="row-actions" onClick={(e) => e.stopPropagation()}>
                           <button type="button" className="secondary" onClick={() => setSelectedJob({ ...j })}>
                             Редактировать
                           </button>
-                          <button type="button" onClick={() => void runJob(j.id)}>
-                            Запуск
+                          <button type="button" disabled={running} onClick={() => void runJob(j.id)}>
+                            {running ? "…" : "Запуск"}
                           </button>
                         </td>
                       </tr>
@@ -1089,8 +1295,8 @@ export default function App() {
                   <button type="button" onClick={() => void saveSelectedJob()}>
                     Сохранить
                   </button>
-                  <button type="button" onClick={() => void runJob(selectedJob.id)}>
-                    Запустить
+                  <button type="button" disabled={runningJobId === selectedJob.id} onClick={() => void runJob(selectedJob.id)}>
+                    {runningJobId === selectedJob.id ? "Выполняется…" : "Запустить"}
                   </button>
                   <button type="button" className="danger" onClick={() => void deleteJob(selectedJob.id)}>
                     Удалить
@@ -1104,91 +1310,60 @@ export default function App() {
 
           {backupPageTab === "history" && (
           <div className="backup-split-bottom">
-            <div className="backup-subtabs backup-bottom-subtabs">
-              <button
-                type="button"
-                className={backupBottomTab === "journal" ? "active" : ""}
-                onClick={() => setBackupBottomTab("journal")}
-              >
-                Журнал задач
+            <h3>Журнал задач</h3>
+            <div className="toolbar">
+              <select value={logFilterStatus} onChange={(e) => setLogFilterStatus(e.target.value)}>
+                <option value="">Все статусы</option>
+                <option value="Succeeded">Успех</option>
+                <option value="Failed">Ошибка</option>
+              </select>
+              <button type="button" onClick={() => void refreshLogs()}>
+                Обновить журнал
               </button>
-              <button
-                type="button"
-                className={backupBottomTab === "backups" ? "active" : ""}
-                onClick={() => setBackupBottomTab("backups")}
-              >
-                Бэкапы
+              <button type="button" className="danger" onClick={() => void clearAllBackupLogs()}>
+                Очистить журнал задач
               </button>
             </div>
-
-            {backupBottomTab === "journal" && (
-              <>
-                <div className="toolbar">
-                  <select value={logFilterStatus} onChange={(e) => setLogFilterStatus(e.target.value)}>
-                    <option value="">Все статусы</option>
-                    <option value="Succeeded">Успех</option>
-                    <option value="Failed">Ошибка</option>
-                  </select>
-                  <button type="button" onClick={() => void refreshLogs()}>
-                    Обновить журнал
-                  </button>
-                </div>
-                <div className="table-wrap">
-                  <table className="data compact">
-                    <thead>
-                      <tr>
-                        <th>Дата</th>
-                        <th>Задача</th>
-                        <th>Статус</th>
-                        <th>Размер</th>
-                        <th>Результат</th>
+            <div className="table-wrap">
+              <table className="data compact">
+                <thead>
+                  <tr>
+                    <th>Дата</th>
+                    <th>Задача</th>
+                    <th>Папка архива</th>
+                    <th>Статус</th>
+                    <th>Размер</th>
+                    <th>Результат</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map((l) => {
+                    const folderPath = extractFolderFromLogMessage(l.message);
+                    return (
+                      <tr key={l.id}>
+                        <td className="mono small">{new Date(l.startTimeUtc).toLocaleString()}</td>
+                        <td>{jobs.find((x) => x.id === l.jobId)?.name ?? l.jobId}</td>
+                        <td>
+                          {folderPath ? (
+                            <div className="path-cell">
+                              <span className="path-text">{folderPath}</span>
+                              <button type="button" className="secondary" onClick={() => postToHost({ action: "openFolder", path: folderPath })}>
+                                Открыть папку
+                              </button>
+                            </div>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td>{formatBackupLogStatus(l.status)}</td>
+                        <td>{l.fileSizeBytes != null ? formatBytes(l.fileSizeBytes) : "—"}</td>
+                        <td className="msg">{l.message}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {logs.map((l) => (
-                        <tr key={l.id}>
-                          <td className="mono small">{new Date(l.startTimeUtc).toLocaleString()}</td>
-                          <td>{jobs.find((x) => x.id === l.jobId)?.name ?? l.jobId}</td>
-                          <td>{l.status}</td>
-                          <td>{l.fileSizeBytes != null ? formatBytes(l.fileSizeBytes) : "—"}</td>
-                          <td className="msg">{l.message}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-
-            {backupBottomTab === "backups" && (
-              <>
-                <p className="hint">
-                  Успешные архивации из журнала. Путь к файлу обычно указан в сообщении или в папке назначения задачи.
-                </p>
-                <div className="table-wrap">
-                  <table className="data compact">
-                    <thead>
-                      <tr>
-                        <th>Дата</th>
-                        <th>Задача</th>
-                        <th>Размер</th>
-                        <th>Сообщение</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {backupSuccessLogs.map((l) => (
-                        <tr key={l.id}>
-                          <td className="mono small">{new Date(l.startTimeUtc).toLocaleString()}</td>
-                          <td>{jobs.find((x) => x.id === l.jobId)?.name ?? l.jobId}</td>
-                          <td>{l.fileSizeBytes != null ? formatBytes(l.fileSizeBytes) : "—"}</td>
-                          <td className="msg">{l.message}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
           )}
 
@@ -1417,10 +1592,7 @@ export default function App() {
           <div className="about-brand">
             <img className="about-logo" src="./logo.png" width={120} height={120} alt="" />
             <h2>AriaSignature</h2>
-            <p className="hint">
-              Локальная панель для мониторинга дисков и резервного копирования баз 1С. Служба Windows предоставляет
-              HTTP API для интеграций.
-            </p>
+            <p className="hint">Локальная панель для мониторинга дисков и резервного копирования баз 1С.</p>
             <p>
               <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
                 Исходный код на GitHub
