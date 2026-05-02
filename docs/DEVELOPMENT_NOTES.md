@@ -1,5 +1,15 @@
 # AriaSignature — журнал разработки
 
+## Release 0.9.5
+
+### Highlights
+
+- Релиз **0.9.5**: автозапуск панели (HKCU Run) применяется до UAC для `sc config`; предупреждение в настройках, если служба не Automatic.
+
+### Documentation sync
+
+- Документы синхронизированы по версии `0.9.5`.
+
 ## Release 0.9.4
 
 ### Highlights

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
-const UI_BUILD_VERSION = "0.9.4";
+const UI_BUILD_VERSION = "0.9.5";
 
 const logoSrc = `./logo.png?v=${encodeURIComponent(__LOGO_CACHE_BUST__)}`;
 
@@ -433,6 +433,8 @@ export default function App() {
   const [settings, setSettings] = useState<SettingsDto | null>(null);
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
   const [launchAtStartup, setLaunchAtStartup] = useState(false);
+  /** Сообщение хоста: тип запуска службы — Automatic (null = ещё не приходило). */
+  const [autostartServiceBootAuto, setAutostartServiceBootAuto] = useState<boolean | null>(null);
 
   const [jobName, setJobName] = useState("");
   const [jobType, setJobType] = useState<"file" | "msSql">("file");
@@ -736,6 +738,11 @@ export default function App() {
         const data = JSON.parse(ev.data);
         if (data?.action === "autostart" && typeof data.enabled === "boolean") {
           setLaunchAtStartup(data.enabled);
+          if (typeof data.serviceBootAuto === "boolean") {
+            setAutostartServiceBootAuto(data.serviceBootAuto);
+          } else {
+            setAutostartServiceBootAuto(null);
+          }
         }
         if (data?.action === "pickedFile" && typeof data.path === "string") {
           setFileSource(data.path);
@@ -2193,9 +2200,16 @@ export default function App() {
             Запускать AriaSignature при входе в Windows
           </label>
           <p className="hint">
-            Включает панель в трее (реестр текущего пользователя) и тип запуска службы «Автоматически»; при снятии —
-            «Вручную». Изменение службы требует подтверждения UAC.
+            Панель в трее сохраняется в реестре текущего пользователя сразу. Тип запуска службы «Автоматически» / «Вручную»
+            задаётся после подтверждения UAC. Если UAC отменить, панель всё равно может запускаться при входе, а службу
+            можно проверить в services.msc.
           </p>
+          {launchAtStartup && autostartServiceBootAuto === false ? (
+            <p className="hint warn">
+              Служба AriaSignatureService не в режиме «Автоматически». Включите флажок ещё раз и подтвердите UAC или
+              измените тип запуска вручную в services.msc.
+            </p>
+          ) : null}
         </section>
       )}
 

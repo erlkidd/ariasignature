@@ -1,11 +1,12 @@
 using System.Diagnostics;
 using System.IO;
 using System.ServiceProcess;
+using System.Text.Json;
 
 namespace AriaSignature.UI.Services;
 
 /// <summary>
-/// Синхронизирует автозапуск службы Windows с настройкой «при входе в Windows» в UI.
+/// Автозапуск панели (HKCU Run) и тип запуска службы Windows (sc config, UAC).
 /// </summary>
 public static class WindowsServiceAutostartConfigurator
 {
@@ -27,10 +28,41 @@ public static class WindowsServiceAutostartConfigurator
     }
 
     /// <summary>
-    /// И панель в трее (HKCU Run), и тип запуска службы — автоматически.
+    /// Включает или выключает автозапуск: сначала реестр пользователя, затем тип запуска службы (UAC).
+    /// Запись Run применяется сразу; при ошибке <c>sc config</c> панель всё равно может стартовать при входе.
     /// </summary>
-    public static bool IsFullAutostartEnabled(StartupRegistrationService startup) =>
-        startup.IsEnabled() && IsBootStartAutomatic();
+    /// <param name="serviceConfigWarning">Не null, если не удалось изменить тип запуска службы.</param>
+    public static void ApplyAutostart(bool enabled, StartupRegistrationService startup, out string? serviceConfigWarning)
+    {
+        serviceConfigWarning = null;
+        if (enabled)
+        {
+            startup.SetEnabled(true);
+            if (!TrySetBootStartAutomatic(true, out var err))
+            {
+                serviceConfigWarning = err;
+            }
+        }
+        else
+        {
+            startup.SetEnabled(false);
+            if (!TrySetBootStartAutomatic(false, out var err))
+            {
+                serviceConfigWarning = err;
+            }
+        }
+    }
+
+    /// <summary>
+    /// JSON для WebView2: чекбокс по факту HKCU Run; <c>serviceBootAuto</c> для подсказки о службе.
+    /// </summary>
+    public static string SerializeAutostartWebMessage(StartupRegistrationService startup) =>
+        JsonSerializer.Serialize(new
+        {
+            action = "autostart",
+            enabled = startup.IsEnabled(),
+            serviceBootAuto = IsBootStartAutomatic()
+        });
 
     /// <summary>
     /// Изменяет тип запуска службы. Требует подтверждения UAC.
@@ -96,17 +128,6 @@ public static class WindowsServiceAutostartConfigurator
             return false;
         }
 
-        return true;
-    }
-
-    public static bool TryApplyFullAutostart(bool enabled, StartupRegistrationService startup, out string? error)
-    {
-        if (!TrySetBootStartAutomatic(enabled, out error))
-        {
-            return false;
-        }
-
-        startup.SetEnabled(enabled);
         return true;
     }
 }

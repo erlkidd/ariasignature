@@ -239,12 +239,8 @@ public partial class MainWindow : Window
                 return;
             }
 
-            var payload = JsonSerializer.Serialize(new
-            {
-                action = "autostart",
-                enabled = WindowsServiceAutostartConfigurator.IsFullAutostartEnabled(_startup)
-            });
-            Browser.CoreWebView2.PostWebMessageAsString(payload);
+            Browser.CoreWebView2.PostWebMessageAsString(
+                WindowsServiceAutostartConfigurator.SerializeAutostartWebMessage(_startup));
         }
         catch
         {
@@ -434,15 +430,17 @@ public partial class MainWindow : Window
             if (action == "setAutostart" && root.TryGetProperty("enabled", out var en))
             {
                 var want = en.GetBoolean();
-                if (!WindowsServiceAutostartConfigurator.TryApplyFullAutostart(want, _startup, out var autostartErr))
+                WindowsServiceAutostartConfigurator.ApplyAutostart(want, _startup, out var serviceWarn);
+                if (!string.IsNullOrEmpty(serviceWarn))
                 {
                     System.Windows.MessageBox.Show(
-                        autostartErr ?? "Не удалось изменить автозапуск службы и панели.",
+                        serviceWarn,
                         "AriaSignature",
                         MessageBoxButton.OK,
                         MessageBoxImage.Warning);
                 }
-                else if (want)
+
+                if (want)
                 {
                     var serviceExePath = Path.GetFullPath(
                         Path.Combine(AppContext.BaseDirectory, "..", "service", "AriaSignature.Service.exe"));
@@ -453,21 +451,13 @@ public partial class MainWindow : Window
                     }
                 }
 
-                var payload = JsonSerializer.Serialize(new
-                {
-                    action = "autostart",
-                    enabled = WindowsServiceAutostartConfigurator.IsFullAutostartEnabled(_startup)
-                });
-                Browser.CoreWebView2?.PostWebMessageAsString(payload);
+                Browser.CoreWebView2?.PostWebMessageAsString(
+                    WindowsServiceAutostartConfigurator.SerializeAutostartWebMessage(_startup));
             }
             else if (action == "getAutostart")
             {
-                var payload = JsonSerializer.Serialize(new
-                {
-                    action = "autostart",
-                    enabled = WindowsServiceAutostartConfigurator.IsFullAutostartEnabled(_startup)
-                });
-                Browser.CoreWebView2?.PostWebMessageAsString(payload);
+                Browser.CoreWebView2?.PostWebMessageAsString(
+                    WindowsServiceAutostartConfigurator.SerializeAutostartWebMessage(_startup));
             }
             else if (action == "getWindowsServiceStatus")
             {
