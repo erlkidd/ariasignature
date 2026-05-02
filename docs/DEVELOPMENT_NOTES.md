@@ -1,5 +1,15 @@
 # AriaSignature — журнал разработки
 
+## Release 0.9.6
+
+### Highlights
+
+- Релиз **0.9.6**: автозапуск панели в настройках без UAC; общий ярлык в Startup всегда.
+
+### Documentation sync
+
+- Документы синхронизированы по версии `0.9.6`.
+
 ## Release 0.9.5
 
 ### Highlights

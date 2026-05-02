@@ -430,15 +430,7 @@ public partial class MainWindow : Window
             if (action == "setAutostart" && root.TryGetProperty("enabled", out var en))
             {
                 var want = en.GetBoolean();
-                WindowsServiceAutostartConfigurator.ApplyAutostart(want, _startup, out var serviceWarn);
-                if (!string.IsNullOrEmpty(serviceWarn))
-                {
-                    System.Windows.MessageBox.Show(
-                        serviceWarn,
-                        "AriaSignature",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
-                }
+                WindowsServiceAutostartConfigurator.ApplyAutostart(want, _startup);
 
                 if (want)
                 {

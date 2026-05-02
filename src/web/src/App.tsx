@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
-const UI_BUILD_VERSION = "0.9.5";
+const UI_BUILD_VERSION = "0.9.6";
 
 const logoSrc = `./logo.png?v=${encodeURIComponent(__LOGO_CACHE_BUST__)}`;
 
@@ -2200,14 +2200,14 @@ export default function App() {
             Запускать AriaSignature при входе в Windows
           </label>
           <p className="hint">
-            Панель в трее сохраняется в реестре текущего пользователя сразу. Тип запуска службы «Автоматически» / «Вручную»
-            задаётся после подтверждения UAC. Если UAC отменить, панель всё равно может запускаться при входе, а службу
-            можно проверить в services.msc.
+            Флажок включает или выключает автозапуск панели для вашей учётной записи (настраивает приложение само, без
+            ручного редактирования реестра). Фоновая служба при установке уже получает тип запуска «Автоматически»; из
+            настроек запросов администратора не будет.
           </p>
           {launchAtStartup && autostartServiceBootAuto === false ? (
             <p className="hint warn">
-              Служба AriaSignatureService не в режиме «Автоматически». Включите флажок ещё раз и подтвердите UAC или
-              измените тип запуска вручную в services.msc.
+              Служба AriaSignatureService не в режиме автозапуска (возможно, сбой установки или ручное изменение).
+              Переустановите приложение от имени администратора или обратитесь к администратору ПК.
             </p>
           ) : null}
         </section>

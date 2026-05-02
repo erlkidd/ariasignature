@@ -2,7 +2,7 @@
 ; Build binaries first, then run this script in Inno Setup Compiler.
 
 #define MyAppName "AriaSignature"
-#define MyAppVersion "0.9.5"
+#define MyAppVersion "0.9.6"
 #define MyAppPublisher "AriaSignature"
 #define MyAppExeName "AriaSignature.UI.exe"
 #define MyServiceExeName "AriaSignature.Service.exe"
@@ -40,7 +40,6 @@ russian.StopServiceOnUninstall=Остановка службы AriaSignature
 
 [Tasks]
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Дополнительные задачи:"
-Name: "autostarttray"; Description: "Запускать AriaSignature при входе в Windows (в трее)"; GroupDescription: "Автозапуск:"
 
 [Files]
 Source: "..\..\publish\ui\*"; DestDir: "{app}\ui"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -51,7 +50,7 @@ Source: "..\webview2\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; DestDir: "{t
 [Icons]
 Name: "{group}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; WorkingDir: "{app}\ui"; IconFilename: "{app}\ui\Assets\icon.ico"
 Name: "{autodesktop}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; WorkingDir: "{app}\ui"; Tasks: desktopicon; IconFilename: "{app}\ui\Assets\icon.ico"
-Name: "{commonstartup}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; WorkingDir: "{app}\ui"; Parameters: "--tray"; Tasks: autostarttray; IconFilename: "{app}\ui\Assets\icon.ico"
+Name: "{commonstartup}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; WorkingDir: "{app}\ui"; Parameters: "--tray"; IconFilename: "{app}\ui\Assets\icon.ico"
 
 [Run]
 Filename: "{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Parameters: "/silent /install"; StatusMsg: "Установка Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated skipifsilent; Check: NeedsWebView2Runtime()
@@ -154,15 +153,6 @@ begin
   Result := not IsWebView2InstalledInRoot(HKLM64) and
             not IsWebView2InstalledInRoot(HKLM) and
             not IsWebView2InstalledInRoot(HKCU);
-end;
-
-procedure CurPageChanged(CurPageID: Integer);
-begin
-  { Флаг checked в [Tasks] не поддерживается этой сборкой компилятора — включаем задачу по индексу. }
-  if CurPageID = wpSelectTasks then
-  begin
-    WizardForm.TasksList.Checked[1] := True;
-  end;
 end;
 
 procedure StopAndDeleteServiceBestEffort();
