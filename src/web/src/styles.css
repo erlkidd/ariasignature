@@ -576,14 +576,15 @@ label.check {
   margin-top: 4px;
 }
 
+/* Строка состояния API на вкладке «Архивация»: без отрицательных margin — иначе ломается выравнивание с padding панели */
 .status-bar-effector {
-  margin: 16px -20px -20px;
-  padding: 10px 20px;
-  font-size: 0.85rem;
+  margin: var(--stack-gap) 0 0;
+  padding: 14px 0 0;
+  font-size: var(--font-small);
+  line-height: 1.45;
   color: var(--muted);
-  background: var(--bg);
+  background: transparent;
   border-top: 1px solid var(--border);
-  border-radius: 0 0 13px 13px;
 }
 
 .status-bar-effector.err {
