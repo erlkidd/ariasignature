@@ -1,5 +1,15 @@
 # AriaSignature — журнал разработки
 
+## Release 0.9.3
+
+### Highlights
+
+- Релиз **0.9.3**: автозапуск UI в трее по умолчанию в установщике; `WorkingDir` у ярлыков; файловый лог службы в `%ProgramData%\AriaSignature\logs\`; документация про трей vs сервис.
+
+### Documentation sync
+
+- Документы синхронизированы по версии `0.9.3`.
+
 ## Release 0.9.2
 
 ### Highlights

@@ -1,3 +1,4 @@
+using System.IO;
 using AriaSignature.Application;
 using AriaSignature.Application.Abstractions;
 using AriaSignature.Infrastructure;
@@ -20,10 +21,21 @@ builder.Services.AddWindowsService(options =>
     options.ServiceName = "AriaSignatureService";
 });
 
+var logDir = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+    "AriaSignature",
+    "logs");
+Directory.CreateDirectory(logDir);
+
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
     .WriteTo.Console()
+    .WriteTo.File(
+        Path.Combine(logDir, "service-.log"),
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 14,
+        shared: true)
     .CreateLogger();
 
 builder.Services.AddSerilog();
