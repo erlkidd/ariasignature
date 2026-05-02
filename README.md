@@ -43,7 +43,7 @@
 
 - Windows 10/11 x64 (целевая платформа).
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
-- [Node.js](https://nodejs.org/) (LTS достаточно) для фронтенда.
+- [Node.js](https://nodejs.org/) **20+** (актуальный LTS подходит): сборка SPA генерирует `assets/branding/icon.ico` из **`assets/branding/logo.png`** (единый логотип для интерфейса, exe и установщика).
 - На машине **клиента**, где выполняется архивация в RAR, нужен **WinRAR** с доступным `Rar.exe` (см. [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)); для разработки достаточно собрать решение без установки WinRAR на dev-ПК.
 
 ### Команды

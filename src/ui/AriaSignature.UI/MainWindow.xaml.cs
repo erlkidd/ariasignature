@@ -610,13 +610,26 @@ public partial class MainWindow : Window
 
     private void TrySetWindowIcon()
     {
-        var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "icon.ico");
-        if (!File.Exists(iconPath))
+        var pngPath = Path.Combine(AppContext.BaseDirectory, "Assets", "logo.png");
+        if (!File.Exists(pngPath))
         {
             return;
         }
 
-        Icon = new BitmapImage(new Uri(iconPath, UriKind.Absolute));
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.UriSource = new Uri(Path.GetFullPath(pngPath), UriKind.Absolute);
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.EndInit();
+            bitmap.Freeze();
+            Icon = bitmap;
+        }
+        catch
+        {
+            // ignore
+        }
     }
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)

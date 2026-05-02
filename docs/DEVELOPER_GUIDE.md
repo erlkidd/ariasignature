@@ -86,7 +86,7 @@ Startup-пайплайн оптимизирован под быстрый отк
 - `src/web/src/App.tsx` (константа `UI_BUILD_VERSION`);
 - `docs/API.md`, `docs/USER_GUIDE.md` и при необходимости прочие документы с номером версии в шапке (`INSTALLER.md`, `RELEASE_GATE.md`, `INSTRUCTIONS.md`).
 
-Иконки приложения и установщика: `assets/branding/icon.ico`, `assets/branding/icon.png` (подключение в `src/ui/AriaSignature.UI/AriaSignature.UI.csproj` и `SetupIconFile` в `installer/inno/AriaSignature.iss`).
+Единственный источник графики брендинга: **`assets/branding/logo.png`**. При `npm run build` создаётся **`assets/branding/icon.ico`** (exe, трей, Inno Setup). Подключение: `src/ui/AriaSignature.UI/AriaSignature.UI.csproj`, `installer/inno/AriaSignature.iss` (`SetupIconFile`).
 
 Изменения релиза фиксировать в `docs/DEVELOPMENT_NOTES.md`.
 

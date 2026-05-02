@@ -6,7 +6,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 const webRoot = join(root, "..");
 const repoRoot = join(webRoot, "..", "..");
 const logoSrcPublic = join(webRoot, "public", "logo.png");
-const logoSrcBranding = join(repoRoot, "assets", "branding", "icon.png");
+const logoSrcBranding = join(repoRoot, "assets", "branding", "logo.png");
 const wwwroot = join(webRoot, "..", "service", "AriaSignature.Service", "wwwroot");
 const logoDest = join(wwwroot, "logo.png");
 
@@ -16,6 +16,6 @@ if (existsSync(logoSrcPublic)) {
   copyFileSync(logoSrcBranding, logoDest);
 } else {
   console.warn(
-    "copy-public-assets: skip logo.png — neither src/web/public/logo.png nor assets/branding/icon.png found"
+    "copy-public-assets: skip logo.png — neither src/web/public/logo.png nor assets/branding/logo.png found"
   );
 }
