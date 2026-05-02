@@ -1,4 +1,5 @@
-﻿using System.Threading;
+﻿using System.IO;
+using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
 using Forms = System.Windows.Forms;
@@ -34,6 +35,9 @@ public partial class App : System.Windows.Application
         base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
+        AppendBootLogIfTray(e.Args);
+        EnsureTrayIconShell();
+
         var mainWindow = new MainWindow(this);
         MainWindow = mainWindow;
 
@@ -55,8 +59,30 @@ public partial class App : System.Windows.Application
         {
             mainWindow.Show();
         }
+    }
 
-        InitializeTrayIcon();
+    private static void AppendBootLogIfTray(string[] args)
+    {
+        if (!args.Any(a => string.Equals(a, "--tray", StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        try
+        {
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "AriaSignature",
+                "logs");
+            Directory.CreateDirectory(dir);
+            var argLine = string.Join(" ", args.Select(a => a.Contains(' ', StringComparison.Ordinal) ? $"\"{a}\"" : a));
+            var line = $"{DateTimeOffset.Now:O}\tpid={Environment.ProcessId}\t{argLine}{Environment.NewLine}";
+            File.AppendAllText(Path.Combine(dir, "ui-boot.log"), line);
+        }
+        catch
+        {
+            // ignore
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -87,9 +113,17 @@ public partial class App : System.Windows.Application
         base.OnExit(e);
     }
 
-    private void InitializeTrayIcon()
+    /// <summary>
+    /// Иконка в трее до создания MainWindow/WebView — чтобы процесс был виден при автозапуске.
+    /// </summary>
+    private void EnsureTrayIconShell()
     {
-        var iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "icon.ico");
+        if (_trayIcon is not null)
+        {
+            return;
+        }
+
+        var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "icon.ico");
         _trayDrawingIcon = LoadTrayIcon(iconPath);
 
         var menu = new Forms.ContextMenuStrip();
@@ -104,10 +138,7 @@ public partial class App : System.Windows.Application
             ContextMenuStrip = menu
         };
 
-        _trayIcon.DoubleClick += (_, _) =>
-        {
-            RestoreMainWindow();
-        };
+        _trayIcon.DoubleClick += (_, _) => RestoreMainWindow();
     }
 
     private void RestoreMainWindow()
@@ -151,7 +182,7 @@ public partial class App : System.Windows.Application
     {
         try
         {
-            if (System.IO.File.Exists(iconPath))
+            if (File.Exists(iconPath))
             {
                 return new Drawing.Icon(iconPath);
             }

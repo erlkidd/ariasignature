@@ -2,7 +2,7 @@
 ; Build binaries first, then run this script in Inno Setup Compiler.
 
 #define MyAppName "AriaSignature"
-#define MyAppVersion "0.9.6"
+#define MyAppVersion "0.9.7"
 #define MyAppPublisher "AriaSignature"
 #define MyAppExeName "AriaSignature.UI.exe"
 #define MyServiceExeName "AriaSignature.Service.exe"
@@ -50,7 +50,6 @@ Source: "..\webview2\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; DestDir: "{t
 [Icons]
 Name: "{group}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; WorkingDir: "{app}\ui"; IconFilename: "{app}\ui\Assets\icon.ico"
 Name: "{autodesktop}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; WorkingDir: "{app}\ui"; Tasks: desktopicon; IconFilename: "{app}\ui\Assets\icon.ico"
-Name: "{commonstartup}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; WorkingDir: "{app}\ui"; Parameters: "--tray"; IconFilename: "{app}\ui\Assets\icon.ico"
 
 [Run]
 Filename: "{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Parameters: "/silent /install"; StatusMsg: "Установка Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated skipifsilent; Check: NeedsWebView2Runtime()
@@ -62,6 +61,7 @@ Type: filesandordirs; Name: "{app}"
 
 [Code]
 const
+  TrayTaskName = 'AriaSignatureTrayLogon';
   ServiceName = 'AriaSignatureService';
   SC_ACCEPTABLE_NOT_FOUND = 1060;
   SC_ACCEPTABLE_NOT_ACTIVE = 1062;
@@ -279,6 +279,56 @@ begin
   end;
 end;
 
+function SchTasksExePath: string;
+begin
+  Result := ExpandConstant('{sysnative}\schtasks.exe');
+  if not FileExists(Result) then
+    Result := ExpandConstant('{win}\System32\schtasks.exe');
+end;
+
+procedure RegisterTrayLogonTask();
+var
+  ExitCode: Integer;
+  SchTasks: string;
+  ExeAndArgs: string;
+  Params: string;
+begin
+  SchTasks := SchTasksExePath;
+  if not FileExists(SchTasks) then
+  begin
+    Log('schtasks.exe not found; skip RegisterTrayLogonTask');
+    Exit;
+  end;
+
+  { ONLOGON + 45 s задержка: оболочка и служба успевают подняться до UI в трее }
+  ExeAndArgs := ExpandConstant('{app}\ui\{#MyAppExeName}') + ' --tray';
+  Params := Format('/Create /TN %s /TR %s /SC ONLOGON /DELAY 0000:45 /RL LIMITED /F', [
+    TrayTaskName,
+    AddQuotes(ExeAndArgs)]);
+
+  if Exec(SchTasks, Params, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0) then
+    Log('RegisterTrayLogonTask: OK')
+  else
+    Log(Format('RegisterTrayLogonTask: schtasks exit %d', [ExitCode]));
+end;
+
+procedure DeleteTrayLogonTaskBestEffort();
+var
+  ExitCode: Integer;
+  SchTasks: string;
+begin
+  SchTasks := SchTasksExePath;
+  if not FileExists(SchTasks) then
+    Exit;
+  Exec(SchTasks, Format('/Delete /TN %s /F', [TrayTaskName]), '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+end;
+
+procedure RemoveLegacyCommonStartupShortcutBestEffort();
+begin
+  if DeleteFile(ExpandConstant('{commonstartup}\AriaSignature.lnk')) then
+    Log('Removed legacy common Startup shortcut AriaSignature.lnk');
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
@@ -294,6 +344,8 @@ begin
   if CurStep = ssPostInstall then
   begin
     InstallServiceOrAbort();
+    RegisterTrayLogonTask();
+    RemoveLegacyCommonStartupShortcutBestEffort();
   end;
 end;
 
@@ -301,6 +353,7 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
   begin
+    DeleteTrayLogonTaskBestEffort();
     StopAndDeleteServiceBestEffort();
     KillServiceProcessBestEffort();
   end;

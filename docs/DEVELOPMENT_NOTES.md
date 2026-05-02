@@ -1,5 +1,15 @@
 # AriaSignature — журнал разработки
 
+## Release 0.9.7
+
+### Highlights
+
+- Релиз **0.9.7**: ранний NotifyIcon; задача планировщика при входе с задержкой 45 с; `ui-boot.log`; удаление legacy Startup.lnk.
+
+### Documentation sync
+
+- Документы синхронизированы по версии `0.9.7`.
+
 ## Release 0.9.6
 
 ### Highlights
