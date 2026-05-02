@@ -1,6 +1,6 @@
 # AriaSignature — регламент release-gate
 
-Версия документа: 0.8.5.
+Версия документа: 0.9.0.
 
 ## 1. Цель
 
@@ -56,3 +56,18 @@ Pipeline выполняет:
 - несоответствие версий между артефактами;
 - неуспешные smoke-check сценарии после установки;
 - деградация API-контракта без обновления документации.
+
+## 6. Публикация на GitHub Releases
+
+После успешного gate и коммита с обновлённой версией:
+
+1. Создать аннотированный тег `v{версия}` и отправить ветку и теги на GitHub.
+2. Опубликовать релиз с прикреплённым файлом `artifacts/installer/AriaSignature-Setup.exe`, например через GitHub CLI:
+
+```powershell
+gh release create v0.9.0 --title "AriaSignature 0.9.0" --generate-notes artifacts/installer/AriaSignature-Setup.exe
+```
+
+Замените номер версии и при необходимости добавьте `--notes "…"` или файл с кратким описанием вместо `--generate-notes`. Полный журнал см. в `docs/CHANGELOG.md`.
+
+Либо создайте релиз вручную на странице **Releases** репозитория и загрузите `.exe` как binary attachment.
