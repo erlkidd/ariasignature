@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
-const UI_BUILD_VERSION = "0.9.3";
+const UI_BUILD_VERSION = "0.9.4";
 
 const logoSrc = `./logo.png?v=${encodeURIComponent(__LOGO_CACHE_BUST__)}`;
 
@@ -2180,7 +2180,7 @@ export default function App() {
             </select>
           </label>
 
-          <h2>Автозапуск панели</h2>
+          <h2>Автозапуск при входе в Windows</h2>
           <label className="check">
             <input
               type="checkbox"
@@ -2192,7 +2192,10 @@ export default function App() {
             />
             Запускать AriaSignature при входе в Windows
           </label>
-          <p className="hint">Настройка применяется через оболочку Windows (реестр текущего пользователя).</p>
+          <p className="hint">
+            Включает панель в трее (реестр текущего пользователя) и тип запуска службы «Автоматически»; при снятии —
+            «Вручную». Изменение службы требует подтверждения UAC.
+          </p>
         </section>
       )}
 
