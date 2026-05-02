@@ -674,12 +674,16 @@ export default function App() {
 
   useEffect(() => {
     const initialLoad = async () => {
-      await Promise.all([loadDisks(), refreshJobs(), refreshSettings(), refreshServiceVersion()]);
       try {
-        const l = await apiGet<BackupLog[]>("/backups/logs");
-        setLogs(l);
-      } catch (e) {
-        showErr(e);
+        await Promise.all([loadDisks(), refreshJobs(), refreshSettings(), refreshServiceVersion()]);
+        try {
+          const l = await apiGet<BackupLog[]>("/backups/logs");
+          setLogs(l);
+        } catch (e) {
+          showErr(e);
+        }
+      } finally {
+        postToHost({ action: "appReady" });
       }
     };
     void initialLoad();

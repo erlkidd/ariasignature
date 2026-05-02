@@ -24,8 +24,16 @@ public partial class MainWindow : Window
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(8) };
     private static readonly HttpClient StartupProbeHttp = new() { Timeout = TimeSpan.FromSeconds(2.5) };
     private CancellationTokenSource? _startupRetryCts;
+    private CancellationTokenSource? _appReadyFallbackCts;
     private bool _expectStartupLoadingHtml;
     private string? _deferredServiceStartWarning;
+    private string? _startupBaseUrl;
+    private string? _serviceExePath;
+    private Stopwatch? _startupSw;
+    private bool _startupFlowStarted;
+    private bool _startupWarmupPrepared;
+    private bool _autostartDefaultEnsured;
+    private bool _awaitingAppReady;
 
     public MainWindow(App app)
     {
@@ -34,8 +42,13 @@ public partial class MainWindow : Window
         TrySetWindowIcon();
         SourceInitialized += OnSourceInitialized;
         Loaded += OnLoadedAsync;
+        IsVisibleChanged += (_, _) => TryStartStartupFlowIfVisible();
         Closing += OnClosingToTray;
-        StateChanged += (_, _) => MaxRestoreButton.Content = WindowState == WindowState.Maximized ? "❐" : "□";
+        StateChanged += (_, _) =>
+        {
+            MaxRestoreButton.Content = WindowState == WindowState.Maximized ? "❐" : "□";
+            TryStartStartupFlowIfVisible();
+        };
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
@@ -81,10 +94,10 @@ public partial class MainWindow : Window
 
     private async void OnLoadedAsync(object sender, RoutedEventArgs e)
     {
-        var startupSw = Stopwatch.StartNew();
-        var serviceExePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "service", "AriaSignature.Service.exe"));
+        _startupSw = Stopwatch.StartNew();
+        _serviceExePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "service", "AriaSignature.Service.exe"));
         ShowLoadingOverlay("Проверка адреса API…", "Краткий запрос к локальному сервису…");
-        var baseUrl = await ResolveApiBaseAsync();
+        _startupBaseUrl = await ResolveApiBaseAsync();
 
         ShowLoadingOverlay("Инициализация WebView2…", "При первом запуске это может занять до минуты. Убедитесь, что установлен WebView2 Runtime.");
 
@@ -137,13 +150,10 @@ public partial class MainWindow : Window
                 // ignore
             }
         };
-        Browser.CoreWebView2.NavigationCompleted += (_, navArgs) => OnBrowserNavigationCompleted(navArgs, baseUrl);
-
-        WindowsServiceAutostartConfigurator.EnsureDefaultAutostartApplied(_startup);
-
-        RenderStartupLoadingPage();
-
-        await PollUntilApiReadyAndNavigateAsync(baseUrl, startupSw, serviceExePath);
+        Browser.CoreWebView2.NavigationCompleted += (_, navArgs) =>
+            OnBrowserNavigationCompleted(navArgs, _startupBaseUrl ?? DefaultApiBase);
+        _startupWarmupPrepared = true;
+        TryStartStartupFlowIfVisible();
     }
 
     private void ShowLoadingOverlay(string message, string? hint = null)
@@ -166,6 +176,8 @@ public partial class MainWindow : Window
     {
         if (!e.IsSuccess)
         {
+            _awaitingAppReady = false;
+            CancelAppReadyFallback();
             HideLoadingOverlay();
             _expectStartupLoadingHtml = false;
             RenderFallbackPage(
@@ -182,7 +194,8 @@ public partial class MainWindow : Window
         if (uri.StartsWith("http://127.0.0.1", StringComparison.OrdinalIgnoreCase)
             || uri.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase))
         {
-            HideLoadingOverlay();
+            _awaitingAppReady = true;
+            ScheduleAppReadyFallbackHide();
             _expectStartupLoadingHtml = false;
             TryPostAutostartPayload();
             return;
@@ -197,6 +210,8 @@ public partial class MainWindow : Window
         }
 
         HideLoadingOverlay();
+        _awaitingAppReady = false;
+        CancelAppReadyFallback();
         _expectStartupLoadingHtml = false;
         TryPostAutostartPayload();
     }
@@ -217,6 +232,60 @@ public partial class MainWindow : Window
         {
             // ignore
         }
+    }
+
+    private void TryStartStartupFlowIfVisible()
+    {
+        if (!_startupWarmupPrepared || _startupFlowStarted)
+        {
+            return;
+        }
+
+        if (!IsLoaded || !IsVisible || WindowState == WindowState.Minimized)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_startupBaseUrl) || string.IsNullOrWhiteSpace(_serviceExePath) || _startupSw is null)
+        {
+            return;
+        }
+
+        _startupFlowStarted = true;
+        RenderStartupLoadingPage();
+        _ = PollUntilApiReadyAndNavigateAsync(_startupBaseUrl, _startupSw, _serviceExePath);
+    }
+
+    private void ScheduleAppReadyFallbackHide()
+    {
+        CancelAppReadyFallback();
+        _appReadyFallbackCts = new CancellationTokenSource();
+        var token = _appReadyFallbackCts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(8), token).ConfigureAwait(false);
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    if (_awaitingAppReady)
+                    {
+                        HideLoadingOverlay();
+                    }
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                // ignore cancellation
+            }
+        }, token);
+    }
+
+    private void CancelAppReadyFallback()
+    {
+        _appReadyFallbackCts?.Cancel();
+        _appReadyFallbackCts?.Dispose();
+        _appReadyFallbackCts = null;
     }
 
     private void StartApiRecoveryLoop(string baseUrl)
@@ -250,6 +319,9 @@ public partial class MainWindow : Window
     {
         var loadStart = DateTime.UtcNow;
         _deferredServiceStartWarning = null;
+        ServiceControllerStatus? cachedStatus = null;
+        var nextStatusPollAt = DateTime.MinValue;
+        var lastOverlaySecond = -1;
         var ensureTask = Task.Run(() =>
         {
             WindowsServiceEnsure.TryStartOrFallback(serviceExePath, TimeSpan.FromSeconds(30), out var warning);
@@ -271,7 +343,13 @@ public partial class MainWindow : Window
             }
 
             var elapsed = DateTime.UtcNow - loadStart;
-            var status = await Task.Run(static () => TryGetServiceControllerStatus()).ConfigureAwait(false);
+            if (DateTime.UtcNow >= nextStatusPollAt)
+            {
+                cachedStatus = await Task.Run(static () => TryGetServiceControllerStatus()).ConfigureAwait(false);
+                nextStatusPollAt = DateTime.UtcNow.AddSeconds(2);
+            }
+
+            var status = cachedStatus;
             var ensureDone = ensureTask.IsCompleted;
 
             if (ShouldShowHardStartupFailure(elapsed, status, ensureDone))
@@ -295,14 +373,18 @@ public partial class MainWindow : Window
             }
 
             var sec = (int)elapsed.TotalSeconds;
-            await Dispatcher.InvokeAsync(() =>
+            if (sec != lastOverlaySecond)
             {
-                ShowLoadingOverlay(
-                    "Запуск локального сервиса…",
-                    $"Подождите, поднимается API на этом компьютере… ({sec} с)");
-            });
+                lastOverlaySecond = sec;
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    ShowLoadingOverlay(
+                        "Запуск локального сервиса…",
+                        $"Подождите, поднимается API на этом компьютере… ({sec} с)");
+                });
+            }
 
-            await Task.Delay(450).ConfigureAwait(false);
+            await Task.Delay(850).ConfigureAwait(false);
         }
     }
 
@@ -482,7 +564,19 @@ public partial class MainWindow : Window
             }
 
             var action = actionEl.GetString();
-            if (action == "setAutostart" && root.TryGetProperty("enabled", out var en))
+            if (action == "appReady")
+            {
+                _awaitingAppReady = false;
+                CancelAppReadyFallback();
+                HideLoadingOverlay();
+                if (!_autostartDefaultEnsured)
+                {
+                    _autostartDefaultEnsured = true;
+                    _ = Task.Run(() => WindowsServiceAutostartConfigurator.EnsureDefaultAutostartApplied(_startup));
+                }
+                TryPostAutostartPayload();
+            }
+            else if (action == "setAutostart" && root.TryGetProperty("enabled", out var en))
             {
                 var want = en.GetBoolean();
                 WindowsServiceAutostartConfigurator.ApplyAutostart(want, _startup);
@@ -667,6 +761,7 @@ public partial class MainWindow : Window
     private void OnClosingToTray(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         _startupRetryCts?.Cancel();
+        CancelAppReadyFallback();
         if (!_app.CanCloseToTray())
         {
             return;
@@ -674,6 +769,11 @@ public partial class MainWindow : Window
 
         e.Cancel = true;
         Hide();
+    }
+
+    public void NotifyWindowRestored()
+    {
+        TryStartStartupFlowIfVisible();
     }
 
     private void TrySetWindowIcon()

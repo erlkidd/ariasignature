@@ -2,6 +2,7 @@
 using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
+using System.Threading.Tasks;
 using Forms = System.Windows.Forms;
 using Drawing = System.Drawing;
 
@@ -10,9 +11,12 @@ namespace AriaSignature.UI;
 public partial class App : System.Windows.Application
 {
     private const string SingleInstanceMutexName = @"Local\AriaSignature.UI.SingleInstance.v1";
+    private const string ActivateExistingEventName = @"Local\AriaSignature.UI.Activate.v1";
 
     private Mutex? _singleInstanceMutex;
     private bool _ownsSingleInstanceMutex;
+    private EventWaitHandle? _activateExistingHandle;
+    private CancellationTokenSource? _activateExistingCts;
 
     private Forms.NotifyIcon? _trayIcon;
     private Drawing.Icon? _trayDrawingIcon;
@@ -23,7 +27,7 @@ public partial class App : System.Windows.Application
         _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out var createdNew);
         if (!createdNew)
         {
-            SingleInstanceActivator.TryBringExistingToForeground();
+            SingleInstanceActivator.SignalExistingInstance(ActivateExistingEventName);
             _singleInstanceMutex.Dispose();
             _singleInstanceMutex = null;
             Shutdown();
@@ -31,6 +35,9 @@ public partial class App : System.Windows.Application
         }
 
         _ownsSingleInstanceMutex = true;
+        _activateExistingHandle = new EventWaitHandle(false, EventResetMode.AutoReset, ActivateExistingEventName);
+        _activateExistingCts = new CancellationTokenSource();
+        StartExternalActivationPump();
 
         base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -83,6 +90,16 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        if (_activateExistingCts is not null)
+        {
+            _activateExistingCts.Cancel();
+            _activateExistingCts.Dispose();
+            _activateExistingCts = null;
+        }
+
+        _activateExistingHandle?.Dispose();
+        _activateExistingHandle = null;
+
         if (_trayIcon is not null)
         {
             _trayIcon.Visible = false;
@@ -172,6 +189,10 @@ public partial class App : System.Windows.Application
         }
 
         window.Activate();
+        if (window is MainWindow mainWindow)
+        {
+            mainWindow.NotifyWindowRestored();
+        }
     }
 
     private static Drawing.Icon LoadTrayIcon(string iconPath)
@@ -201,5 +222,35 @@ public partial class App : System.Windows.Application
         _isExitRequested = true;
         MainWindow?.Close();
         Shutdown();
+    }
+
+    private void StartExternalActivationPump()
+    {
+        if (_activateExistingHandle is null || _activateExistingCts is null)
+        {
+            return;
+        }
+
+        var handle = _activateExistingHandle;
+        var token = _activateExistingCts.Token;
+        _ = Task.Run(() =>
+        {
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    if (!handle.WaitOne(1000))
+                    {
+                        continue;
+                    }
+
+                    _ = Dispatcher.BeginInvoke(() => RestoreMainWindow(), DispatcherPriority.ApplicationIdle);
+                }
+                catch
+                {
+                    // best-effort: restore signaling should not crash UI process
+                }
+            }
+        }, token);
     }
 }
