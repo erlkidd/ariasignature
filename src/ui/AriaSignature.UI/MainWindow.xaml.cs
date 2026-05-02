@@ -9,6 +9,7 @@ using System.Windows;
 using System.Windows.Media.Imaging;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Threading;
 using AriaSignature.UI.Services;
 using Microsoft.Web.WebView2.Core;
 
@@ -32,8 +33,8 @@ public partial class MainWindow : Window
     private Stopwatch? _startupSw;
     private bool _startupFlowStarted;
     private bool _startupWarmupPrepared;
-    private bool _autostartDefaultEnsured;
     private bool _awaitingAppReady;
+    private string? _pendingLocalApiNavigation;
 
     public MainWindow(App app)
     {
@@ -150,9 +151,17 @@ public partial class MainWindow : Window
                 // ignore
             }
         };
+        Browser.CoreWebView2.NavigationStarting += (_, navArgs) =>
+        {
+            if (IsLocalApiUrl(navArgs.Uri, _startupBaseUrl ?? DefaultApiBase))
+            {
+                _pendingLocalApiNavigation = navArgs.Uri;
+            }
+        };
         Browser.CoreWebView2.NavigationCompleted += (_, navArgs) =>
             OnBrowserNavigationCompleted(navArgs, _startupBaseUrl ?? DefaultApiBase);
         _startupWarmupPrepared = true;
+        _ = Task.Run(() => WindowsServiceAutostartConfigurator.EnsureDefaultAutostartApplied(_startup));
         TryStartStartupFlowIfVisible();
     }
 
@@ -176,6 +185,23 @@ public partial class MainWindow : Window
     {
         if (!e.IsSuccess)
         {
+            var failedNavSource = Browser.CoreWebView2?.Source ?? string.Empty;
+            var elapsedSinceUiLoad = _startupSw?.Elapsed ?? TimeSpan.Zero;
+            var status = TryGetServiceControllerStatus();
+            if (IsAttemptedLocalApiNavigation(failedNavSource, baseUrl)
+                && IsTransientWebNavError(e.WebErrorStatus)
+                && !ShouldShowHardStartupFailure(elapsedSinceUiLoad, status, serviceEnsureCompleted: true))
+            {
+                _awaitingAppReady = false;
+                CancelAppReadyFallback();
+                _expectStartupLoadingHtml = false;
+                ShowLoadingOverlay(
+                    "Подключение к сервису…",
+                    $"Временный обрыв связи с API, повторяем… ({(int)elapsedSinceUiLoad.TotalSeconds} с)");
+                StartApiRecoveryLoop(baseUrl);
+                return;
+            }
+
             _awaitingAppReady = false;
             CancelAppReadyFallback();
             HideLoadingOverlay();
@@ -194,6 +220,7 @@ public partial class MainWindow : Window
         if (uri.StartsWith("http://127.0.0.1", StringComparison.OrdinalIgnoreCase)
             || uri.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase))
         {
+            _pendingLocalApiNavigation = null;
             _awaitingAppReady = true;
             ScheduleAppReadyFallbackHide();
             _expectStartupLoadingHtml = false;
@@ -304,9 +331,8 @@ public partial class MainWindow : Window
                     await Dispatcher.InvokeAsync(() =>
                     {
                         _expectStartupLoadingHtml = false;
-                        HideLoadingOverlay();
                         Browser.Source = new Uri($"{baseUrl.TrimEnd('/')}/");
-                    });
+                    }, DispatcherPriority.Background);
                     return;
                 }
 
@@ -336,9 +362,8 @@ public partial class MainWindow : Window
                 await Dispatcher.InvokeAsync(() =>
                 {
                     _expectStartupLoadingHtml = false;
-                    HideLoadingOverlay();
                     Browser.Source = new Uri($"{baseUrl.TrimEnd('/')}/");
-                });
+                }, DispatcherPriority.Background);
                 return;
             }
 
@@ -368,7 +393,7 @@ public partial class MainWindow : Window
                         detail,
                         $"Ожидание: {elapsed.TotalSeconds:F0} с · служба: {FormatServiceStatus(status)} · с момента открытия панели: {startupSw.Elapsed.TotalSeconds:F0} с");
                     StartApiRecoveryLoop(baseUrl);
-                });
+                }, DispatcherPriority.Background);
                 return;
             }
 
@@ -381,7 +406,7 @@ public partial class MainWindow : Window
                     ShowLoadingOverlay(
                         "Запуск локального сервиса…",
                         $"Подождите, поднимается API на этом компьютере… ({sec} с)");
-                });
+                }, DispatcherPriority.Background);
             }
 
             await Task.Delay(850).ConfigureAwait(false);
@@ -434,6 +459,44 @@ public partial class MainWindow : Window
 
         return false;
     }
+
+    private bool IsAttemptedLocalApiNavigation(string? currentSource, string baseUrl) =>
+        IsLocalApiUrl(_pendingLocalApiNavigation, baseUrl) || IsLocalApiUrl(currentSource, baseUrl);
+
+    private static bool IsLocalApiUrl(string? uri, string baseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(uri))
+        {
+            return false;
+        }
+
+        if (!Uri.TryCreate(uri, UriKind.Absolute, out var parsed))
+        {
+            return false;
+        }
+
+        if (!Uri.TryCreate($"{baseUrl.TrimEnd('/')}/", UriKind.Absolute, out var baseParsed))
+        {
+            return false;
+        }
+
+        var host = parsed.Host.Trim();
+        if (!string.Equals(host, "127.0.0.1", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return parsed.Port == baseParsed.Port;
+    }
+
+    private static bool IsTransientWebNavError(CoreWebView2WebErrorStatus status) =>
+        status is CoreWebView2WebErrorStatus.ConnectionAborted
+            or CoreWebView2WebErrorStatus.ConnectionReset
+            or CoreWebView2WebErrorStatus.CannotConnect
+            or CoreWebView2WebErrorStatus.Disconnected
+            or CoreWebView2WebErrorStatus.OperationCanceled
+            or CoreWebView2WebErrorStatus.Timeout;
 
     private static async Task<(bool Ready, string Detail)> TryProbeApiOnceAsync(string baseUrl)
     {
@@ -569,11 +632,6 @@ public partial class MainWindow : Window
                 _awaitingAppReady = false;
                 CancelAppReadyFallback();
                 HideLoadingOverlay();
-                if (!_autostartDefaultEnsured)
-                {
-                    _autostartDefaultEnsured = true;
-                    _ = Task.Run(() => WindowsServiceAutostartConfigurator.EnsureDefaultAutostartApplied(_startup));
-                }
                 TryPostAutostartPayload();
             }
             else if (action == "setAutostart" && root.TryGetProperty("enabled", out var en))
