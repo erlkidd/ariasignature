@@ -4,7 +4,7 @@
 
 Формат основан на категориях: `Added`, `Changed`, `Fixed`, `Docs`.
 
-## [Unreleased]
+## [1.0.0] - 2026-05-02
 
 ### Added
 
@@ -12,10 +12,16 @@
 - Настройки SQLite/UI: `apiBind`, `apiSharedSecret`; опциональная проверка `Authorization: Bearer` / `X-Aria-Api-Key` для запросов не с loopback.
 - API: middleware авторизации; теги Swagger (`Service`, `System`, `Disks`, `Backups`, `Settings`); описание `GET /system` как соответствие вкладке «О системе».
 - Установщик: правило брандмауэра Windows для входящего **TCP 5160** (и удаление при деинсталляции).
+- Интеграционные тесты для `GET /system` и `GET /settings`; скрипт `scripts/api-http-smoke.ps1` для локальной HTTP-проверки.
+
+### Changed
+
+- UI: подписи в настройках — «токен для удалённого API»; текст про заголовки `Authorization` / `X-Aria-Api-Key` без отдельного пояснения про локальную панель.
+- Версия продукта **1.0.0** (сборки .NET, установщик Inno Setup, SPA).
 
 ### Docs
 
-- `README.md`, `API.md`, `USER_GUIDE.md`, `INSTRUCTIONS.md`, `INSTALLER.md`: сценарий централизованного опроса по IP/VPN, секрет, брандмауэр.
+- `README.md`, `API.md`, `USER_GUIDE.md`, `INSTRUCTIONS.md`, `INSTALLER.md`, `DEVELOPER_GUIDE.md`, `RELEASE_GATE`: сценарий централизованного опроса по IP/VPN, брандмауэр; шапки документов **1.0.0**.
 
 ## [0.9.9] - 2026-05-02
 

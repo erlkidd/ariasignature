@@ -49,7 +49,7 @@ public sealed class RemoteApiAuthMiddleware
             type = "https://httpstatuses.com/401",
             title = "Требуется авторизация",
             status = 401,
-            detail = "Укажите заголовок Authorization: Bearer <token> или X-Aria-Api-Key с тем же значением, что в настройках службы (Api:SharedSecret).",
+            detail = "Укажите заголовок Authorization: Bearer <token> или X-Aria-Api-Key с тем же значением, что задано как токен удалённого API в настройках службы.",
         }, cancellationToken: context.RequestAborted).ConfigureAwait(false);
     }
 

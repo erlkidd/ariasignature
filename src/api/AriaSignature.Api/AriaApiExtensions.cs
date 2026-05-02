@@ -35,7 +35,7 @@ public static class AriaApiExtensions
                 BearerFormat = "opaque",
                 In = ParameterLocation.Header,
                 Description =
-                    "При пустом общем секрете в настройках не требуется. Если секрет задан, для запросов не с localhost передайте тот же токен (или заголовок X-Aria-Api-Key).",
+                    "При пустом токене в настройках не требуется. Если токен задан, для запросов не с localhost передайте тот же токен (или заголовок X-Aria-Api-Key).",
             });
             c.AddSecurityRequirement(new OpenApiSecurityRequirement
             {

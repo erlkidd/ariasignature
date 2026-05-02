@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
-const UI_BUILD_VERSION = "0.9.9";
+const UI_BUILD_VERSION = "1.0.0";
 
 const logoSrc = `./logo.png?v=${encodeURIComponent(__LOGO_CACHE_BUST__)}`;
 
@@ -68,7 +68,7 @@ interface SettingsDto {
   apiPort: number;
   /** all — доступ по IP/VPN; loopback — только с этой машины */
   apiBind: string;
-  /** Общий секрет для Authorization: Bearer / X-Aria-Api-Key с других узлов; пусто — без проверки заголовка */
+  /** Токен для Authorization: Bearer / X-Aria-Api-Key с других узлов; пусто — без проверки заголовка */
   apiSharedSecret: string;
   smartMonitoringCron: string;
   note: string;
@@ -1995,7 +1995,7 @@ export default function App() {
             </select>
           </label>
           <label>
-            Общий секрет для удалённого API (необязательно)
+            Токен для удалённого API (опционально)
             <input
               type="text"
               autoComplete="off"
@@ -2026,9 +2026,8 @@ export default function App() {
             </button>
           </div>
           <p className="hint">
-            Если секрет задан, запросы <strong>не с localhost</strong> должны передавать{" "}
-            <span className="mono">Authorization: Bearer &lt;токен&gt;</span> или <span className="mono">X-Aria-Api-Key</span>. Локальная панель
-            заголовки не задаёт.
+            Если токен задан, запросы не с localhost должны передавать{" "}
+            <span className="mono">Authorization: Bearer &lt;токен&gt;</span> или <span className="mono">X-Aria-Api-Key</span>.
           </p>
           <label>
             Обновление дисков
