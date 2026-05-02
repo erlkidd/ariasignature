@@ -22,8 +22,10 @@ public partial class MainWindow : Window
     private readonly App _app;
     private readonly StartupRegistrationService _startup = new();
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(8) };
+    private static readonly HttpClient StartupProbeHttp = new() { Timeout = TimeSpan.FromSeconds(2.5) };
     private CancellationTokenSource? _startupRetryCts;
     private bool _expectStartupLoadingHtml;
+    private string? _deferredServiceStartWarning;
 
     public MainWindow(App app)
     {
@@ -137,42 +139,11 @@ public partial class MainWindow : Window
         };
         Browser.CoreWebView2.NavigationCompleted += (_, navArgs) => OnBrowserNavigationCompleted(navArgs, baseUrl);
 
+        WindowsServiceAutostartConfigurator.EnsureDefaultAutostartApplied(_startup);
+
         RenderStartupLoadingPage();
 
-        // Не блокируем UI на старте: WebView2/fallback должны отрисоваться сразу,
-        // даже если служба запускается долго.
-        _ = Task.Run(() =>
-        {
-            WindowsServiceEnsure.TryStartOrFallback(serviceExePath, TimeSpan.FromSeconds(15), out var warning);
-            if (!string.IsNullOrEmpty(warning))
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    System.Windows.MessageBox.Show(
-                        warning,
-                        "AriaSignature",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
-                });
-            }
-        });
-
-        var (apiReady, apiDetail) = await WaitApiReadyAsync(baseUrl, TimeSpan.FromSeconds(45));
-        if (!apiReady)
-        {
-            RenderFallbackPage(
-                "Сервис еще запускается",
-                "Локальный API пока не готов. Окно не будет пустым: приложение продолжит ожидание и автоматически откроет интерфейс.",
-                baseUrl,
-                null,
-                apiDetail,
-                $"Ожидание API после запуска: {startupSw.Elapsed.TotalSeconds:F0} c");
-            StartApiRecoveryLoop(baseUrl);
-            return;
-        }
-
-        _expectStartupLoadingHtml = false;
-        Browser.Source = new Uri($"{baseUrl.TrimEnd('/')}/");
+        await PollUntilApiReadyAndNavigateAsync(baseUrl, startupSw, serviceExePath);
     }
 
     private void ShowLoadingOverlay(string message, string? hint = null)
@@ -256,35 +227,154 @@ public partial class MainWindow : Window
         var token = _startupRetryCts.Token;
         _ = Task.Run(async () =>
         {
-            var attempts = 0;
             while (!token.IsCancellationRequested)
             {
-                attempts++;
-                var (ready, detail) = await WaitApiReadyAsync(baseUrl, TimeSpan.FromSeconds(3));
+                var (ready, _) = await TryProbeApiOnceAsync(baseUrl).ConfigureAwait(false);
                 if (ready)
                 {
                     await Dispatcher.InvokeAsync(() =>
                     {
                         _expectStartupLoadingHtml = false;
+                        HideLoadingOverlay();
                         Browser.Source = new Uri($"{baseUrl.TrimEnd('/')}/");
                     });
                     return;
                 }
 
+                await Task.Delay(800, token).ConfigureAwait(false);
+            }
+        }, token);
+    }
+
+    private async Task PollUntilApiReadyAndNavigateAsync(string baseUrl, Stopwatch startupSw, string serviceExePath)
+    {
+        var loadStart = DateTime.UtcNow;
+        _deferredServiceStartWarning = null;
+        var ensureTask = Task.Run(() =>
+        {
+            WindowsServiceEnsure.TryStartOrFallback(serviceExePath, TimeSpan.FromSeconds(30), out var warning);
+            _deferredServiceStartWarning = warning;
+        });
+
+        while (true)
+        {
+            var (ready, detail) = await TryProbeApiOnceAsync(baseUrl).ConfigureAwait(false);
+            if (ready)
+            {
                 await Dispatcher.InvokeAsync(() =>
                 {
+                    _expectStartupLoadingHtml = false;
+                    HideLoadingOverlay();
+                    Browser.Source = new Uri($"{baseUrl.TrimEnd('/')}/");
+                });
+                return;
+            }
+
+            var elapsed = DateTime.UtcNow - loadStart;
+            var status = await Task.Run(static () => TryGetServiceControllerStatus()).ConfigureAwait(false);
+            var ensureDone = ensureTask.IsCompleted;
+
+            if (ShouldShowHardStartupFailure(elapsed, status, ensureDone))
+            {
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    _expectStartupLoadingHtml = false;
+                    var warn = string.IsNullOrWhiteSpace(_deferredServiceStartWarning)
+                        ? string.Empty
+                        : " Дополнительно: " + _deferredServiceStartWarning;
                     RenderFallbackPage(
-                        "Сервис еще запускается",
-                        "Локальный API пока не готов. Приложение продолжает автоматическое восстановление.",
+                        "Локальный сервис не отвечает",
+                        "Служба Windows или API на localhost не готовы дольше обычного. Ниже — последняя диагностика опроса; после запуска службы интерфейс откроется сам." + warn,
                         baseUrl,
                         null,
                         detail,
-                        $"Этап: ожидание ответа API, попытка #{attempts}");
+                        $"Ожидание: {elapsed.TotalSeconds:F0} с · служба: {FormatServiceStatus(status)} · с момента открытия панели: {startupSw.Elapsed.TotalSeconds:F0} с");
+                    StartApiRecoveryLoop(baseUrl);
                 });
-
-                await Task.Delay(2000, token);
+                return;
             }
-        }, token);
+
+            var sec = (int)elapsed.TotalSeconds;
+            await Dispatcher.InvokeAsync(() =>
+            {
+                ShowLoadingOverlay(
+                    "Запуск локального сервиса…",
+                    $"Подождите, поднимается API на этом компьютере… ({sec} с)");
+            });
+
+            await Task.Delay(450).ConfigureAwait(false);
+        }
+    }
+
+    private static string FormatServiceStatus(ServiceControllerStatus? status) =>
+        status?.ToString() ?? "не удалось опросить";
+
+    private static ServiceControllerStatus? TryGetServiceControllerStatus()
+    {
+        try
+        {
+            using var sc = new ServiceController(WindowsServiceEnsure.ServiceName);
+            sc.Refresh();
+            return sc.Status;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool ShouldShowHardStartupFailure(TimeSpan elapsed, ServiceControllerStatus? status, bool serviceEnsureCompleted)
+    {
+        if (status == ServiceControllerStatus.StartPending)
+        {
+            return elapsed >= TimeSpan.FromMinutes(4);
+        }
+
+        if (elapsed >= TimeSpan.FromMinutes(4) && status == ServiceControllerStatus.Running)
+        {
+            return true;
+        }
+
+        if (!serviceEnsureCompleted && elapsed < TimeSpan.FromSeconds(75))
+        {
+            return false;
+        }
+
+        if (elapsed >= TimeSpan.FromSeconds(60) && status == ServiceControllerStatus.Stopped)
+        {
+            return true;
+        }
+
+        if (elapsed >= TimeSpan.FromSeconds(120) && !status.HasValue)
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static async Task<(bool Ready, string Detail)> TryProbeApiOnceAsync(string baseUrl)
+    {
+        try
+        {
+            using var statusResponse = await StartupProbeHttp.GetAsync($"{baseUrl.TrimEnd('/')}/api/v1/status").ConfigureAwait(false);
+            if (!statusResponse.IsSuccessStatusCode)
+            {
+                return (false, $"/api/v1/status => {(int)statusResponse.StatusCode}");
+            }
+
+            using var rootResponse = await StartupProbeHttp.GetAsync($"{baseUrl.TrimEnd('/')}/").ConfigureAwait(false);
+            if (rootResponse.IsSuccessStatusCode)
+            {
+                return (true, "ready");
+            }
+
+            return (false, $"/ => {(int)rootResponse.StatusCode}");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
     }
 
     private void RenderStartupLoadingPage()
@@ -341,41 +431,6 @@ public partial class MainWindow : Window
             "<p class=\"muted\">Проверьте службу AriaSignatureService и доступность localhost. " +
             "После восстановления сервиса окно автоматически загрузит интерфейс.</p></body></html>";
         Browser.CoreWebView2.NavigateToString(html);
-    }
-
-    private static async Task<(bool Ready, string Detail)> WaitApiReadyAsync(string baseUrl, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        var lastDetail = "таймаут ожидания API";
-        while (DateTime.UtcNow < deadline)
-        {
-            try
-            {
-                using var statusResponse = await Http.GetAsync($"{baseUrl.TrimEnd('/')}/api/v1/status");
-                if (!statusResponse.IsSuccessStatusCode)
-                {
-                    lastDetail = $"/api/v1/status => {(int)statusResponse.StatusCode}";
-                    await Task.Delay(1000);
-                    continue;
-                }
-
-                using var rootResponse = await Http.GetAsync($"{baseUrl.TrimEnd('/')}/");
-                if (rootResponse.IsSuccessStatusCode)
-                {
-                    return (true, "ready");
-                }
-
-                lastDetail = $"/ => {(int)rootResponse.StatusCode}";
-            }
-            catch (Exception ex)
-            {
-                lastDetail = ex.Message;
-            }
-
-            await Task.Delay(1000);
-        }
-
-        return (false, lastDetail);
     }
 
     private static async Task<string> ResolveApiBaseAsync()

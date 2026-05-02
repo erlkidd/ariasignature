@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
-const UI_BUILD_VERSION = "0.9.8";
+const UI_BUILD_VERSION = "0.9.9";
 
 const logoSrc = `./logo.png?v=${encodeURIComponent(__LOGO_CACHE_BUST__)}`;
 
@@ -432,7 +432,7 @@ export default function App() {
 
   const [settings, setSettings] = useState<SettingsDto | null>(null);
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
-  const [launchAtStartup, setLaunchAtStartup] = useState(false);
+  const [launchAtStartup, setLaunchAtStartup] = useState(true);
   /** Сообщение хоста: тип запуска службы — Automatic (null = ещё не приходило). */
   const [autostartServiceBootAuto, setAutostartServiceBootAuto] = useState<boolean | null>(null);
 

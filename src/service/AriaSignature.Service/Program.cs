@@ -13,7 +13,7 @@ var builder = Host.CreateApplicationBuilder(args);
 var startupStopwatch = Stopwatch.StartNew();
 builder.Services.Configure<HostOptions>(options =>
 {
-    options.ServicesStartConcurrently = false;
+    options.ServicesStartConcurrently = true;
     options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
 });
 builder.Services.AddWindowsService(options =>

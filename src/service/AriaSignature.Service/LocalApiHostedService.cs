@@ -80,7 +80,7 @@ public sealed class LocalApiHostedService : IHostedService
         var fallback = _configuration.GetValue<int?>("Api:Port") ?? 5160;
         try
         {
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
             await using var scope = _serviceProvider.CreateAsyncScope();
             var settings = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
