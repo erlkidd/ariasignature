@@ -116,3 +116,8 @@ Release-gate выполняет:
 - сборку Inno Setup installer.
 
 Артефакт: `artifacts/installer/AriaSignature-Setup.exe`.
+
+## 10. Ветки Git
+
+- **Основная линия релиза:** `production`. Актуальные изменения попадают в прод через merge/fast-forward с рабочих веток (`test/agent-work`, `test/remote-network-api` и т.п.), затем push на настроенные remotes.
+- **Архивная ветка** `test/agent-work-legacy-pre-opt` (в т.ч. на `old-origin`): исторический снимок, **не сливается** в `production` и **не удаляется** — оставлена для справки. Все прочие неархивные ветки при выкатке приводятся к состоянию `production`.
