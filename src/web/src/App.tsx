@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
-const UI_BUILD_VERSION = "0.2.8";
+const UI_BUILD_VERSION = "0.2.9";
 
 type DiskRow = {
   id: string;
@@ -902,7 +902,7 @@ export default function App() {
         smartMonitoringCron: smartCronPreview,
       });
       setSettings({ ...settings, smartMonitoringCron: smartCronPreview });
-      setStatus("Настройки записаны. При смене порта перезапустите службу.");
+      setStatus("Настройки записаны. Расписание обновления дисков применено сразу. При смене порта перезапустите службу.");
     } catch (e) {
       showErr(e);
     }

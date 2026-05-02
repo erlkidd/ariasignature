@@ -1,4 +1,5 @@
 using AriaSignature.Application;
+using AriaSignature.Application.Abstractions;
 using AriaSignature.Infrastructure;
 using AriaSignature.Service.Jobs;
 using Quartz;
@@ -30,9 +31,10 @@ builder.Services.AddApplication();
 builder.Services.AddInfrastructure();
 builder.Services.AddHostedService<LocalApiHostedService>();
 builder.Services.AddHostedService<DatabaseInitializationHostedService>();
-builder.Services.AddHostedService<TelemetryWarmupHostedService>();
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddHostedService<BackupSchedulerHostedService>();
+builder.Services.AddSingleton<ISmartRefreshCronApplier, QuartzSmartRefreshCronApplier>();
+builder.Services.AddHostedService<SmartMonitoringCronSyncHostedService>();
 builder.Services.AddQuartz(options =>
 {
     var jobKey = new JobKey("smart-refresh-job");

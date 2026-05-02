@@ -123,20 +123,26 @@ public sealed class BackupExecutor : IBackupExecutor
     {
         for (Exception? current = ex; current != null; current = current.InnerException)
         {
-            if (current is not IOException io)
+            if (current is IOException io && IsFileSharingViolation(io))
             {
-                continue;
-            }
-
-            var m = io.Message ?? "";
-            if (m.Contains("being used by another process", StringComparison.OrdinalIgnoreCase)
-                || m.Contains("The process cannot access the file", StringComparison.OrdinalIgnoreCase))
-            {
-                return "файл занят другим процессом или недоступен; повторите позже";
+                return "файл занят другим процессом; повторите позже";
             }
         }
 
         return ex.Message;
+    }
+
+    private static bool IsFileSharingViolation(IOException io)
+    {
+        // ERROR_SHARING_VIOLATION 32, HRESULT 0x80070020
+        if ((io.HResult & 0xFFFF) == 0x20 || io.HResult == unchecked((int)0x80070020))
+        {
+            return true;
+        }
+
+        var m = io.Message ?? "";
+        return m.Contains("being used by another process", StringComparison.OrdinalIgnoreCase)
+               || m.Contains("используется другим процессом", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void ApplyRetention(string directory, string patternPrefix, string extension, int retentionCount)

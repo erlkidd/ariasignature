@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using AriaSignature.Application.Abstractions;
+using Microsoft.Extensions.Logging;
 using AriaSignature.Api.Contracts;
 using AriaSignature.Domain.Entities;
 using AriaSignature.Domain.Enums;
@@ -24,6 +25,7 @@ public static class AriaApiExtensions
         services.AddProblemDetails();
         services.AddEndpointsApiExplorer();
         services.AddSwaggerGen();
+        services.AddSingleton<ISmartRefreshCronApplier, NoOpSmartRefreshCronApplier>();
         return services;
     }
 
@@ -74,15 +76,22 @@ public static class AriaApiExtensions
             {
                 apiPort = port,
                 smartMonitoringCron = cron,
-                note = "Изменение порта API вступает в силу после перезапуска службы AriaSignatureService. Расписание обновления дисков обновляется при следующем перезапуске службы."
+                note = "Изменение порта API вступает в силу после перезапуска службы AriaSignatureService."
             });
         })
         .WithName("GetSettings")
         .WithOpenApi();
 
-        api.MapPut("/settings", async (UpdateAppSettingsRequest body, IAppSettingsService settings, CancellationToken cancellationToken) =>
+        api.MapPut("/settings", async (
+            UpdateAppSettingsRequest body,
+            IAppSettingsService settings,
+            ISmartRefreshCronApplier cronApplier,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
         {
             var errors = new Dictionary<string, string[]>();
+            var log = loggerFactory.CreateLogger("SettingsUpdate");
+
             if (body.ApiPort is int ap)
             {
                 if (ap is < 1 or > 65535)
@@ -104,6 +113,14 @@ public static class AriaApiExtensions
                 else
                 {
                     await settings.SetAsync("SmartMonitoring:Cron", cron, cancellationToken);
+                    try
+                    {
+                        await cronApplier.ApplyCronAsync(cron, cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        log.LogWarning(ex, "Не удалось перепланировать триггер обновления дисков в Quartz; значение сохранено в базе");
+                    }
                 }
             }
 

@@ -49,6 +49,8 @@ public sealed class LocalApiHostedService : IHostedService
         webBuilder.Services.AddApplication();
         webBuilder.Services.AddInfrastructure();
         webBuilder.Services.AddAriaApi();
+        var cronApplier = _serviceProvider.GetRequiredService<ISmartRefreshCronApplier>();
+        webBuilder.Services.AddSingleton<ISmartRefreshCronApplier>(cronApplier);
 
         _webApp = webBuilder.Build();
         _webApp.UseAriaApi();
