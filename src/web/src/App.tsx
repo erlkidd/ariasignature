@@ -1903,7 +1903,7 @@ export default function App() {
             </p>
             <p className="muted">
               Лицензия:{" "}
-              <a href="https://github.com/erlkidd/AriaSignature/LICENSE" target="_blank" rel="noreferrer">
+              <a href="https://github.com/erlkidd/ariasignature/blob/production/LICENSE" target="_blank" rel="noreferrer">
                 MIT
               </a>{" "}
               — свободное использование с сохранением уведомления об авторских правах.

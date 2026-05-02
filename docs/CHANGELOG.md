@@ -13,7 +13,7 @@
 ### Changed
 
 - Версия продукта **0.9.1** (сборки .NET, установщик Inno Setup, SPA, константа UI).
-- Ссылка «MIT» на странице «О системе» ведёт на `https://github.com/erlkidd/AriaSignature/LICENSE`.
+- Ссылка «MIT» на странице «О системе» ведёт на `https://github.com/erlkidd/ariasignature/blob/production/LICENSE`.
 
 ### Docs
 
