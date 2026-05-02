@@ -1,5 +1,15 @@
 # AriaSignature — журнал разработки
 
+## Release 0.9.2
+
+### Highlights
+
+- Релиз **0.9.2**: устранено «залипание» старого логотипа в WebView (кэш HTTP + надёжное копирование `wwwroot` в publish).
+
+### Documentation sync
+
+- Документы синхронизированы по версии `0.9.2`.
+
 ## Release 0.9.1
 
 ### Highlights

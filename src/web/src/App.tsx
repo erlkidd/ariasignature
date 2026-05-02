@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
-const UI_BUILD_VERSION = "0.9.1";
+const UI_BUILD_VERSION = "0.9.2";
+
+const logoSrc = `./logo.png?v=${encodeURIComponent(__LOGO_CACHE_BUST__)}`;
 
 type DiskRow = {
   id: string;
@@ -1103,7 +1105,7 @@ export default function App() {
     <div className="app">
       <header className="header">
         <div className="header-brand">
-          <img className="app-logo" src="./logo.png" width={72} height={72} alt="" />
+          <img className="app-logo" src={logoSrc} width={72} height={72} alt="" />
           <div className="header-titles">
             <h1>AriaSignature</h1>
             <p className="subtitle">
@@ -1893,7 +1895,7 @@ export default function App() {
       {tab === "about" && (
         <section className="panel about-page">
           <div className="about-brand">
-            <img className="about-logo" src="./logo.png" width={120} height={120} alt="" />
+            <img className="about-logo" src={logoSrc} width={120} height={120} alt="" />
             <h2>AriaSignature</h2>
             <p className="hint">Локальная панель для мониторинга дисков и резервного копирования баз 1С.</p>
             <p>

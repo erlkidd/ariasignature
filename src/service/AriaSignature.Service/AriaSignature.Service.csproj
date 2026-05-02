@@ -17,7 +17,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- Always: чтобы установщик и publish всегда подтягивали свежую SPA после npm run build (PreserveNewest иногда оставляет старый logo.png). -->
+    <Content Include="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
   </ItemGroup>
 
   <ItemGroup>

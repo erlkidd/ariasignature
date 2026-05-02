@@ -433,9 +433,25 @@ public static class AriaApiExtensions
         var provider = new PhysicalFileProvider(webRoot);
         app.Environment.WebRootFileProvider = provider;
 
+        static void DisableAggressiveCachingForLocalUi(StaticFileResponseContext ctx)
+        {
+            // Панель открывается в WebView2 по localhost; без этого браузер долго держит старый logo.png/favicon после обновления.
+            ctx.Context.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+            ctx.Context.Response.Headers.Pragma = "no-cache";
+            ctx.Context.Response.Headers.Expires = "0";
+        }
+
         app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = provider });
-        app.UseStaticFiles(new StaticFileOptions { FileProvider = provider });
-        app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = provider });
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            FileProvider = provider,
+            OnPrepareResponse = DisableAggressiveCachingForLocalUi
+        });
+        app.MapFallbackToFile("index.html", new StaticFileOptions
+        {
+            FileProvider = provider,
+            OnPrepareResponse = DisableAggressiveCachingForLocalUi
+        });
     }
 
     private static async Task<Dictionary<string, string[]>?> ValidateBackupRequestAsync(
