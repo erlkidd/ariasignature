@@ -41,19 +41,15 @@ public partial class App : System.Windows.Application
         var mainWindow = new MainWindow(this);
         MainWindow = mainWindow;
 
+        // --tray: не вызывать Hide() и не манипулировать Opacity между Show — это ломает рендер WebView2 (чёрный экран).
+        // Достаточно минимизировать окно без панели задач; при «Закрыть в трей» сработает существующий Hide().
         var startInTray = e.Args.Any(arg => string.Equals(arg, "--tray", StringComparison.OrdinalIgnoreCase));
         if (startInTray)
         {
             mainWindow.ShowInTaskbar = false;
             mainWindow.WindowState = WindowState.Minimized;
             mainWindow.ShowActivated = false;
-            mainWindow.Opacity = 0;
             mainWindow.Show();
-            mainWindow.Hide();
-            mainWindow.Opacity = 1;
-            mainWindow.WindowState = WindowState.Normal;
-            mainWindow.ShowActivated = true;
-            mainWindow.ShowInTaskbar = true;
         }
         else
         {

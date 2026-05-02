@@ -1,6 +1,6 @@
 # AriaSignature — регламент release-gate
 
-Версия документа: 0.9.7.
+Версия документа: 0.9.8.
 
 ## 1. Цель
 
@@ -46,7 +46,7 @@ Pipeline выполняет:
 - `POST /api/v1/disks/refresh` возвращает срез;
 - создание и запуск backup-задачи проходят штатно;
 - записи появляются в `/api/v1/backups/logs`;
-- после перезагрузки ОС служба запускается автоматически;
+- после перезагрузки ОС служба запускается автоматически; панель UI появляется в трее (ярлык в автозагрузке пользователя и/или задача планировщика);
 - uninstall корректно удаляет службу и компоненты.
 
 ## 5. Критерии блокировки релиза
@@ -65,7 +65,7 @@ Pipeline выполняет:
 2. Опубликовать релиз с прикреплённым файлом `artifacts/installer/AriaSignature-Setup.exe`, например через GitHub CLI:
 
 ```powershell
-gh release create v0.9.7 --title "AriaSignature 0.9.7" --generate-notes artifacts/installer/AriaSignature-Setup.exe
+gh release create v0.9.8 --title "AriaSignature 0.9.8" --generate-notes artifacts/installer/AriaSignature-Setup.exe
 ```
 
 Замените номер версии и при необходимости добавьте `--notes "…"` или файл с кратким описанием вместо `--generate-notes`. Полный журнал см. в `docs/CHANGELOG.md`.

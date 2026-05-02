@@ -1,5 +1,15 @@
 # AriaSignature — журнал разработки
 
+## Release 0.9.8
+
+### Highlights
+
+- Релиз **0.9.8**: ярлык автозагрузки пользователя (`shell:startup`) с `--tray`; задача планировщика с `/IT` и `/RU` + fallback.
+
+### Documentation sync
+
+- Документы синхронизированы по версии `0.9.8`.
+
 ## Release 0.9.7
 
 ### Highlights

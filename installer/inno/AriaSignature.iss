@@ -2,7 +2,7 @@
 ; Build binaries first, then run this script in Inno Setup Compiler.
 
 #define MyAppName "AriaSignature"
-#define MyAppVersion "0.9.7"
+#define MyAppVersion "0.9.8"
 #define MyAppPublisher "AriaSignature"
 #define MyAppExeName "AriaSignature.UI.exe"
 #define MyServiceExeName "AriaSignature.Service.exe"
@@ -50,6 +50,8 @@ Source: "..\webview2\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; DestDir: "{t
 [Icons]
 Name: "{group}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; WorkingDir: "{app}\ui"; IconFilename: "{app}\ui\Assets\icon.ico"
 Name: "{autodesktop}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; WorkingDir: "{app}\ui"; Tasks: desktopicon; IconFilename: "{app}\ui\Assets\icon.ico"
+; Автозапуск UI при входе: папка автозагрузки профиля (надёжнее, чем одна только schtasks от админа).
+Name: "{userstartup}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Parameters: "--tray"; WorkingDir: "{app}\ui"; IconFilename: "{app}\ui\Assets\icon.ico"
 
 [Run]
 Filename: "{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Parameters: "/silent /install"; StatusMsg: "Установка Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated skipifsilent; Check: NeedsWebView2Runtime()
@@ -286,12 +288,32 @@ begin
     Result := ExpandConstant('{win}\System32\schtasks.exe');
 end;
 
+function SchTasksInteractiveUserRu: string;
+var
+  Domain: string;
+  User: string;
+begin
+  User := Trim(GetEnv('USERNAME'));
+  if User = '' then
+  begin
+    Result := '';
+    Exit;
+  end;
+
+  Domain := Trim(GetEnv('USERDOMAIN'));
+  if Domain <> '' then
+    Result := Domain + '\' + User
+  else
+    Result := User;
+end;
+
 procedure RegisterTrayLogonTask();
 var
   ExitCode: Integer;
   SchTasks: string;
   ExeAndArgs: string;
   Params: string;
+  Ru: string;
 begin
   SchTasks := SchTasksExePath;
   if not FileExists(SchTasks) then
@@ -300,16 +322,35 @@ begin
     Exit;
   end;
 
-  { ONLOGON + 45 s задержка: оболочка и служба успевают подняться до UI в трее }
+  { Запасной старт через ~45 с после входа: /IT — в интерактивной сессии; /RU — привязка к пользователю, установившему приложение. }
   ExeAndArgs := ExpandConstant('{app}\ui\{#MyAppExeName}') + ' --tray';
-  Params := Format('/Create /TN %s /TR %s /SC ONLOGON /DELAY 0000:45 /RL LIMITED /F', [
+  Ru := SchTasksInteractiveUserRu;
+  if Ru <> '' then
+    Params := Format('/Create /TN %s /TR %s /SC ONLOGON /DELAY 0000:45 /RL LIMITED /RU %s /IT /F', [
+      TrayTaskName,
+      AddQuotes(ExeAndArgs),
+      AddQuotes(Ru)])
+  else
+    Params := Format('/Create /TN %s /TR %s /SC ONLOGON /DELAY 0000:45 /RL LIMITED /IT /F', [
+      TrayTaskName,
+      AddQuotes(ExeAndArgs)]);
+
+  if Exec(SchTasks, Params, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0) then
+  begin
+    Log('RegisterTrayLogonTask: OK');
+    Exit;
+  end;
+
+  Log(Format('RegisterTrayLogonTask: schtasks exit %d (retry without /RU)', [ExitCode]));
+
+  Params := Format('/Create /TN %s /TR %s /SC ONLOGON /DELAY 0000:45 /RL LIMITED /IT /F', [
     TrayTaskName,
     AddQuotes(ExeAndArgs)]);
 
   if Exec(SchTasks, Params, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0) then
-    Log('RegisterTrayLogonTask: OK')
+    Log('RegisterTrayLogonTask: OK (fallback without /RU)')
   else
-    Log(Format('RegisterTrayLogonTask: schtasks exit %d', [ExitCode]));
+    Log(Format('RegisterTrayLogonTask: schtasks fallback exit %d — используется ярлык user Startup', [ExitCode]));
 end;
 
 procedure DeleteTrayLogonTaskBestEffort();
