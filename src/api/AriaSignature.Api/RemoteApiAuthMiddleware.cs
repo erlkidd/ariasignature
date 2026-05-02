@@ -22,8 +22,8 @@ public sealed class RemoteApiAuthMiddleware
 
         await using var scope = scopeFactory.CreateAsyncScope();
         var settings = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-        var secret = (await settings.GetAsync(AppSettingsApiKeys.SharedSecret, context.RequestAborted).ConfigureAwait(false))?.Trim() ?? string.Empty;
-        if (string.IsNullOrEmpty(secret))
+        var apiToken = (await settings.GetAsync(AppSettingsApiKeys.SharedSecret, context.RequestAborted).ConfigureAwait(false))?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(apiToken))
         {
             await _next(context).ConfigureAwait(false);
             return;
@@ -35,7 +35,7 @@ public sealed class RemoteApiAuthMiddleware
             return;
         }
 
-        if (TryValidateSecret(secret, context.Request))
+        if (TryValidateApiToken(apiToken, context.Request))
         {
             await _next(context).ConfigureAwait(false);
             return;
@@ -74,7 +74,7 @@ public sealed class RemoteApiAuthMiddleware
         return false;
     }
 
-    private static bool TryValidateSecret(string expected, HttpRequest request)
+    private static bool TryValidateApiToken(string expected, HttpRequest request)
     {
         if (request.Headers.TryGetValue("X-Aria-Api-Key", out var headerKey))
         {

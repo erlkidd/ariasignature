@@ -112,7 +112,7 @@ public static class AriaApiExtensions
                 apiSharedSecret,
                 smartMonitoringCron = cron,
                 note =
-                    "Смена порта или режима привязки API (localhost / все интерфейсы) вступает в силу после перезапуска службы AriaSignatureService. Общий секрет и расписания применяются сразу после сохранения.",
+                    "Смена порта или режима привязки API (localhost / все интерфейсы) вступает в силу после перезапуска службы AriaSignatureService. Токен удалённого API и расписания применяются сразу после сохранения.",
                 outboundSyncEnabled = outboundEnabled,
                 outboundSyncUrl = outboundUrl,
                 outboundSyncCron = outboundCron,

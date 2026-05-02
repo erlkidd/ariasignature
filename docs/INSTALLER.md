@@ -82,7 +82,7 @@ dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj 
 - служба `AriaSignatureService` существует и запущена;
 - UI открывается без ошибки WebView2;
 - API доступен на `http://127.0.0.1:{port}/api/v1/status`;
-- при необходимости с другой машины в VPN: `http://<IP_агента>:{port}/api/v1/status` (и с заголовком авторизации, если задан общий секрет в настройках);
+- при необходимости с другой машины в VPN: `http://<IP_агента>:{port}/api/v1/status` (и с заголовком авторизации, если задан токен в настройках);
 - low-level SMART канал активен (в логах сервиса есть строка про `smartctl` либо метрики дисков показывают температуру/health, когда поддерживается устройством);
 - в `{app}\service\smartctl` присутствуют `smartctl.exe` и `drivedb.h` с ненулевым размером;
 - создание и запуск backup-задачи выполняются успешно;

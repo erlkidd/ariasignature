@@ -64,7 +64,7 @@ public sealed class ApiEndpointsTests : IClassFixture<TestWebApplicationFactory>
         Assert.True(root.TryGetProperty("apiBind", out var bind) &&
                     (string.Equals(bind.GetString(), "all", StringComparison.OrdinalIgnoreCase) ||
                      string.Equals(bind.GetString(), "loopback", StringComparison.OrdinalIgnoreCase)));
-        Assert.True(root.TryGetProperty("apiSharedSecret", out var secret) && secret.ValueKind == JsonValueKind.String);
+        Assert.True(root.TryGetProperty("apiSharedSecret", out var tokenField) && tokenField.ValueKind == JsonValueKind.String);
         Assert.True(root.TryGetProperty("smartMonitoringCron", out var cron) && !string.IsNullOrWhiteSpace(cron.GetString()));
     }
 
