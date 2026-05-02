@@ -1,6 +1,6 @@
 # AriaSignature — руководство разработчика
 
-Версия документа: 0.2.9.
+Версия документа: 0.7.0.
 
 ## 1. Цель и принцип работы
 
@@ -56,7 +56,14 @@ AriaSignature реализует `service-first` модель:
 - журналирование;
 - валидация входных параметров и окружения.
 
-## 5. UI и host-взаимодействие
+## 5. Снимок системы и исходящая синхронизация
+
+- `ISystemInfoService`: Windows — `WindowsSystemInfoService` (WMI `Win32_OperatingSystem`, `Win32_ComputerSystem`, `Win32_Processor`, `Win32_VideoController` + активные адреса `NetworkInterface`); иначе — `NoopSystemInfoService`.
+- Ключи настроек SQLite: `OutboundSync:Enabled`, `OutboundSync:Url`, `OutboundSync:Cron`, `OutboundSync:BearerToken`, `OutboundSync:CustomHeaderName`, `OutboundSync:CustomHeaderValue` (дефолты задаются в `SqliteDatabaseInitializer`).
+- Quartz: job `outbound-sync-job`, триггер `outbound-sync-trigger`, перепланирование через `IOutboundSyncCronApplier` / `QuartzOutboundSyncCronApplier`; после старта — `OutboundSyncCronSyncHostedService` подтягивает cron из БД.
+- Реализация отправки: `OutboundSyncJob`, именованный `HttpClient` `AriaOutboundSync`, payload `OutboundTelemetryPayload` (JSON).
+
+## 6. UI и host-взаимодействие
 
 - SPA (`src/web`) отображает данные из API сервиса и инициирует локальные операторские действия.
 - WPF host реализует:
@@ -70,7 +77,7 @@ AriaSignature реализует `service-first` модель:
 UI выходит из fallback-экрана только после подтверждения готовности API-контуров (`/api/v1/status` и `/`).
 Startup-пайплайн оптимизирован под быстрый отклик: API поднимается в ранней фазе, а длительная SQLite-инициализация выполняется в background-фазе с таймаутом и telemetry-логированием.
 
-## 6. Версионирование (обязательная синхронизация)
+## 7. Версионирование (обязательная синхронизация)
 
 При изменении версии обновлять одним коммитом:
 - `Directory.Build.props`;
@@ -80,7 +87,7 @@ Startup-пайплайн оптимизирован под быстрый отк
 
 Изменения релиза фиксировать в `docs/DEVELOPMENT_NOTES.md`.
 
-## 7. Стандарты документации
+## 8. Стандарты документации
 
 Обязательные требования:
 - документация обновляется вместе с изменением контракта/поведения;
@@ -93,7 +100,7 @@ Startup-пайплайн оптимизирован под быстрый отк
 - техническая реализация/процесс (`DEVELOPER_GUIDE.md`, при необходимости `INSTALLER.md`, `RELEASE_GATE.md`);
 - запись в `DEVELOPMENT_NOTES.md` и `CHANGELOG.md`.
 
-## 8. Сборка и проверка
+## 9. Сборка и проверка
 
 Основной gate:
 - `.\scripts\release-gate.ps1`

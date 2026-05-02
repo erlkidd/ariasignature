@@ -335,7 +335,13 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
     private static async Task SeedDefaultSettingsAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
         await UpsertSettingIfMissingAsync(connection, "Api:Port", "5160", cancellationToken);
-        await UpsertSettingIfMissingAsync(connection, "SmartMonitoring:Cron", "0 */1 * * * ?", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, "SmartMonitoring:Cron", "0 0 * * * ?", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, "OutboundSync:Enabled", "false", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, "OutboundSync:Url", "", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, "OutboundSync:Cron", "0 0/30 * * * ?", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, "OutboundSync:BearerToken", "", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, "OutboundSync:CustomHeaderName", "", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, "OutboundSync:CustomHeaderValue", "", cancellationToken);
     }
 
     private static async Task UpsertSettingIfMissingAsync(

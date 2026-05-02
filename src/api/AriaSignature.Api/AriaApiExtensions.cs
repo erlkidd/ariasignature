@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AriaSignature.Application;
 using AriaSignature.Application.Abstractions;
 using Microsoft.Extensions.Logging;
 using AriaSignature.Api.Contracts;
@@ -26,6 +27,7 @@ public static class AriaApiExtensions
         services.AddEndpointsApiExplorer();
         services.AddSwaggerGen();
         services.AddSingleton<ISmartRefreshCronApplier, NoOpSmartRefreshCronApplier>();
+        services.AddSingleton<IOutboundSyncCronApplier, NoOpOutboundSyncCronApplier>();
         return services;
     }
 
@@ -71,26 +73,75 @@ public static class AriaApiExtensions
             var dict = await settings.GetAllAsync(cancellationToken);
             var portStr = dict.GetValueOrDefault("Api:Port");
             var port = int.TryParse(portStr, out var p) ? p : configuration.GetValue("Api:Port", 5160);
-            var cron = dict.GetValueOrDefault("SmartMonitoring:Cron") ?? configuration.GetValue<string>("SmartMonitoring:Cron") ?? "0 */1 * * * ?";
+            var cron = dict.GetValueOrDefault("SmartMonitoring:Cron") ?? configuration.GetValue<string>("SmartMonitoring:Cron") ?? "0 0 * * * ?";
+            var outboundEnabled = ParseBool(dict.GetValueOrDefault(AppSettingsOutboundKeys.Enabled));
+            var outboundUrl = dict.GetValueOrDefault(AppSettingsOutboundKeys.Url) ?? string.Empty;
+            var outboundCron = dict.GetValueOrDefault(AppSettingsOutboundKeys.Cron)
+                ?? configuration.GetValue<string>("OutboundSync:Cron")
+                ?? "0 0/30 * * * ?";
+            var bearerStored = dict.GetValueOrDefault(AppSettingsOutboundKeys.BearerToken);
+            var customHeaderName = dict.GetValueOrDefault(AppSettingsOutboundKeys.CustomHeaderName) ?? string.Empty;
+            var customHeaderValueStored = dict.GetValueOrDefault(AppSettingsOutboundKeys.CustomHeaderValue);
             return Results.Ok(new
             {
                 apiPort = port,
                 smartMonitoringCron = cron,
-                note = "Изменение порта API вступает в силу после перезапуска службы AriaSignatureService."
+                note = "Изменение порта API вступает в силу после перезапуска службы AriaSignatureService.",
+                outboundSyncEnabled = outboundEnabled,
+                outboundSyncUrl = outboundUrl,
+                outboundSyncCron = outboundCron,
+                outboundBearerToken = string.IsNullOrEmpty(bearerStored) ? null : AppSettingsOutboundKeys.SecretMaskedSentinel,
+                outboundCustomHeaderName = customHeaderName,
+                outboundCustomHeaderValue = string.IsNullOrEmpty(customHeaderValueStored) ? null : AppSettingsOutboundKeys.SecretMaskedSentinel,
             });
         })
         .WithName("GetSettings")
         .WithOpenApi();
 
+        api.MapGet("/system", async (ISystemInfoService systemInfo, CancellationToken cancellationToken) =>
+            Results.Ok(await systemInfo.GetSnapshotAsync(cancellationToken)))
+            .WithName("GetSystemInfo")
+            .WithOpenApi();
+
         api.MapPut("/settings", async (
             UpdateAppSettingsRequest body,
             IAppSettingsService settings,
             ISmartRefreshCronApplier cronApplier,
+            IOutboundSyncCronApplier outboundCronApplier,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             var errors = new Dictionary<string, string[]>();
             var log = loggerFactory.CreateLogger("SettingsUpdate");
+
+            var dict = await settings.GetAllAsync(cancellationToken);
+            var curOutboundEnabled = ParseBool(dict.GetValueOrDefault(AppSettingsOutboundKeys.Enabled));
+            var curOutboundUrl = dict.GetValueOrDefault(AppSettingsOutboundKeys.Url)?.Trim() ?? string.Empty;
+
+            var nextOutboundEnabled = body.OutboundSyncEnabled ?? curOutboundEnabled;
+            var nextOutboundUrl = body.OutboundSyncUrl != null ? body.OutboundSyncUrl.Trim() : curOutboundUrl;
+
+            if (nextOutboundEnabled && string.IsNullOrWhiteSpace(nextOutboundUrl))
+            {
+                errors["outboundSyncUrl"] = ["При включённой синхронизации укажите полный URL (http/https)."];
+            }
+
+            if (body.OutboundSyncUrl is { Length: > 0 } rawUrl && !string.IsNullOrWhiteSpace(rawUrl))
+            {
+                if (!Uri.TryCreate(rawUrl.Trim(), UriKind.Absolute, out var uri) ||
+                    (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+                {
+                    errors["outboundSyncUrl"] = ["URL должен быть абсолютным адресом со схемой http или https."];
+                }
+            }
+
+            if (body.OutboundSyncCron is { } outboundCronRaw)
+            {
+                if (!CronExpression.IsValidExpression(outboundCronRaw.Trim()))
+                {
+                    errors["outboundSyncCron"] = ["Некорректное cron-выражение (Quartz)."];
+                }
+            }
 
             if (body.ApiPort is int ap)
             {
@@ -121,6 +172,56 @@ public static class AriaApiExtensions
                     {
                         log.LogWarning(ex, "Не удалось перепланировать триггер обновления дисков в Quartz; значение сохранено в базе");
                     }
+                }
+            }
+
+            var blockOutboundUrl = errors.ContainsKey("outboundSyncUrl");
+            var blockOutboundCron = errors.ContainsKey("outboundSyncCron");
+
+            if (!blockOutboundUrl && body.OutboundSyncEnabled is { } obEn)
+            {
+                await settings.SetAsync(AppSettingsOutboundKeys.Enabled, obEn ? "true" : "false", cancellationToken);
+            }
+
+            if (!blockOutboundUrl && body.OutboundSyncUrl is not null)
+            {
+                await settings.SetAsync(AppSettingsOutboundKeys.Url, body.OutboundSyncUrl.Trim(), cancellationToken);
+            }
+
+            if (!blockOutboundCron &&
+                body.OutboundSyncCron is { } outboundCron &&
+                CronExpression.IsValidExpression(outboundCron.Trim()))
+            {
+                var trimmed = outboundCron.Trim();
+                await settings.SetAsync(AppSettingsOutboundKeys.Cron, trimmed, cancellationToken);
+                try
+                {
+                    await outboundCronApplier.ApplyCronAsync(trimmed, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    log.LogWarning(ex, "Не удалось перепланировать исходящую синхронизацию в Quartz; значение сохранено в базе");
+                }
+            }
+
+            if (body.OutboundBearerToken is not null)
+            {
+                if (body.OutboundBearerToken != AppSettingsOutboundKeys.SecretMaskedSentinel)
+                {
+                    await settings.SetAsync(AppSettingsOutboundKeys.BearerToken, body.OutboundBearerToken.Trim(), cancellationToken);
+                }
+            }
+
+            if (body.OutboundCustomHeaderName is not null)
+            {
+                await settings.SetAsync(AppSettingsOutboundKeys.CustomHeaderName, body.OutboundCustomHeaderName.Trim(), cancellationToken);
+            }
+
+            if (body.OutboundCustomHeaderValue is not null)
+            {
+                if (body.OutboundCustomHeaderValue != AppSettingsOutboundKeys.SecretMaskedSentinel)
+                {
+                    await settings.SetAsync(AppSettingsOutboundKeys.CustomHeaderValue, body.OutboundCustomHeaderValue.Trim(), cancellationToken);
                 }
             }
 
@@ -323,6 +424,9 @@ public static class AriaApiExtensions
 
         return app;
     }
+
+    private static bool ParseBool(string? value) =>
+        bool.TryParse(value, out var b) && b;
 
     private static bool IsUnchangedFileSourceOnUpdate(string requestSource, BackupJob? existingForUpdate)
     {

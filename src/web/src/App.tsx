@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
-const UI_BUILD_VERSION = "0.2.9";
+const UI_BUILD_VERSION = "0.7.0";
+const SETTINGS_SECRET_SENTINEL = "***";
 
 type DiskRow = {
   id: string;
@@ -66,6 +67,33 @@ interface SettingsDto {
   apiPort: number;
   smartMonitoringCron: string;
   note: string;
+  outboundSyncEnabled: boolean;
+  outboundSyncUrl: string;
+  outboundSyncCron: string;
+  outboundBearerToken: string | null;
+  outboundCustomHeaderName: string;
+  outboundCustomHeaderValue: string | null;
+}
+
+interface NetworkAddressInfoDto {
+  interfaceDescription?: string | null;
+  address: string;
+  family: string;
+}
+
+interface SystemInfoDto {
+  collectedAtUtc: string;
+  agentVersion: string;
+  hostName: string;
+  dnsHostName?: string | null;
+  networkAddresses: NetworkAddressInfoDto[];
+  osCaption?: string | null;
+  osVersion?: string | null;
+  processorName?: string | null;
+  logicalProcessors?: number | null;
+  totalRamBytes?: number | null;
+  availableRamBytes?: number | null;
+  videoControllers: string[];
 }
 
 interface ServiceStatusDto {
@@ -128,21 +156,45 @@ function formatTelemetrySource(d: DiskRow): string {
 function parseSmartCron(cron: string): { mode: SmartScheduleMode; intervalMin: number; hour: number; minute: number } {
   const parts = cron.trim().split(/\s+/).filter(Boolean);
   if (parts.length >= 6) {
+    const sec = parts[0] ?? "";
     const minuteRaw = parts[1] ?? "";
     const hourRaw = parts[2] ?? "";
     const dayRaw = parts[3] ?? "";
     const monthRaw = parts[4] ?? "";
     const dowRaw = parts[5] ?? "";
 
+    // Каждый час (верх часа): 0 0 * * * ?
+    if (sec === "0" && minuteRaw === "0" && hourRaw === "*" && dayRaw === "*" && monthRaw === "*" && dowRaw === "?") {
+      return { mode: "interval", intervalMin: 60, hour: 2, minute: 0 };
+    }
+
+    // Каждые N минут: 0 0/N * * * ?
+    const slashStartMin = minuteRaw.match(/^0\/(\d{1,2})$/);
+    if (
+      sec === "0" &&
+      slashStartMin &&
+      hourRaw === "*" &&
+      dayRaw === "*" &&
+      monthRaw === "*" &&
+      dowRaw === "?"
+    ) {
+      const n = Number(slashStartMin[1]);
+      if (n >= 1 && n <= 59) {
+        return { mode: "interval", intervalMin: n, hour: 2, minute: 0 };
+      }
+    }
+
+    // Устаревший вид минутного поля */N (в т.ч. минутный шаг из старых версий)
     const stepMatch = minuteRaw.match(/^\*\/(\d{1,2})$/);
     if (hourRaw === "*" && dayRaw === "*" && monthRaw === "*" && dowRaw === "?" && stepMatch) {
       const intervalMin = Number(stepMatch[1]);
-      if ([5, 10, 15, 30, 60].includes(intervalMin)) {
+      if (intervalMin >= 1 && intervalMin <= 59) {
         return { mode: "interval", intervalMin, hour: 2, minute: 0 };
       }
     }
 
-    if (dayRaw === "*" && monthRaw === "*" && dowRaw === "?") {
+    // Ежедневно: числовые минута и час
+    if (dayRaw === "*" && monthRaw === "*" && dowRaw === "?" && hourRaw !== "*") {
       const minute = Number(minuteRaw);
       const hour = Number(hourRaw);
       if (Number.isFinite(minute) && Number.isFinite(hour) && minute >= 0 && minute <= 59 && hour >= 0 && hour <= 23) {
@@ -156,7 +208,11 @@ function parseSmartCron(cron: string): { mode: SmartScheduleMode; intervalMin: n
 
 function buildSmartCron(mode: SmartScheduleMode, intervalMin: number, hour: number, minute: number, customCron: string): string {
   if (mode === "interval") {
-    return `0 */${intervalMin} * * * ?`;
+    const n = Math.max(1, Math.floor(intervalMin));
+    if (n >= 60) {
+      return "0 0 * * * ?";
+    }
+    return `0 0/${n} * * * ?`;
   }
   if (mode === "daily") {
     return `0 ${minute} ${hour} * * ?`;
@@ -247,16 +303,36 @@ function jobTypeLabel(t: string): string {
 }
 
 function formatBackupLogStatus(status: string): string {
-  switch ((status ?? "").trim().toLowerCase()) {
+  const raw = (status ?? "").trim();
+  const s = raw.toLowerCase().replace(/\s+/g, "");
+  switch (s) {
     case "succeeded":
+    case "success":
       return "Успех";
     case "failed":
+    case "failure":
       return "Ошибка";
     case "running":
     case "inprogress":
       return "Выполняется";
-    default:
-      return status || "—";
+    case "pending":
+      return "Ожидает";
+    case "0":
+      return "Ожидает";
+    case "1":
+      return "Выполняется";
+    case "2":
+      return "Успех";
+    case "3":
+      return "Ошибка";
+    case "cancelled":
+    case "canceled":
+      return "Отменено";
+    default: {
+      if (!s) return "—";
+      if (/[а-яё]/i.test(raw)) return raw;
+      return "Неизвестно";
+    }
   }
 }
 
@@ -334,7 +410,7 @@ type WindowsServiceStatus = {
 
 export default function App() {
   const smartPageSize = 5;
-  const [tab, setTab] = useState<"disks" | "backup" | "settings" | "about">("disks");
+  const [tab, setTab] = useState<"system" | "disks" | "backup" | "settings" | "about">("disks");
   const [theme, setTheme] = useState<"light" | "dark">(() =>
     localStorage.getItem("aria-theme") === "dark" ? "dark" : "light"
   );
@@ -350,7 +426,7 @@ export default function App() {
   const [logs, setLogs] = useState<BackupLog[]>([]);
   const [logFilterStatus, setLogFilterStatus] = useState("");
   const [selectedJob, setSelectedJob] = useState<BackupJob | null>(null);
-  const [runningJobId, setRunningJobId] = useState<string | null>(null);
+  const [runningJobIds, setRunningJobIds] = useState<Record<string, boolean>>({});
   const [backupTopTab, setBackupTopTab] = useState<"configure" | "active">("configure");
   const [backupPageTab, setBackupPageTab] = useState<"tasks" | "history" | "new">("tasks");
   const [svcLine, setSvcLine] = useState("");
@@ -383,7 +459,13 @@ export default function App() {
   const [smartIntervalMin, setSmartIntervalMin] = useState(60);
   const [smartHour, setSmartHour] = useState(2);
   const [smartMinute, setSmartMinute] = useState(0);
-  const [smartCustomCron, setSmartCustomCron] = useState("0 */60 * * * ?");
+  const [smartCustomCron, setSmartCustomCron] = useState("0 0 * * * ?");
+
+  const [systemInfo, setSystemInfo] = useState<SystemInfoDto | null>(null);
+  const [outboundBearerDraft, setOutboundBearerDraft] = useState("");
+  const [outboundBearerDirty, setOutboundBearerDirty] = useState(false);
+  const [outboundCustomHeaderValueDraft, setOutboundCustomHeaderValueDraft] = useState("");
+  const [outboundCustomHeaderValueDirty, setOutboundCustomHeaderValueDirty] = useState(false);
 
   const cronValue = useMemo(() => {
     if (useAdvancedCron && advancedCron.trim()) return advancedCron.trim();
@@ -391,8 +473,11 @@ export default function App() {
   }, [useAdvancedCron, advancedCron, preset, schHour, schMinute, schDow, schDom]);
 
   const backupJobsDisplayed = useMemo(
-    () => (backupTopTab === "active" ? jobs.filter((j) => j.isEnabled) : jobs),
-    [backupTopTab, jobs]
+    () =>
+      backupTopTab === "active"
+        ? jobs.filter((j) => j.isEnabled || Boolean(runningJobIds[j.id]))
+        : jobs,
+    [backupTopTab, jobs, runningJobIds]
   );
 
   const lastLogByJobId = useMemo(() => {
@@ -539,7 +624,15 @@ export default function App() {
     setError(null);
     try {
       const s = await apiGet<SettingsDto>("/settings");
-      setSettings(s);
+      setSettings({
+        ...s,
+        outboundSyncEnabled: Boolean(s.outboundSyncEnabled),
+        outboundSyncUrl: s.outboundSyncUrl ?? "",
+        outboundSyncCron: s.outboundSyncCron ?? "0 0/30 * * * ?",
+        outboundCustomHeaderName: s.outboundCustomHeaderName ?? "",
+        outboundBearerToken: s.outboundBearerToken ?? null,
+        outboundCustomHeaderValue: s.outboundCustomHeaderValue ?? null,
+      });
     } catch (e) {
       showErr(e);
     }
@@ -557,6 +650,29 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    if (tab !== "system") {
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      setError(null);
+      try {
+        const s = await apiGet<SystemInfoDto>("/system");
+        if (!cancelled) setSystemInfo(s);
+      } catch (e) {
+        if (!cancelled) {
+          const pretty = toFriendlyError(e);
+          setError(pretty.message);
+        }
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab]);
 
   useEffect(() => {
     const initialLoad = async () => {
@@ -666,6 +782,9 @@ export default function App() {
     () => buildSmartCron(smartScheduleMode, smartIntervalMin, smartHour, smartMinute, smartCustomCron),
     [smartScheduleMode, smartIntervalMin, smartHour, smartMinute, smartCustomCron]
   );
+
+  const savedSmartCron = useMemo(() => (settings?.smartMonitoringCron ?? "").trim(), [settings?.smartMonitoringCron]);
+  const smartCronMatchesSaved = savedSmartCron === smartCronPreview.trim();
 
   const totalSmartPages = useMemo(
     () => Math.max(1, Math.ceil(smart.length / smartPageSize)),
@@ -842,7 +961,7 @@ export default function App() {
 
   const runJob = async (id: string) => {
     setError(null);
-    setRunningJobId(id);
+    setRunningJobIds((prev) => ({ ...prev, [id]: true }));
     try {
       const log = await apiSend<BackupLog>(`/backups/${id}/run`, "POST");
       await refreshLogs();
@@ -856,7 +975,11 @@ export default function App() {
     } catch (e) {
       showErr(e);
     } finally {
-      setRunningJobId(null);
+      setRunningJobIds((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
     }
   };
 
@@ -897,12 +1020,29 @@ export default function App() {
     if (!settings) return;
     setError(null);
     try {
-      await apiSend("/settings", "PUT", {
+      const body: Record<string, unknown> = {
         apiPort: settings.apiPort,
         smartMonitoringCron: smartCronPreview,
-      });
-      setSettings({ ...settings, smartMonitoringCron: smartCronPreview });
-      setStatus("Настройки записаны. Расписание обновления дисков применено сразу. При смене порта перезапустите службу.");
+        outboundSyncEnabled: settings.outboundSyncEnabled,
+        outboundSyncUrl: settings.outboundSyncUrl,
+        outboundSyncCron: settings.outboundSyncCron,
+        outboundCustomHeaderName: settings.outboundCustomHeaderName,
+      };
+      if (outboundBearerDirty) {
+        body.outboundBearerToken = outboundBearerDraft;
+      }
+      if (outboundCustomHeaderValueDirty) {
+        body.outboundCustomHeaderValue = outboundCustomHeaderValueDraft;
+      }
+      await apiSend("/settings", "PUT", body);
+      await refreshSettings();
+      setOutboundBearerDirty(false);
+      setOutboundBearerDraft("");
+      setOutboundCustomHeaderValueDirty(false);
+      setOutboundCustomHeaderValueDraft("");
+      setStatus(
+        "Настройки записаны. Расписание обновления дисков и исходящей синхронизации применено сразу. При смене порта перезапустите службу."
+      );
     } catch (e) {
       showErr(e);
     }
@@ -969,6 +1109,9 @@ export default function App() {
           </div>
         </div>
         <nav className="tabs">
+          <button className={tab === "system" ? "active" : ""} onClick={() => setTab("system")}>
+            О системе
+          </button>
           <button className={tab === "disks" ? "active" : ""} onClick={() => setTab("disks")}>
             Диски
           </button>
@@ -1001,6 +1144,98 @@ export default function App() {
             Скрыть
           </button>
         </div>
+      )}
+
+      {tab === "system" && (
+        <section className="panel">
+          <div className="toolbar">
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                void (async () => {
+                  try {
+                    const s = await apiGet<SystemInfoDto>("/system");
+                    setSystemInfo(s);
+                    setStatus("Данные о системе обновлены.");
+                  } catch (e) {
+                    showErr(e);
+                  }
+                })();
+              }}
+            >
+              Обновить
+            </button>
+          </div>
+          {!systemInfo && <p className="muted">Загрузка…</p>}
+          {systemInfo && (
+            <>
+              <h2>Компьютер и ОС</h2>
+              <dl className="kv">
+                <dt>Имя хоста</dt>
+                <dd>{systemInfo.hostName}</dd>
+                <dt>DNS host name</dt>
+                <dd>{systemInfo.dnsHostName?.trim() || "—"}</dd>
+                <dt>ОС</dt>
+                <dd>{systemInfo.osCaption?.trim() || "—"}</dd>
+                <dt>Версия ОС</dt>
+                <dd>{systemInfo.osVersion?.trim() || "—"}</dd>
+                <dt>Версия агента</dt>
+                <dd>{systemInfo.agentVersion}</dd>
+                <dt>Снимок (UTC)</dt>
+                <dd className="mono small">{systemInfo.collectedAtUtc}</dd>
+              </dl>
+              <h2>Процессор и память</h2>
+              <dl className="kv">
+                <dt>Процессор</dt>
+                <dd>{systemInfo.processorName?.trim() || "—"}</dd>
+                <dt>Логических процессоров</dt>
+                <dd>{systemInfo.logicalProcessors ?? "—"}</dd>
+                <dt>ОЗУ всего</dt>
+                <dd>
+                  {systemInfo.totalRamBytes != null ? formatBytes(systemInfo.totalRamBytes) : "—"}
+                </dd>
+                <dt>ОЗУ доступно</dt>
+                <dd>
+                  {systemInfo.availableRamBytes != null ? formatBytes(systemInfo.availableRamBytes) : "—"}
+                </dd>
+              </dl>
+              <h2>Видеокарта</h2>
+              {systemInfo.videoControllers.length === 0 ? (
+                <p className="muted">Данные недоступны.</p>
+              ) : (
+                <ul className="simple-list">
+                  {systemInfo.videoControllers.map((name, i) => (
+                    <li key={i}>{name}</li>
+                  ))}
+                </ul>
+              )}
+              <h2>Сетевые адреса</h2>
+              {systemInfo.networkAddresses.length === 0 ? (
+                <p className="muted">Активные интерфейсы не найдены.</p>
+              ) : (
+                <table className="data compact">
+                  <thead>
+                    <tr>
+                      <th>Интерфейс</th>
+                      <th>Семейство</th>
+                      <th>Адрес</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {systemInfo.networkAddresses.map((n, i) => (
+                      <tr key={`${n.address}-${i}`}>
+                        <td>{n.interfaceDescription?.trim() || "—"}</td>
+                        <td>{n.family}</td>
+                        <td className="mono">{n.address}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
+          )}
+        </section>
       )}
 
       {tab === "disks" && (
@@ -1192,10 +1427,18 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
+                  {backupTopTab === "active" && backupJobsDisplayed.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="muted" style={{ padding: "16px 12px" }}>
+                        Нет активных задач по фильтру этой вкладки: сюда входят задачи, включённые в расписание, и задача,
+                        которая выполняется сейчас.
+                      </td>
+                    </tr>
+                  ) : null}
                   {backupJobsDisplayed.map((j) => {
                     const { periodicity, time } = cronToScheduleParts(j.scheduleCron);
                     const last = lastLogByJobId.get(j.id);
-                    const running = runningJobId === j.id;
+                    const running = Boolean(runningJobIds[j.id]);
                     return (
                       <tr key={j.id} className={`backup-job-row ${selectedJob?.id === j.id ? "sel" : ""}`}>
                         <td>
@@ -1295,8 +1538,8 @@ export default function App() {
                   <button type="button" onClick={() => void saveSelectedJob()}>
                     Сохранить
                   </button>
-                  <button type="button" disabled={runningJobId === selectedJob.id} onClick={() => void runJob(selectedJob.id)}>
-                    {runningJobId === selectedJob.id ? "Выполняется…" : "Запустить"}
+                  <button type="button" disabled={Boolean(runningJobIds[selectedJob.id])} onClick={() => void runJob(selectedJob.id)}>
+                    {runningJobIds[selectedJob.id] ? "Выполняется…" : "Запустить"}
                   </button>
                   <button type="button" className="danger" onClick={() => void deleteJob(selectedJob.id)}>
                     Удалить
@@ -1722,22 +1965,117 @@ export default function App() {
                 <input
                   value={smartCustomCron}
                   onChange={(e) => setSmartCustomCron(e.target.value)}
-                  placeholder="0 */15 * * * ?"
+                  placeholder="0 0/15 * * * ?"
                 />
               </label>
               <p className="hint">
-                Формат: <span className="mono">секунда минута час день_месяца месяц день_недели</span>. Пример:{" "}
-                <span className="mono">0 */15 * * * ?</span> — каждые 15 минут.
+                Расширенный режим: вручную задаётся выражение Quartz (шесть полей через пробел). Это альтернатива пресетам;
+                значение сохраняется в базу как расписание опроса дисков.
+              </p>
+              <p className="hint">
+                Формат: <span className="mono">секунда минута час день_месяца месяц день_недели</span>. Пример каждые 15 минут:{" "}
+                <span className="mono">0 0/15 * * * ?</span>. Для «каждый час» используйте пресет или{" "}
+                <span className="mono">0 0 * * * ?</span> — не задавайте <span className="mono">*/60</span> в поле минуты (в Quartz оно неверно).
               </p>
             </>
           )}
-          {smartScheduleMode !== "custom" && (
-            <p className="hint">
-              Текущий cron: <span className="mono">{settings.smartMonitoringCron}</span>
-            </p>
-          )}
           <p className="hint">
-            Будет сохранено: <span className="mono">{smartCronPreview || "—"}</span>
+            В базе сохранено: <span className="mono">{savedSmartCron || "—"}</span>
+            {!smartCronMatchesSaved && (
+              <>
+                {" "}
+                · после сохранения будет: <span className="mono">{smartCronPreview.trim() || "—"}</span>
+              </>
+            )}
+          </p>
+
+          <h2>Исходящая синхронизация (POST)</h2>
+          <p className="hint">
+            Данные о системе, дисках и архивации отправляются на ваш сервер по расписанию. Локальный API (GET) продолжает
+            работать как раньше; этот режим необязателен. Заголовки Authorization и дополнительный ключ используются{" "}
+            <strong>только</strong> для исходящих запросов на указанный URL, не для доступа к локальной панели.
+          </p>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={settings.outboundSyncEnabled}
+              onChange={(e) => setSettings({ ...settings, outboundSyncEnabled: e.target.checked })}
+            />
+            Включить периодическую отправку JSON на коллектор
+          </label>
+          <label>
+            URL коллектора (http/https, полный адрес с путём при необходимости)
+            <input
+              value={settings.outboundSyncUrl}
+              onChange={(e) => setSettings({ ...settings, outboundSyncUrl: e.target.value })}
+              placeholder="https://collector.example.com:8443/api/v1/aria/ingest"
+            />
+          </label>
+          <label>
+            Расписание (Quartz cron, шесть полей)
+            <input
+              value={settings.outboundSyncCron}
+              onChange={(e) => setSettings({ ...settings, outboundSyncCron: e.target.value })}
+              placeholder="0 0/30 * * * ?"
+              className="mono"
+            />
+          </label>
+          <p className="hint">
+            Справка по формату:{" "}
+            <a
+              href="https://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Quartz CronTrigger
+            </a>
+            . Пример каждые 30 минут: <span className="mono">0 0/30 * * * ?</span>
+          </p>
+          <label>
+            Bearer token (опционально)
+            <input
+              type="password"
+              autoComplete="off"
+              value={outboundBearerDraft}
+              onChange={(e) => {
+                setOutboundBearerDraft(e.target.value);
+                setOutboundBearerDirty(true);
+              }}
+              placeholder={
+                settings.outboundBearerToken === SETTINGS_SECRET_SENTINEL
+                  ? "Оставьте пустым, чтобы не менять; введите новый — чтобы заменить"
+                  : "Не задан"
+              }
+            />
+          </label>
+          <label>
+            Доп. заголовок: имя
+            <input
+              value={settings.outboundCustomHeaderName}
+              onChange={(e) => setSettings({ ...settings, outboundCustomHeaderName: e.target.value })}
+              placeholder="X-Api-Key"
+            />
+          </label>
+          <label>
+            Доп. заголовок: значение
+            <input
+              type="password"
+              autoComplete="off"
+              value={outboundCustomHeaderValueDraft}
+              onChange={(e) => {
+                setOutboundCustomHeaderValueDraft(e.target.value);
+                setOutboundCustomHeaderValueDirty(true);
+              }}
+              placeholder={
+                settings.outboundCustomHeaderValue === SETTINGS_SECRET_SENTINEL
+                  ? "Оставьте пустым, чтобы не менять; введите новый — чтобы заменить"
+                  : "Не задано"
+              }
+            />
+          </label>
+          <p className="hint">
+            Секретные поля не отправляются обратно в открытом виде: при сохранении без правок не трогайте пароли —
+            они останутся в базе. Символ «{SETTINGS_SECRET_SENTINEL}» в API означает «уже сохранено».
           </p>
           <button type="button" onClick={() => void saveSettings()}>
             Сохранить в базу настроек

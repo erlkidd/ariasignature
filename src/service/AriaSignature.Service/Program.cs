@@ -34,17 +34,32 @@ builder.Services.AddHostedService<DatabaseInitializationHostedService>();
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddHostedService<BackupSchedulerHostedService>();
 builder.Services.AddSingleton<ISmartRefreshCronApplier, QuartzSmartRefreshCronApplier>();
+builder.Services.AddSingleton<IOutboundSyncCronApplier, QuartzOutboundSyncCronApplier>();
 builder.Services.AddHostedService<SmartMonitoringCronSyncHostedService>();
+builder.Services.AddHostedService<OutboundSyncCronSyncHostedService>();
+builder.Services.AddHttpClient(OutboundSyncJob.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(120);
+});
 builder.Services.AddQuartz(options =>
 {
-    var jobKey = new JobKey("smart-refresh-job");
-    var cron = builder.Configuration.GetValue<string>("SmartMonitoring:Cron") ?? "0 */1 * * * ?";
+    var smartJobKey = new JobKey("smart-refresh-job");
+    var smartCron = builder.Configuration.GetValue<string>("SmartMonitoring:Cron") ?? "0 0 * * * ?";
 
-    options.AddJob<SmartRefreshJob>(configure => configure.WithIdentity(jobKey));
+    options.AddJob<SmartRefreshJob>(configure => configure.WithIdentity(smartJobKey));
     options.AddTrigger(configure => configure
-        .ForJob(jobKey)
+        .ForJob(smartJobKey)
         .WithIdentity("smart-refresh-trigger")
-        .WithCronSchedule(cron));
+        .WithCronSchedule(smartCron));
+
+    var outboundJobKey = new JobKey("outbound-sync-job");
+    var outboundCron = builder.Configuration.GetValue<string>("OutboundSync:Cron") ?? "0 0/30 * * * ?";
+
+    options.AddJob<OutboundSyncJob>(configure => configure.WithIdentity(outboundJobKey));
+    options.AddTrigger(configure => configure
+        .ForJob(outboundJobKey)
+        .WithIdentity("outbound-sync-trigger")
+        .WithCronSchedule(outboundCron));
 });
 builder.Services.AddQuartzHostedService(options => options.WaitForJobsToComplete = true);
 

@@ -3,6 +3,7 @@ using AriaSignature.Infrastructure.Backup;
 using AriaSignature.Infrastructure.Monitoring;
 using AriaSignature.Infrastructure.Persistence;
 using AriaSignature.Infrastructure.Storage;
+using AriaSignature.Infrastructure.SystemInfo;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace AriaSignature.Infrastructure;
@@ -15,11 +16,13 @@ public static class DependencyInjection
         services.AddSingleton<ISqliteDatabaseInitializer, SqliteDatabaseInitializer>();
         if (OperatingSystem.IsWindows())
         {
+            services.AddSingleton<ISystemInfoService, WindowsSystemInfoService>();
             services.AddSingleton<SmartCtlLowLevelReader>();
             services.AddSingleton<IDiskTelemetryCollector, WmiDiskTelemetryCollector>();
         }
         else
         {
+            services.AddSingleton<ISystemInfoService, NoopSystemInfoService>();
             services.AddSingleton<IDiskTelemetryCollector, NoopDiskTelemetryCollector>();
         }
 
