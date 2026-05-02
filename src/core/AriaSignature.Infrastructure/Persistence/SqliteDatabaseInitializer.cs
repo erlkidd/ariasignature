@@ -335,6 +335,8 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
     private static async Task SeedDefaultSettingsAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
         await UpsertSettingIfMissingAsync(connection, "Api:Port", "5160", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, "Api:Bind", "all", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, "Api:SharedSecret", "", cancellationToken);
         await UpsertSettingIfMissingAsync(connection, "SmartMonitoring:Cron", "0 0 * * * ?", cancellationToken);
         await UpsertSettingIfMissingAsync(connection, "OutboundSync:Enabled", "false", cancellationToken);
         await UpsertSettingIfMissingAsync(connection, "OutboundSync:Url", "", cancellationToken);

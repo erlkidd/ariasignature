@@ -66,6 +66,10 @@ interface BackupLog {
 
 interface SettingsDto {
   apiPort: number;
+  /** all — доступ по IP/VPN; loopback — только с этой машины */
+  apiBind: string;
+  /** Общий секрет для Authorization: Bearer / X-Aria-Api-Key с других узлов; пусто — без проверки заголовка */
+  apiSharedSecret: string;
   smartMonitoringCron: string;
   note: string;
   outboundSyncEnabled: boolean;
@@ -627,6 +631,8 @@ export default function App() {
       const s = await apiGet<SettingsDto>("/settings");
       setSettings({
         ...s,
+        apiBind: (s.apiBind ?? "all").toLowerCase() === "loopback" ? "loopback" : "all",
+        apiSharedSecret: s.apiSharedSecret ?? "",
         outboundSyncEnabled: Boolean(s.outboundSyncEnabled),
         outboundSyncUrl: s.outboundSyncUrl ?? "",
         outboundSyncCron: s.outboundSyncCron ?? "0 0/30 * * * ?",
@@ -1049,6 +1055,8 @@ export default function App() {
     try {
       const body: Record<string, unknown> = {
         apiPort: settings.apiPort,
+        apiBind: settings.apiBind,
+        apiSharedSecret: settings.apiSharedSecret,
         smartMonitoringCron: smartCronPreview,
         outboundSyncEnabled: settings.outboundSyncEnabled,
         outboundSyncUrl: settings.outboundSyncUrl,
@@ -1965,13 +1973,63 @@ export default function App() {
           <h2>Параметры службы</h2>
           <p className="hint">{settings.note}</p>
           <label>
-            Порт API (localhost)
+            Порт HTTP API
             <input
               type="number"
               value={settings.apiPort}
               onChange={(e) => setSettings({ ...settings, apiPort: Number(e.target.value) })}
             />
           </label>
+          <p className="hint">
+            Панель на этом ПК подключается к <span className="mono">127.0.0.1:{settings.apiPort}</span>. С другой машины в VPN/LAN используйте{" "}
+            <span className="mono">http://&lt;IP_этого_ПК&gt;:{settings.apiPort}/api/v1/…</span> (см. <span className="mono">docs/API.md</span>).
+          </p>
+          <label>
+            Привязка сокета API
+            <select
+              value={settings.apiBind}
+              onChange={(e) => setSettings({ ...settings, apiBind: e.target.value as "all" | "loopback" })}
+            >
+              <option value="all">Все интерфейсы (доступ по IP / VPN)</option>
+              <option value="loopback">Только localhost (без входящих из сети)</option>
+            </select>
+          </label>
+          <label>
+            Общий секрет для удалённого API (необязательно)
+            <input
+              type="text"
+              autoComplete="off"
+              value={settings.apiSharedSecret}
+              onChange={(e) => setSettings({ ...settings, apiSharedSecret: e.target.value })}
+              placeholder="Пусто — любой, кто достучится до порта, читает API"
+            />
+          </label>
+          <div className="row">
+            <button
+              type="button"
+              className="secondary"
+              onClick={() =>
+                setSettings((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        apiSharedSecret:
+                          typeof globalThis.crypto !== "undefined" && "randomUUID" in globalThis.crypto
+                            ? globalThis.crypto.randomUUID()
+                            : `${Date.now()}-${Math.random().toString(36).slice(2, 14)}`,
+                      }
+                    : prev
+                )
+              }
+            >
+              Сгенерировать токен
+            </button>
+          </div>
+          <p className="hint">
+            Если секрет задан, запросы <strong>не с localhost</strong> должны передавать{" "}
+            <span className="mono">Authorization: Bearer &lt;токен&gt;</span> или <span className="mono">X-Aria-Api-Key</span>. Локальная панель
+            заголовки не задаёт.
+          </p>
           <label>
             Обновление дисков
             <select

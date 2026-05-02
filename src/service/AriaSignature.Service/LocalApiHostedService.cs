@@ -45,7 +45,8 @@ public sealed class LocalApiHostedService : IHostedService
 
         // CreateSlimBuilder не регистрирует regex route constraints; Swashbuckle (UseSwagger) падает при старте.
         var webBuilder = WebApplication.CreateBuilder(options);
-        webBuilder.WebHost.UseUrls($"http://127.0.0.1:{port}");
+        var listenUrls = await ResolveListenUrlsAsync(port, cancellationToken);
+        webBuilder.WebHost.UseUrls(listenUrls);
         webBuilder.Services.AddApplication();
         webBuilder.Services.AddInfrastructure();
         webBuilder.Services.AddAriaApi();
@@ -57,7 +58,11 @@ public sealed class LocalApiHostedService : IHostedService
         _webApp = webBuilder.Build();
         _webApp.UseAriaApi();
 
-        _logger.LogInformation("Starting local API on http://127.0.0.1:{Port} (wwwroot: {WebRoot})", port, webRootExists ? webRoot : "(none)");
+        _logger.LogInformation(
+            "Starting API on {ListenUrls} (wwwroot: {WebRoot}). Локальная панель: http://127.0.0.1:{Port}",
+            listenUrls,
+            webRootExists ? webRoot : "(none)",
+            port);
         await _webApp.StartAsync(cancellationToken);
         _logger.LogInformation("API bind/start completed in {ElapsedMs} ms", startupSw.ElapsedMilliseconds);
         await LogFirstReadyAsync(port, cancellationToken);
@@ -96,6 +101,37 @@ public sealed class LocalApiHostedService : IHostedService
         }
 
         return fallback;
+    }
+
+    private async Task<string> ResolveListenUrlsAsync(int port, CancellationToken cancellationToken)
+    {
+        var fallbackBind = _configuration.GetValue<string>("Api:Bind") ?? "all";
+        try
+        {
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+            await using var scope = _serviceProvider.CreateAsyncScope();
+            var settings = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
+            var fromDb = await settings.GetAsync(AppSettingsApiKeys.Bind, linkedCts.Token);
+            var mode = string.IsNullOrWhiteSpace(fromDb) ? fallbackBind : fromDb.Trim();
+            if (string.Equals(mode, "loopback", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"http://127.0.0.1:{port}";
+            }
+
+            return $"http://0.0.0.0:{port};http://[::]:{port}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read Api:Bind from DB; using configuration fallback {FallbackBind}", fallbackBind);
+        }
+
+        if (string.Equals(fallbackBind.Trim(), "loopback", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"http://127.0.0.1:{port}";
+        }
+
+        return $"http://0.0.0.0:{port};http://[::]:{port}";
     }
 
     private async Task LogFirstReadyAsync(int port, CancellationToken cancellationToken)

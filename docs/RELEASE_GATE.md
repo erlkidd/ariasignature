@@ -41,7 +41,7 @@ Pipeline выполняет:
 
 - служба `AriaSignatureService` зарегистрирована и в состоянии `Running`;
 - UI запускается без ошибок и доступен в трее;
-- API отвечает на `GET /api/v1/status`;
+- API отвечает на `GET /api/v1/status` (локально и, при сценарии с VPN, опционально с другой машины по `http://<IP_агента>:5160/api/v1/status`);
 - в `{app}\service\smartctl` присутствуют `smartctl.exe` и `drivedb.h`, размер файлов > 0;
 - `POST /api/v1/disks/refresh` возвращает срез;
 - создание и запуск backup-задачи проходят штатно;

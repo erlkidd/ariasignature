@@ -4,6 +4,19 @@
 
 Формат основан на категориях: `Added`, `Changed`, `Fixed`, `Docs`.
 
+## [Unreleased]
+
+### Added
+
+- Служба: привязка HTTP API ко **всем интерфейсам** по умолчанию (`Api:Bind=all`: `0.0.0.0` + IPv6); режим только localhost (`loopback`).
+- Настройки SQLite/UI: `apiBind`, `apiSharedSecret`; опциональная проверка `Authorization: Bearer` / `X-Aria-Api-Key` для запросов не с loopback.
+- API: middleware авторизации; теги Swagger (`Service`, `System`, `Disks`, `Backups`, `Settings`); описание `GET /system` как соответствие вкладке «О системе».
+- Установщик: правило брандмауэра Windows для входящего **TCP 5160** (и удаление при деинсталляции).
+
+### Docs
+
+- `README.md`, `API.md`, `USER_GUIDE.md`, `INSTRUCTIONS.md`, `INSTALLER.md`: сценарий централизованного опроса по IP/VPN, секрет, брандмауэр.
+
 ## [0.9.9] - 2026-05-02
 
 ### Changed

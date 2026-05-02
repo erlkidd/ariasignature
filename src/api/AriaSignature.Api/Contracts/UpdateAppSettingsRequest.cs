@@ -3,6 +3,8 @@ namespace AriaSignature.Api.Contracts;
 public sealed class UpdateAppSettingsRequest
 {
     public int? ApiPort { get; set; }
+    public string? ApiBind { get; set; }
+    public string? ApiSharedSecret { get; set; }
     public string? SmartMonitoringCron { get; set; }
 
     public bool? OutboundSyncEnabled { get; set; }

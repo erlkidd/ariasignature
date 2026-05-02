@@ -53,8 +53,10 @@ Name: "{autodesktop}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; Worki
 
 [Run]
 Filename: "{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Parameters: "/silent /install"; StatusMsg: "Установка Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated skipifsilent; Check: NeedsWebView2Runtime()
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""AriaSignature API (TCP 5160)"" dir=in action=allow protocol=TCP localport=5160"; StatusMsg: "Разрешение входящих подключений к API (порт 5160)..."; Flags: runhidden waituntilterminated
 
 [UninstallRun]
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""AriaSignature API (TCP 5160)"""; Flags: runhidden waituntilterminated
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"

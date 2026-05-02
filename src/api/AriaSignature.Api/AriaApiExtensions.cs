@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Http.Json;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.OpenApi.Models;
 using Quartz;
 
 namespace AriaSignature.Api;
@@ -25,7 +26,28 @@ public static class AriaApiExtensions
         });
         services.AddProblemDetails();
         services.AddEndpointsApiExplorer();
-        services.AddSwaggerGen();
+        services.AddSwaggerGen(c =>
+        {
+            c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+            {
+                Type = SecuritySchemeType.Http,
+                Scheme = "bearer",
+                BearerFormat = "opaque",
+                In = ParameterLocation.Header,
+                Description =
+                    "При пустом общем секрете в настройках не требуется. Если секрет задан, для запросов не с localhost передайте тот же токен (или заголовок X-Aria-Api-Key).",
+            });
+            c.AddSecurityRequirement(new OpenApiSecurityRequirement
+            {
+                {
+                    new OpenApiSecurityScheme
+                    {
+                        Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" },
+                    },
+                    Array.Empty<string>()
+                },
+            });
+        });
         services.AddSingleton<ISmartRefreshCronApplier, NoOpSmartRefreshCronApplier>();
         services.AddSingleton<IOutboundSyncCronApplier, NoOpOutboundSyncCronApplier>();
         return services;
@@ -53,6 +75,7 @@ public static class AriaApiExtensions
             });
         });
 
+        app.UseMiddleware<RemoteApiAuthMiddleware>();
         app.UseSwagger();
         app.UseSwaggerUI();
 
@@ -66,6 +89,7 @@ public static class AriaApiExtensions
             timestampUtc = DateTimeOffset.UtcNow
         }))
         .WithName("GetSystemStatus")
+        .WithTags("Service")
         .WithOpenApi();
 
         api.MapGet("/settings", async (IAppSettingsService settings, IConfiguration configuration, CancellationToken cancellationToken) =>
@@ -79,23 +103,35 @@ public static class AriaApiExtensions
             var outboundCron = dict.GetValueOrDefault(AppSettingsOutboundKeys.Cron)
                 ?? configuration.GetValue<string>("OutboundSync:Cron")
                 ?? "0 0/30 * * * ?";
+            var apiBind = NormalizeApiBind(dict.GetValueOrDefault(AppSettingsApiKeys.Bind));
+            var apiSharedSecret = dict.GetValueOrDefault(AppSettingsApiKeys.SharedSecret) ?? string.Empty;
             return Results.Ok(new
             {
                 apiPort = port,
+                apiBind,
+                apiSharedSecret,
                 smartMonitoringCron = cron,
-                note = "Изменение порта API вступает в силу после перезапуска службы AriaSignatureService.",
+                note =
+                    "Смена порта или режима привязки API (localhost / все интерфейсы) вступает в силу после перезапуска службы AriaSignatureService. Общий секрет и расписания применяются сразу после сохранения.",
                 outboundSyncEnabled = outboundEnabled,
                 outboundSyncUrl = outboundUrl,
                 outboundSyncCron = outboundCron,
             });
         })
         .WithName("GetSettings")
+        .WithTags("Settings")
         .WithOpenApi();
 
         api.MapGet("/system", async (ISystemInfoService systemInfo, CancellationToken cancellationToken) =>
             Results.Ok(await systemInfo.GetSnapshotAsync(cancellationToken)))
             .WithName("GetSystemInfo")
-            .WithOpenApi();
+            .WithTags("System")
+            .WithOpenApi(o =>
+            {
+                o.Description =
+                    "Снимок узла: те же сведения, что на вкладке панели «О системе» (хост, сеть, ОС, CPU, ОЗУ, видео).";
+                return o;
+            });
 
         api.MapPut("/settings", async (
             UpdateAppSettingsRequest body,
@@ -147,6 +183,28 @@ public static class AriaApiExtensions
                 {
                     await settings.SetAsync("Api:Port", ap.ToString(), cancellationToken);
                 }
+            }
+
+            if (body.ApiBind is { } bindRaw)
+            {
+                var trimmedBind = bindRaw.Trim();
+                if (!string.Equals(trimmedBind, "all", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(trimmedBind, "loopback", StringComparison.OrdinalIgnoreCase))
+                {
+                    errors["apiBind"] = ["Допустимо: all или loopback."];
+                }
+                else
+                {
+                    await settings.SetAsync(
+                        AppSettingsApiKeys.Bind,
+                        string.Equals(trimmedBind, "loopback", StringComparison.OrdinalIgnoreCase) ? "loopback" : "all",
+                        cancellationToken);
+                }
+            }
+
+            if (body.ApiSharedSecret is not null)
+            {
+                await settings.SetAsync(AppSettingsApiKeys.SharedSecret, body.ApiSharedSecret, cancellationToken);
             }
 
             if (body.SmartMonitoringCron is { } cron)
@@ -203,6 +261,7 @@ public static class AriaApiExtensions
                 : Results.Ok(new { saved = true });
         })
         .WithName("UpdateSettings")
+        .WithTags("Settings")
         .WithOpenApi();
 
         api.MapPost("/backups/test-mssql", async (MsSqlConnectionPayload payload, CancellationToken cancellationToken) =>
@@ -236,11 +295,13 @@ public static class AriaApiExtensions
             }
         })
         .WithName("TestMsSqlConnection")
+        .WithTags("Backups")
         .WithOpenApi();
 
         api.MapGet("/disks", async (IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
             Results.Ok(await telemetry.GetDisksAsync(cancellationToken)))
             .WithName("GetDisks")
+            .WithTags("Disks")
             .WithOpenApi();
 
         api.MapPost("/disks/refresh", async (IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
@@ -249,6 +310,7 @@ public static class AriaApiExtensions
                 return Results.Ok(await telemetry.GetDisksAsync(cancellationToken));
             })
             .WithName("RefreshDisks")
+            .WithTags("Disks")
             .WithOpenApi();
 
         api.MapGet("/disks/{id:guid}", async (Guid id, IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
@@ -262,6 +324,7 @@ public static class AriaApiExtensions
                 : Results.Ok(disk);
         })
             .WithName("GetDiskById")
+            .WithTags("Disks")
             .WithOpenApi();
 
         api.MapGet("/disks/{id:guid}/smart", async (Guid id, IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
@@ -278,6 +341,7 @@ public static class AriaApiExtensions
             return Results.Ok(await telemetry.GetSmartMetricsAsync(id, cancellationToken));
         })
             .WithName("GetDiskSmart")
+            .WithTags("Disks")
             .WithOpenApi();
 
         api.MapDelete("/disks/{id:guid}/smart", async (Guid id, IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
@@ -295,6 +359,7 @@ public static class AriaApiExtensions
             return Results.Ok(new { cleared = true, scope = "disk", diskId = id, deleted });
         })
             .WithName("ClearDiskSmart")
+            .WithTags("Disks")
             .WithOpenApi();
 
         api.MapDelete("/disks/smart", async (IDiskTelemetryService telemetry, CancellationToken cancellationToken) =>
@@ -303,11 +368,13 @@ public static class AriaApiExtensions
             return Results.Ok(new { cleared = true, scope = "all", deleted });
         })
             .WithName("ClearAllSmart")
+            .WithTags("Disks")
             .WithOpenApi();
 
         api.MapGet("/backups", async (IBackupService backups, CancellationToken cancellationToken) =>
             Results.Ok(await backups.GetJobsAsync(cancellationToken)))
             .WithName("GetBackups")
+            .WithTags("Backups")
             .WithOpenApi();
 
         api.MapPost("/backups", async (UpsertBackupJobRequest request, IBackupService backups, CancellationToken cancellationToken) =>
@@ -323,6 +390,7 @@ public static class AriaApiExtensions
             return Results.Created($"/api/v1/backups/{created.Id}", created);
         })
             .WithName("CreateBackup")
+            .WithTags("Backups")
             .WithOpenApi();
 
         api.MapPut("/backups/{id:guid}", async (Guid id, UpsertBackupJobRequest request, IBackupService backups, CancellationToken cancellationToken) =>
@@ -344,6 +412,7 @@ public static class AriaApiExtensions
                 : Results.Ok(updated);
         })
             .WithName("UpdateBackup")
+            .WithTags("Backups")
             .WithOpenApi();
 
         api.MapDelete("/backups/{id:guid}", async (Guid id, IBackupService backups, CancellationToken cancellationToken) =>
@@ -357,6 +426,7 @@ public static class AriaApiExtensions
                     statusCode: StatusCodes.Status404NotFound);
         })
             .WithName("DeleteBackup")
+            .WithTags("Backups")
             .WithOpenApi();
 
         api.MapPost("/backups/{id:guid}/run", async (Guid id, IBackupService backups, CancellationToken cancellationToken) =>
@@ -370,6 +440,7 @@ public static class AriaApiExtensions
             return Results.Accepted("/api/v1/backups/logs", log);
         })
             .WithName("RunBackup")
+            .WithTags("Backups")
             .WithOpenApi();
 
         api.MapDelete("/backups/logs", async (IBackupService backups, CancellationToken cancellationToken) =>
@@ -378,6 +449,7 @@ public static class AriaApiExtensions
             return Results.Ok(new { cleared = true, scope = "backup-logs", deleted });
         })
             .WithName("ClearBackupLogs")
+            .WithTags("Backups")
             .WithOpenApi();
 
         api.MapGet("/backups/logs", async (string? status, DateTimeOffset? from, DateTimeOffset? to, IBackupService backups, CancellationToken cancellationToken) =>
@@ -391,12 +463,16 @@ public static class AriaApiExtensions
             return Results.Ok(await backups.GetLogsAsync(st, from, to, cancellationToken));
         })
             .WithName("GetBackupLogs")
+            .WithTags("Backups")
             .WithOpenApi();
 
         TryUseSpaStaticFiles(app);
 
         return app;
     }
+
+    private static string NormalizeApiBind(string? raw) =>
+        string.Equals(raw?.Trim(), "loopback", StringComparison.OrdinalIgnoreCase) ? "loopback" : "all";
 
     private static bool ParseBool(string? value) =>
         bool.TryParse(value, out var b) && b;
