@@ -684,6 +684,35 @@ label.check {
   flex-wrap: wrap;
 }
 
+.settings-collapsible {
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.settings-collapsible-summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--font-section);
+  font-weight: 700;
+  line-height: 1.35;
+  padding: 12px 14px;
+  user-select: none;
+}
+
+.settings-collapsible-summary::-webkit-details-marker {
+  margin-right: 10px;
+}
+
+.settings-collapsible[open] .settings-collapsible-summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-collapsible-body {
+  padding: 12px 14px 8px;
+}
+
 .simple-list {
   margin: 8px 0 0;
   padding-left: 1.25rem;

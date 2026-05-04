@@ -464,6 +464,8 @@ export default function App() {
   const [settings, setSettings] = useState<SettingsDto | null>(null);
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
   const [launchAtStartup, setLaunchAtStartup] = useState(true);
+  const [serviceSettingsExpanded, setServiceSettingsExpanded] = useState(false);
+  const [outboundSettingsExpanded, setOutboundSettingsExpanded] = useState(false);
   /** Сообщение хоста: тип запуска службы — Automatic (null = ещё не приходило). */
   const [autostartServiceBootAuto, setAutostartServiceBootAuto] = useState<boolean | null>(null);
 
@@ -684,24 +686,33 @@ export default function App() {
     }
   }, []);
 
-  const refreshJobs = useCallback(async () => {
+  const refreshJobs = useCallback(async (silent = false) => {
     setError(null);
     try {
       const j = await apiGet<BackupJob[]>("/backups");
       setJobs(j);
+      if (!silent) {
+        setStatus(`Список задач обновлён: ${j.length}`);
+      }
     } catch (e) {
       showErr(e);
     }
   }, []);
 
-  const refreshLogs = useCallback(async () => {
+  const refreshLogs = useCallback(async (silent = false) => {
     setError(null);
-    setStatus("");
     try {
       const q =
         logFilterStatus ? `?status=${encodeURIComponent(logFilterStatus)}` : "";
       const l = await apiGet<BackupLog[]>(`/backups/logs${q}`);
       setLogs(l);
+      if (!silent) {
+        setStatus(
+          logFilterStatus
+            ? `Журнал обновлён: ${l.length} записей (фильтр: ${logFilterStatus})`
+            : `Журнал обновлён: ${l.length} записей`
+        );
+      }
     } catch (e) {
       showErr(e);
     }
@@ -771,10 +782,9 @@ export default function App() {
   useEffect(() => {
     const initialLoad = async () => {
       try {
-        await Promise.all([loadDisks(), refreshJobs(), refreshSettings(), refreshServiceVersion()]);
+        await Promise.all([loadDisks(), refreshJobs(true), refreshSettings(), refreshServiceVersion()]);
         try {
-          const l = await apiGet<BackupLog[]>("/backups/logs");
-          setLogs(l);
+          await refreshLogs(true);
         } catch (e) {
           showErr(e);
         }
@@ -818,15 +828,15 @@ export default function App() {
     if (tab !== "backup") {
       return;
     }
-    void refreshJobs();
-    void refreshLogs();
+    void refreshJobs(true);
+    void refreshLogs(true);
   }, [tab, refreshJobs, refreshLogs]);
 
   useEffect(() => {
     if (tab !== "backup" || backupPageTab !== "history") {
       return;
     }
-    void refreshLogs();
+    void refreshLogs(true);
   }, [tab, backupPageTab, logFilterStatus, refreshLogs]);
 
   useEffect(() => {
@@ -983,7 +993,7 @@ export default function App() {
     setError(null);
     try {
       const result = await apiSend<ClearSmartResponse>("/backups/logs", "DELETE");
-      await refreshLogs();
+      await refreshLogs(true);
       setStatus(`Журнал задач очищен: ${result.deleted ?? 0} записей.`);
     } catch (e) {
       showErr(e);
@@ -1076,7 +1086,7 @@ export default function App() {
       }
       await apiSend("/backups", "POST", body);
       setStatus("Задача создана.");
-      await refreshJobs();
+      await refreshJobs(true);
       setBackupPageTab("tasks");
     } catch (e) {
       showErr(e);
@@ -1103,7 +1113,7 @@ export default function App() {
       };
       await apiSend(`/backups/${selectedJob.id}`, "PUT", body);
       setStatus("Задача сохранена.");
-      await refreshJobs();
+      await refreshJobs(true);
     } catch (e) {
       showErr(e);
     }
@@ -1114,8 +1124,8 @@ export default function App() {
     setRunningJobIds((prev) => ({ ...prev, [id]: true }));
     try {
       const log = await apiSend<BackupLog>(`/backups/${id}/run`, "POST");
-      await refreshLogs();
-      await refreshJobs();
+      await refreshLogs(true);
+      await refreshJobs(true);
       const ok = (log.status ?? "").toLowerCase() === "succeeded";
       setStatus(
         ok
@@ -1140,7 +1150,7 @@ export default function App() {
       await fetch(`/api/v1/backups/${id}`, { method: "DELETE" });
       setStatus("Задача удалена.");
       setSelectedJob(null);
-      await refreshJobs();
+      await refreshJobs(true);
     } catch (e) {
       showErr(e);
     }
@@ -1158,7 +1168,7 @@ export default function App() {
         retentionCount: j.retentionCount,
         isEnabled: enabled,
       });
-      await refreshJobs();
+      await refreshJobs(true);
       setSelectedJob((prev) => (prev?.id === j.id ? { ...prev, isEnabled: enabled } : prev));
       setStatus(enabled ? "Задача включена." : "Задача отключена.");
     } catch (e) {
@@ -2144,21 +2154,27 @@ export default function App() {
             </div>
           </div>
 
-          <h2>Параметры службы</h2>
-          <p className="hint">{settings.note}</p>
-          <label>
+          <details
+            className="settings-collapsible"
+            open={serviceSettingsExpanded}
+            onToggle={(e) => setServiceSettingsExpanded((e.currentTarget as HTMLDetailsElement).open)}
+          >
+            <summary className="settings-collapsible-summary">Параметры службы</summary>
+            <div className="settings-collapsible-body">
+            <p className="hint">{settings.note}</p>
+            <label>
             Порт HTTP API
             <input
               type="number"
               value={settings.apiPort}
               onChange={(e) => setSettings({ ...settings, apiPort: Number(e.target.value) })}
             />
-          </label>
-          <p className="hint">
+            </label>
+            <p className="hint">
             Панель на этом ПК подключается к <span className="mono">127.0.0.1:{settings.apiPort}</span>. С другой машины в VPN/LAN используйте{" "}
             <span className="mono">http://&lt;IP_этого_ПК&gt;:{settings.apiPort}/api/v1/…</span> (см. <span className="mono">docs/API.md</span>).
-          </p>
-          <label>
+            </p>
+            <label>
             Привязка сокета API
             <select
               value={settings.apiBind}
@@ -2167,8 +2183,8 @@ export default function App() {
               <option value="all">Все интерфейсы (доступ по IP / VPN)</option>
               <option value="loopback">Только localhost (без входящих из сети)</option>
             </select>
-          </label>
-          <label>
+            </label>
+            <label>
             Токен для удалённого API (опционально)
             <input
               type="text"
@@ -2177,8 +2193,8 @@ export default function App() {
               onChange={(e) => setSettings({ ...settings, apiSharedSecret: e.target.value })}
               placeholder="Пусто — любой, кто достучится до порта, читает API"
             />
-          </label>
-          <div className="row">
+            </label>
+            <div className="row">
             <button
               type="button"
               className="secondary"
@@ -2198,12 +2214,12 @@ export default function App() {
             >
               Сгенерировать токен
             </button>
-          </div>
-          <p className="hint">
+            </div>
+            <p className="hint">
             Если токен задан, запросы не с localhost должны передавать{" "}
             <span className="mono">Authorization: Bearer &lt;токен&gt;</span> или <span className="mono">X-Aria-Api-Key</span>.
-          </p>
-          <label>
+            </p>
+            <label>
             Обновление дисков
             <select
               value={smartScheduleMode}
@@ -2213,9 +2229,9 @@ export default function App() {
               <option value="daily">Ежедневно в указанное время</option>
               <option value="custom">Расширенный режим (Quartz)</option>
             </select>
-          </label>
-          {smartScheduleMode === "interval" && (
-            <label>
+            </label>
+            {smartScheduleMode === "interval" && (
+              <label>
               Интервал
               <select
                 value={smartIntervalMin}
@@ -2230,10 +2246,10 @@ export default function App() {
                 <option value={30}>Каждые 30 минут</option>
                 <option value={60}>Каждый час</option>
               </select>
-            </label>
-          )}
-          {smartScheduleMode === "daily" && (
-            <div className="row">
+              </label>
+            )}
+            {smartScheduleMode === "daily" && (
+              <div className="row">
               <label>
                 Час
                 <input
@@ -2260,10 +2276,10 @@ export default function App() {
                   }}
                 />
               </label>
-            </div>
-          )}
-          {smartScheduleMode === "custom" && (
-            <>
+              </div>
+            )}
+            {smartScheduleMode === "custom" && (
+              <>
               <label>
                 Cron Quartz
                 <input
@@ -2281,9 +2297,9 @@ export default function App() {
                 <span className="mono">0 0/15 * * * ?</span>. Для «каждый час» используйте пресет или{" "}
                 <span className="mono">0 0 * * * ?</span> — не задавайте <span className="mono">*/60</span> в поле минуты (в Quartz оно неверно).
               </p>
-            </>
-          )}
-          <p className="hint">
+              </>
+            )}
+            <p className="hint">
             В базе сохранено: <span className="mono">{savedSmartCron || "—"}</span>
             {!smartCronMatchesSaved && (
               <>
@@ -2291,29 +2307,37 @@ export default function App() {
                 · после сохранения будет: <span className="mono">{smartCronPreview.trim() || "—"}</span>
               </>
             )}
-          </p>
+            </p>
+            </div>
+          </details>
 
-          <h2>Исходящая синхронизация (POST)</h2>
-          <p className="hint">
+          <details
+            className="settings-collapsible"
+            open={outboundSettingsExpanded}
+            onToggle={(e) => setOutboundSettingsExpanded((e.currentTarget as HTMLDetailsElement).open)}
+          >
+            <summary className="settings-collapsible-summary">Исходящая синхронизация (POST)</summary>
+            <div className="settings-collapsible-body">
+            <p className="hint">
             Данные о системе, дисках и архивации отправляются на ваш сервер по расписанию.
-          </p>
-          <label className="check">
+            </p>
+            <label className="check">
             <input
               type="checkbox"
               checked={settings.outboundSyncEnabled}
               onChange={(e) => setSettings({ ...settings, outboundSyncEnabled: e.target.checked })}
             />
             Включить периодическую отправку JSON на коллектор
-          </label>
-          <label>
+            </label>
+            <label>
             URL коллектора (http/https, полный адрес с путём при необходимости)
             <input
               value={settings.outboundSyncUrl}
               onChange={(e) => setSettings({ ...settings, outboundSyncUrl: e.target.value })}
               placeholder="https://collector.example.com:8443/api/v1/aria/ingest"
             />
-          </label>
-          <label>
+            </label>
+            <label>
             Расписание отправки
             <select
               value={outboundScheduleMode}
@@ -2323,9 +2347,9 @@ export default function App() {
               <option value="daily">Ежедневно в указанное время</option>
               <option value="custom">Расширенный режим (Quartz)</option>
             </select>
-          </label>
-          {outboundScheduleMode === "interval" && (
-            <label>
+            </label>
+            {outboundScheduleMode === "interval" && (
+              <label>
               Интервал
               <select
                 value={outboundIntervalMin}
@@ -2339,10 +2363,10 @@ export default function App() {
                 <option value={30}>Каждые 30 минут</option>
                 <option value={60}>Каждый час</option>
               </select>
-            </label>
-          )}
-          {outboundScheduleMode === "daily" && (
-            <div className="row">
+              </label>
+            )}
+            {outboundScheduleMode === "daily" && (
+              <div className="row">
               <label>
                 Час
                 <input
@@ -2369,10 +2393,10 @@ export default function App() {
                   }}
                 />
               </label>
-            </div>
-          )}
-          {outboundScheduleMode === "custom" && (
-            <>
+              </div>
+            )}
+            {outboundScheduleMode === "custom" && (
+              <>
               <label>
                 Cron Quartz
                 <input
@@ -2398,9 +2422,9 @@ export default function App() {
                 </a>
                 .
               </p>
-            </>
-          )}
-          <p className="hint">
+              </>
+            )}
+            <p className="hint">
             В базе сохранено: <span className="mono">{savedOutboundCron || "—"}</span>
             {!outboundCronMatchesSaved && (
               <>
@@ -2408,7 +2432,10 @@ export default function App() {
                 · после сохранения будет: <span className="mono">{outboundCronPreview.trim() || "—"}</span>
               </>
             )}
-          </p>
+            </p>
+            </div>
+          </details>
+
           <button type="button" onClick={() => void saveSettings()}>
             Сохранить в базу настроек
           </button>
