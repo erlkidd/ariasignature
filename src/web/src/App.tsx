@@ -273,6 +273,62 @@ function buildCron(
   return `0 ${m} ${h} ${dom} * ?`;
 }
 
+type ParsedBackupSchedule =
+  | { kind: "simple"; preset: "daily" | "weekly" | "monthly"; hour: number; minute: number; dow: string; dom: number }
+  | { kind: "advanced"; cron: string };
+
+/** Распознаёт cron, совпадающий с пресетами формы создания задачи; иначе — расширенный Quartz. */
+function parseBackupScheduleEditor(cronRaw: string): ParsedBackupSchedule {
+  const cron = (cronRaw ?? "").trim();
+  const parts = cron.split(/\s+/).filter(Boolean);
+  if (parts.length < 6) {
+    return { kind: "advanced", cron: cron || "0 0 2 * * ?" };
+  }
+  const sec = parts[0] ?? "";
+  const minuteRaw = parts[1] ?? "";
+  const hourRaw = parts[2] ?? "";
+  const day = parts[3] ?? "";
+  const month = parts[4] ?? "";
+  const dow = parts[5] ?? "";
+
+  if (sec !== "0") {
+    return { kind: "advanced", cron };
+  }
+
+  const minute = Number(minuteRaw);
+  const hour = Number(hourRaw);
+  if (!Number.isFinite(minute) || !Number.isFinite(hour) || minute < 0 || minute > 59 || hour < 0 || hour > 23) {
+    return { kind: "advanced", cron };
+  }
+
+  if (day === "*" && month === "*" && dow === "?") {
+    return { kind: "simple", preset: "daily", hour, minute, dow: "MON", dom: 1 };
+  }
+
+  if (day === "?" && month === "*" && dow !== "?" && dow !== "*") {
+    const known = quartzDays.some((x) => x.v === dow);
+    if (known) {
+      return { kind: "simple", preset: "weekly", hour, minute, dow, dom: 1 };
+    }
+    return { kind: "advanced", cron };
+  }
+
+  const domNum = Number(day);
+  if (
+    month === "*" &&
+    (dow === "?" || dow === "*") &&
+    Number.isFinite(domNum) &&
+    domNum >= 1 &&
+    domNum <= 28 &&
+    day !== "*" &&
+    day !== "?"
+  ) {
+    return { kind: "simple", preset: "monthly", hour, minute, dow: "MON", dom: domNum };
+  }
+
+  return { kind: "advanced", cron };
+}
+
 function cronToScheduleParts(cron: string): { periodicity: string; time: string } {
   const parts = cron.trim().split(/\s+/).filter(Boolean);
   if (parts.length < 6) {
@@ -482,6 +538,14 @@ export default function App() {
   const [advancedCron, setAdvancedCron] = useState("");
   const [useAdvancedCron, setUseAdvancedCron] = useState(false);
 
+  const [editUseAdvancedCron, setEditUseAdvancedCron] = useState(false);
+  const [editAdvancedCron, setEditAdvancedCron] = useState("");
+  const [editPreset, setEditPreset] = useState<"daily" | "weekly" | "monthly">("daily");
+  const [editSchHour, setEditSchHour] = useState(2);
+  const [editSchMinute, setEditSchMinute] = useState(0);
+  const [editSchDow, setEditSchDow] = useState("MON");
+  const [editSchDom, setEditSchDom] = useState(1);
+
   const [msServer, setMsServer] = useState("localhost");
   const [msDb, setMsDb] = useState("");
   const [msAuth, setMsAuth] = useState<"sql" | "windows">("sql");
@@ -560,6 +624,11 @@ export default function App() {
     if (useAdvancedCron && advancedCron.trim()) return advancedCron.trim();
     return buildCron(preset, schHour, schMinute, schDow, schDom);
   }, [useAdvancedCron, advancedCron, preset, schHour, schMinute, schDow, schDom]);
+
+  const editCronValue = useMemo(() => {
+    if (editUseAdvancedCron && editAdvancedCron.trim()) return editAdvancedCron.trim();
+    return buildCron(editPreset, editSchHour, editSchMinute, editSchDow, editSchDom);
+  }, [editUseAdvancedCron, editAdvancedCron, editPreset, editSchHour, editSchMinute, editSchDow, editSchDom]);
 
   const backupJobsDisplayed = useMemo(
     () =>
@@ -755,6 +824,25 @@ export default function App() {
     }
     setSelectedMsSql(parseConnectionString(selectedJob.source));
   }, [selectedJob, parseConnectionString]);
+
+  useEffect(() => {
+    if (!selectedJob) {
+      return;
+    }
+    const parsed = parseBackupScheduleEditor(selectedJob.scheduleCron);
+    if (parsed.kind === "simple") {
+      setEditUseAdvancedCron(false);
+      setEditPreset(parsed.preset);
+      setEditSchHour(parsed.hour);
+      setEditSchMinute(parsed.minute);
+      setEditSchDow(parsed.dow);
+      setEditSchDom(parsed.dom);
+      setEditAdvancedCron(selectedJob.scheduleCron.trim());
+    } else {
+      setEditUseAdvancedCron(true);
+      setEditAdvancedCron(selectedJob.scheduleCron.trim());
+    }
+  }, [selectedJob?.id, selectedJob?.scheduleCron]);
 
   useEffect(() => {
     if (tab !== "system") {
@@ -1096,6 +1184,10 @@ export default function App() {
   const saveSelectedJob = async () => {
     if (!selectedJob) return;
     setError(null);
+    if (editUseAdvancedCron && !editAdvancedCron.trim()) {
+      setError("В расширенном режиме укажите непустое cron-выражение Quartz.");
+      return;
+    }
     try {
       const isMsSql = selectedJob.type.toLowerCase() === "mssql";
       const sourceForSave =
@@ -1107,12 +1199,15 @@ export default function App() {
         type: selectedJob.type,
         source: sourceForSave,
         destination: selectedJob.destination,
-        scheduleCron: selectedJob.scheduleCron,
+        scheduleCron: editCronValue,
         retentionCount: selectedJob.retentionCount,
         isEnabled: selectedJob.isEnabled,
       };
       await apiSend(`/backups/${selectedJob.id}`, "PUT", body);
       setStatus("Задача сохранена.");
+      setSelectedJob((prev) =>
+        prev && prev.id === selectedJob.id ? { ...prev, scheduleCron: editCronValue } : prev
+      );
       await refreshJobs(true);
     } catch (e) {
       showErr(e);
@@ -1783,13 +1878,109 @@ export default function App() {
                       onChange={(e) => setSelectedJob({ ...selectedJob, destination: e.target.value })}
                     />
                   </label>
-                  <label>
-                    Cron
+                  <h4 style={{ margin: "12px 0 8px" }}>Расписание</h4>
+                  <label className="check">
                     <input
-                      value={selectedJob.scheduleCron}
-                      onChange={(e) => setSelectedJob({ ...selectedJob, scheduleCron: e.target.value })}
+                      type="checkbox"
+                      checked={editUseAdvancedCron}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        if (!on) {
+                          const parsed = parseBackupScheduleEditor(editAdvancedCron.trim());
+                          if (parsed.kind !== "simple") {
+                            setStatus(
+                              "Это расписание нельзя выразить простыми пресетами. Оставлен расширенный режим Quartz."
+                            );
+                            return;
+                          }
+                          setEditPreset(parsed.preset);
+                          setEditSchHour(parsed.hour);
+                          setEditSchMinute(parsed.minute);
+                          setEditSchDow(parsed.dow);
+                          setEditSchDom(parsed.dom);
+                        } else {
+                          setEditAdvancedCron(
+                            buildCron(editPreset, editSchHour, editSchMinute, editSchDow, editSchDom)
+                          );
+                        }
+                        setEditUseAdvancedCron(on);
+                      }}
                     />
+                    Расширенный режим (cron Quartz)
                   </label>
+                  {!editUseAdvancedCron ? (
+                    <>
+                      <label>
+                        Периодичность
+                        <select
+                          value={editPreset}
+                          onChange={(e) => setEditPreset(e.target.value as typeof editPreset)}
+                        >
+                          <option value="daily">Ежедневно</option>
+                          <option value="weekly">Еженедельно</option>
+                          <option value="monthly">Ежемесячно</option>
+                        </select>
+                      </label>
+                      <div className="row">
+                        <label>
+                          Час
+                          <input
+                            type="number"
+                            min={0}
+                            max={23}
+                            value={editSchHour}
+                            onChange={(e) => setEditSchHour(+e.target.value)}
+                          />
+                        </label>
+                        <label>
+                          Минута
+                          <input
+                            type="number"
+                            min={0}
+                            max={59}
+                            value={editSchMinute}
+                            onChange={(e) => setEditSchMinute(+e.target.value)}
+                          />
+                        </label>
+                      </div>
+                      {editPreset === "weekly" && (
+                        <label>
+                          День недели
+                          <select value={editSchDow} onChange={(e) => setEditSchDow(e.target.value)}>
+                            {quartzDays.map((d) => (
+                              <option key={d.v} value={d.v}>
+                                {d.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                      {editPreset === "monthly" && (
+                        <label>
+                          Число месяца
+                          <input
+                            type="number"
+                            min={1}
+                            max={28}
+                            value={editSchDom}
+                            onChange={(e) => setEditSchDom(+e.target.value)}
+                          />
+                        </label>
+                      )}
+                    </>
+                  ) : (
+                    <label>
+                      Cron (Quartz)
+                      <input
+                        value={editAdvancedCron}
+                        onChange={(e) => setEditAdvancedCron(e.target.value)}
+                        placeholder="0 0 2 * * ?"
+                        className="mono"
+                      />
+                    </label>
+                  )}
+                  {editUseAdvancedCron && <p className="cron-hint">{advancedCronHelp}</p>}
+                  <p className="muted mono small">Quartz: {editCronValue}</p>
                   <label>
                     Копий
                     <input
