@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
-const UI_BUILD_VERSION = "1.0.0";
+const UI_BUILD_VERSION = "1.0.1";
 
 const logoSrc = `./logo.png?v=${encodeURIComponent(__LOGO_CACHE_BUST__)}`;
 
@@ -144,7 +144,15 @@ function formatTempC(t: number | null | undefined): string {
 }
 
 function formatPowerOnHours(h: number): string {
-  return h > 0 ? `${h} ч` : "—";
+  if (!(h > 0)) {
+    return "—";
+  }
+  const days = Math.floor(h / 24);
+  if (days <= 0) {
+    return `${h} ч`;
+  }
+  const restHours = h % 24;
+  return `${days} дн${restHours > 0 ? ` ${restHours} ч` : ""}`;
 }
 
 function formatTelemetrySource(d: DiskRow): string {
@@ -412,7 +420,7 @@ type WindowsServiceStatus = {
 
 export default function App() {
   const smartPageSize = 5;
-  const [tab, setTab] = useState<"system" | "disks" | "backup" | "settings" | "about">("disks");
+  const [tab, setTab] = useState<"system" | "disks" | "backup" | "settings" | "about">("system");
   const [theme, setTheme] = useState<"light" | "dark">(() =>
     localStorage.getItem("aria-theme") === "dark" ? "dark" : "light"
   );

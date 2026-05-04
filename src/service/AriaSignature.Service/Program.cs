@@ -8,6 +8,7 @@ using AriaSignature.Service;
 using Serilog;
 using Microsoft.Extensions.Hosting;
 using System.Diagnostics;
+using System.Security.Principal;
 
 var builder = Host.CreateApplicationBuilder(args);
 var startupStopwatch = Stopwatch.StartNew();
@@ -77,5 +78,14 @@ builder.Services.AddQuartzHostedService(options => options.WaitForJobsToComplete
 
 var host = builder.Build();
 var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
-logger.LogInformation("Host built in {ElapsedMs} ms; running service startup pipeline", startupStopwatch.ElapsedMilliseconds);
+var identity = WindowsIdentity.GetCurrent();
+logger.LogInformation(
+    "Host built in {ElapsedMs} ms; startup begins. machine={Machine}; user={User}; identity={Identity}; cwd={CurrentDir}; baseDir={BaseDir}; logDir={LogDir}",
+    startupStopwatch.ElapsedMilliseconds,
+    Environment.MachineName,
+    Environment.UserName,
+    identity?.Name ?? "unknown",
+    Environment.CurrentDirectory,
+    AppContext.BaseDirectory,
+    logDir);
 host.Run();

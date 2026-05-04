@@ -8,8 +8,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Net.Http;
+using System.Net.Sockets;
 
 namespace AriaSignature.Service;
 
@@ -34,6 +36,7 @@ public sealed class LocalApiHostedService : IHostedService
     {
         var startupSw = Stopwatch.StartNew();
         var port = await ResolveApiPortAsync(cancellationToken);
+        var bindMode = await ResolveBindModeAsync(cancellationToken);
         var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
         var webRootExists = Directory.Exists(webRoot);
 
@@ -45,7 +48,7 @@ public sealed class LocalApiHostedService : IHostedService
 
         // CreateSlimBuilder не регистрирует regex route constraints; Swashbuckle (UseSwagger) падает при старте.
         var webBuilder = WebApplication.CreateBuilder(options);
-        var listenUrls = await ResolveListenUrlsAsync(port, cancellationToken);
+        var listenUrls = ResolveListenUrls(port, bindMode);
         webBuilder.WebHost.UseUrls(listenUrls);
         webBuilder.Services.AddApplication();
         webBuilder.Services.AddInfrastructure();
@@ -59,11 +62,26 @@ public sealed class LocalApiHostedService : IHostedService
         _webApp.UseAriaApi();
 
         _logger.LogInformation(
-            "Starting API on {ListenUrls} (wwwroot: {WebRoot}). Локальная панель: http://127.0.0.1:{Port}",
+            "Starting API. bind={BindMode}; urls={ListenUrls}; contentRoot={ContentRoot}; webRoot={WebRoot}; localPanel=http://127.0.0.1:{Port}",
+            bindMode,
             listenUrls,
+            AppContext.BaseDirectory,
             webRootExists ? webRoot : "(none)",
             port);
-        await _webApp.StartAsync(cancellationToken);
+        try
+        {
+            await _webApp.StartAsync(cancellationToken);
+        }
+        catch (Exception ex) when (IsListenAddressFailure(ex))
+        {
+            _logger.LogError(
+                ex,
+                "API start failed. bind={BindMode}; urls={ListenUrls}; port={Port}. Check for IPv6 restrictions or port conflicts.",
+                bindMode,
+                listenUrls,
+                port);
+            throw;
+        }
         _logger.LogInformation("API bind/start completed in {ElapsedMs} ms", startupSw.ElapsedMilliseconds);
         await LogFirstReadyAsync(port, cancellationToken);
     }
@@ -103,7 +121,7 @@ public sealed class LocalApiHostedService : IHostedService
         return fallback;
     }
 
-    private async Task<string> ResolveListenUrlsAsync(int port, CancellationToken cancellationToken)
+    private async Task<string> ResolveBindModeAsync(CancellationToken cancellationToken)
     {
         var fallbackBind = _configuration.GetValue<string>("Api:Bind") ?? "all";
         try
@@ -114,24 +132,53 @@ public sealed class LocalApiHostedService : IHostedService
             var settings = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
             var fromDb = await settings.GetAsync(AppSettingsApiKeys.Bind, linkedCts.Token);
             var mode = string.IsNullOrWhiteSpace(fromDb) ? fallbackBind : fromDb.Trim();
-            if (string.Equals(mode, "loopback", StringComparison.OrdinalIgnoreCase))
-            {
-                return $"http://127.0.0.1:{port}";
-            }
-
-            return $"http://0.0.0.0:{port};http://[::]:{port}";
+            return string.Equals(mode, "loopback", StringComparison.OrdinalIgnoreCase) ? "loopback" : "all";
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to read Api:Bind from DB; using configuration fallback {FallbackBind}", fallbackBind);
         }
 
-        if (string.Equals(fallbackBind.Trim(), "loopback", StringComparison.OrdinalIgnoreCase))
+        return string.Equals(fallbackBind.Trim(), "loopback", StringComparison.OrdinalIgnoreCase) ? "loopback" : "all";
+    }
+
+    private static string ResolveListenUrls(int port, string bindMode)
+    {
+        if (string.Equals(bindMode, "loopback", StringComparison.OrdinalIgnoreCase))
         {
             return $"http://127.0.0.1:{port}";
         }
 
-        return $"http://0.0.0.0:{port};http://[::]:{port}";
+        // Prefer IPv4 wildcard only: on hardened Win11 hosts, explicit [::] may fail startup.
+        return $"http://0.0.0.0:{port}";
+    }
+
+    private static bool IsListenAddressFailure(Exception ex)
+    {
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is SocketException)
+            {
+                return true;
+            }
+
+            if (current is IOException ioEx && ioEx.InnerException is SocketException)
+            {
+                return true;
+            }
+
+            if (current is HttpRequestException && current.InnerException is SocketException)
+            {
+                return true;
+            }
+
+            if (current is Win32Exception win32 && win32.NativeErrorCode is 10013 or 10048)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task LogFirstReadyAsync(int port, CancellationToken cancellationToken)

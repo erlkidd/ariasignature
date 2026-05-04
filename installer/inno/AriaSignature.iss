@@ -2,7 +2,7 @@
 ; Build binaries first, then run this script in Inno Setup Compiler.
 
 #define MyAppName "AriaSignature"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "AriaSignature"
 #define MyAppExeName "AriaSignature.UI.exe"
 #define MyServiceExeName "AriaSignature.Service.exe"
@@ -75,6 +75,7 @@ const
 
 var
   LastScExitCode: Integer;
+  LastProbeExitCode: Integer;
 
 function ScExePath: string;
 begin
@@ -172,6 +173,23 @@ begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyAppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
 end;
 
+function ProbeLocalApiHealth(const Port: Integer): Boolean;
+var
+  ExitCode: Integer;
+  Cmd: string;
+begin
+  Cmd := '-NoProfile -ExecutionPolicy Bypass -Command ' +
+    '"try { $r = Invoke-WebRequest -UseBasicParsing -Uri ''http://127.0.0.1:' + IntToStr(Port) + '/api/v1/status'' -TimeoutSec 3; if ($r.StatusCode -eq 200) { exit 0 } else { exit 2 } } catch { exit 1 }"';
+  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Cmd, '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  LastProbeExitCode := ExitCode;
+  if not Result then
+  begin
+    Log('Failed to execute local API health probe via powershell.exe');
+    Exit;
+  end;
+  Result := ExitCode = 0;
+end;
+
 procedure InstallServiceOrAbort();
 var
   BinPath: string;
@@ -181,6 +199,8 @@ var
   Attempt: Integer;
   Created: Boolean;
   Started: Boolean;
+  Healthy: Boolean;
+  PortAttempt: Integer;
 begin
   if not IsAdminInstallMode then
   begin
@@ -275,6 +295,29 @@ begin
       'Служба AriaSignature установлена, но не была запущена автоматически.'#13#10 +
       'Это не критично: откройте services.msc и запустите AriaSignatureService вручную, ' +
       'либо просто запустите AriaSignature.UI от имени администратора — UI попробует восстановить службу.',
+      mbInformation,
+      MB_OK,
+      IDOK);
+    Exit;
+  end;
+
+  Healthy := False;
+  for PortAttempt := 1 to 8 do
+  begin
+    if ProbeLocalApiHealth(5160) then
+    begin
+      Healthy := True;
+      Break;
+    end;
+    Log(Format('Health probe attempt %d failed with code %d', [PortAttempt, LastProbeExitCode]));
+    Sleep(1500);
+  end;
+
+  if not Healthy then
+  begin
+    SuppressibleMsgBox(
+      'Служба AriaSignature запущена, но API не ответил на локальную проверку /api/v1/status.'#13#10 +
+      'Проверьте журналы в %ProgramData%\AriaSignature\logs\service-*.log и состояние службы в services.msc.',
       mbInformation,
       MB_OK,
       IDOK);

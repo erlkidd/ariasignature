@@ -6,9 +6,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- Документация `docs/AI_CONTEXT.md` для AI-first onboarding: карта компонентов, инварианты, startup sequence, диагностика и тестовые ориентиры.
+
+### Changed
+
+- Релизные заметки унифицированы: `docs/CHANGELOG.md` остаётся каноничным источником истории; `docs/DEVELOPMENT_NOTES.md` превращён в короткий указатель без дублирования.
+- UI (`src/web/src/App.tsx`): стартовая вкладка по умолчанию сменена на `О системе`; отображение наработки диска переведено на формат в днях (с остатком часов).
+- Service startup (`LocalApiHostedService`): bind URL для режима `all` упрощён до IPv4 wildcard, добавлены более подробные диагностические логи по режиму bind/URL/root path.
+- Installer (`AriaSignature.iss`): после `sc start` добавлен локальный health probe `GET /api/v1/status` с уведомлением при нездоровом старте.
+- `release-gate.ps1`: шаги и ошибки логируются в стабильном machine-friendly формате (`[release-gate][step-*]`).
+
 ### Fixed
 
 - UI (`MainWindow`): меньше ложных жёстких ошибок при старте — временные сбои WebView2 к локальному API обрабатываются через восстановление; `EnsureDefaultAutostartApplied` после инициализации WebView, даже если SPA не прислала `appReady`; часть обновлений UI на `DispatcherPriority.Background`.
+- Телеметрия дисков: расширен парсинг smartctl ATA-атрибутов наработки (`ID 9`, `ID 12`), улучшена нормализация ресурса SSD (`ID 231/233`), снижена вероятность ложного определения носителя как SSD.
 
 ### Docs
 

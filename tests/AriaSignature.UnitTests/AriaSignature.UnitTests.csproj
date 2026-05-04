@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\core\AriaSignature.Domain\AriaSignature.Domain.csproj" />
     <ProjectReference Include="..\..\src\core\AriaSignature.Application\AriaSignature.Application.csproj" />
+    <ProjectReference Include="..\..\src\core\AriaSignature.Infrastructure\AriaSignature.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

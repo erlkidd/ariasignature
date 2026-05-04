@@ -4,28 +4,52 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-Location (Resolve-Path "$PSScriptRoot\..")
+$startedAt = Get-Date
 
-Write-Host "1/6 Build web UI (npm)..."
+function Write-Step {
+    param(
+        [int]$Index,
+        [int]$Total,
+        [string]$Name
+    )
+    Write-Host ("[release-gate][step-start] index={0}/{1} name=""{2}"" utc={3}" -f $Index, $Total, $Name, (Get-Date).ToUniversalTime().ToString("o"))
+}
+
+function Assert-ExitCode {
+    param(
+        [int]$Code,
+        [string]$Operation
+    )
+    if ($Code -ne 0) {
+        throw "[release-gate][step-fail] operation=""$Operation"" exit_code=$Code"
+    }
+}
+
+Write-Step -Index 1 -Total 8 -Name "build-web-ui"
 Push-Location .\src\web
 npm ci
-if ($LASTEXITCODE -ne 0) { Pop-Location; throw "npm ci failed" }
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw "[release-gate][step-fail] operation=""npm-ci"" exit_code=$LASTEXITCODE" }
 npm run build
-if ($LASTEXITCODE -ne 0) { Pop-Location; throw "npm run build failed" }
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw "[release-gate][step-fail] operation=""npm-build"" exit_code=$LASTEXITCODE" }
 Pop-Location
 
-Write-Host "2/6 Build solution..."
+Write-Step -Index 2 -Total 8 -Name "build-solution"
 dotnet build .\AriaSignature.slnx -c $Configuration
+Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-build"
 
-Write-Host "3/6 Run tests..."
+Write-Step -Index 3 -Total 8 -Name "run-tests"
 dotnet test .\AriaSignature.slnx -c $Configuration
+Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-test"
 
-Write-Host "4/6 Publish UI..."
+Write-Step -Index 4 -Total 8 -Name "publish-ui"
 dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c $Configuration -o .\publish\ui
+Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-publish-ui"
 
-Write-Host "5/6 Publish service..."
+Write-Step -Index 5 -Total 8 -Name "publish-service"
 dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c $Configuration -o .\publish\service
+Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-publish-service"
 
-Write-Host "6/8 Prepare WebView2 offline runtime..."
+Write-Step -Index 6 -Total 8 -Name "prepare-webview2"
 $webView2Dir = ".\installer\webview2"
 $webView2Exe = Join-Path $webView2Dir "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
 if (-not (Test-Path $webView2Exe)) {
@@ -35,7 +59,7 @@ if (-not (Test-Path $webView2Exe)) {
     Invoke-WebRequest -Uri $url -OutFile $webView2Exe
 }
 
-Write-Host "7/8 Prepare smartctl runtime..."
+Write-Step -Index 7 -Total 8 -Name "prepare-smartctl"
 $smartCtlDir = ".\installer\smartctl"
 $smartCtlExe = Join-Path $smartCtlDir "smartctl.exe"
 $driveDbPath = Join-Path $smartCtlDir "drivedb.h"
@@ -95,7 +119,7 @@ if ((Get-Item $driveDbPath).Length -le 0) {
     throw "drivedb.h is empty after prepare step."
 }
 
-Write-Host "8/8 Build installer..."
+Write-Step -Index 8 -Total 8 -Name "build-installer"
 $isccPath = Get-Command iscc -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue
 if (-not $isccPath) {
     $fallback = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
@@ -109,8 +133,7 @@ if (-not $isccPath) {
 }
 
 & $isccPath .\installer\inno\AriaSignature.iss
-if ($LASTEXITCODE -ne 0) {
-    throw "ISCC failed with exit code $LASTEXITCODE"
-}
+Assert-ExitCode -Code $LASTEXITCODE -Operation "iscc-build-installer"
 
-Write-Host "Release gate completed successfully."
+$elapsed = [int]((Get-Date) - $startedAt).TotalSeconds
+Write-Host ("[release-gate][done] status=success elapsed_sec={0} utc={1}" -f $elapsed, (Get-Date).ToUniversalTime().ToString("o"))

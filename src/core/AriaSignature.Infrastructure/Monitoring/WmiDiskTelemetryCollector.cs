@@ -32,6 +32,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         var smartSnapshot = ReadSmartSnapshotSafe();
         var smartByDriveIndex = BuildSmartByPhysicalDriveIndex(smartSnapshot);
         var storageReliability = ReadStorageReliabilityByPhysicalDriveIndexSafe();
+        var storageMediaType = ReadStorageMediaTypeByPhysicalDriveIndexSafe();
         var disks = new List<Disk>();
 
         try
@@ -83,7 +84,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                             Model = model,
                             Serial = serial,
                             Interface = iface,
-                            MediaType = string.IsNullOrWhiteSpace(mediaType) ? InferMediaType(iface, model) : mediaType,
+                            MediaType = ResolveMediaType(mediaType, physicalIndex, iface, model, storageMediaType),
                             SizeTotalBytes = diskCapacity.total > 0 ? diskCapacity.total : size,
                             SizeFreeBytes = diskCapacity.free,
                             SsdLifeRemainingPercent = ssdLife,
@@ -697,7 +698,26 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             return "SSD";
         }
 
-        return iface.Contains("NVMe", StringComparison.OrdinalIgnoreCase) ? "SSD" : "HDD";
+        if (m.Contains("HDD", StringComparison.Ordinal) ||
+            m.Contains("SATA", StringComparison.Ordinal) ||
+            m.Contains("7200", StringComparison.Ordinal) ||
+            m.Contains("5400", StringComparison.Ordinal))
+        {
+            return "HDD";
+        }
+
+        if (iface.Contains("NVMe", StringComparison.OrdinalIgnoreCase))
+        {
+            return "SSD";
+        }
+
+        if (iface.Contains("SATA", StringComparison.OrdinalIgnoreCase) ||
+            iface.Contains("SCSI", StringComparison.OrdinalIgnoreCase))
+        {
+            return "HDD";
+        }
+
+        return "Не определён";
     }
 
     private static string ResolveInterfaceType(ManagementObject disk)
@@ -708,8 +728,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             return "USB";
         }
 
-        if (pnp.Contains("NVME", StringComparison.OrdinalIgnoreCase) ||
-            pnp.Contains("VEN_144D", StringComparison.OrdinalIgnoreCase))
+        if (pnp.Contains("NVME", StringComparison.OrdinalIgnoreCase))
         {
             return "NVMe";
         }
@@ -987,7 +1006,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
 
     private static int EstimateHealth(int reallocated, int pending, int uncorrectable, int? ssdLife)
     {
-        var penalty = (reallocated * 2) + (pending * 5) + (uncorrectable * 8);
+        var penalty = Math.Min(reallocated, 20) + (pending * 4) + (uncorrectable * 10);
         var baseHealth = Math.Clamp(100 - penalty, 0, 100);
         if (ssdLife is int life)
         {
@@ -1016,6 +1035,78 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         }
 
         return EstimateHealth(reallocated, pending, uncorrectable, ssdLife);
+    }
+
+    private static string ResolveMediaType(
+        string sourceMediaType,
+        int? physicalIndex,
+        string iface,
+        string model,
+        IReadOnlyDictionary<int, string> storageMediaType)
+    {
+        if (!string.IsNullOrWhiteSpace(sourceMediaType))
+        {
+            return sourceMediaType;
+        }
+
+        if (physicalIndex is int idx && storageMediaType.TryGetValue(idx, out var mapped))
+        {
+            return mapped;
+        }
+
+        return InferMediaType(iface, model);
+    }
+
+    private Dictionary<int, string> ReadStorageMediaTypeByPhysicalDriveIndexSafe()
+    {
+        var map = new Dictionary<int, string>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                @"root\Microsoft\Windows\Storage",
+                "SELECT DeviceId, MediaType, SpindleSpeed, FriendlyName FROM MSFT_PhysicalDisk");
+            using var results = searcher.Get();
+            foreach (ManagementObject row in results)
+            {
+                using (row)
+                {
+                    var idx = TryParsePhysicalDriveIndex(row["DeviceId"]?.ToString());
+                    if (idx is not int driveIdx)
+                    {
+                        continue;
+                    }
+
+                    var mediaTypeRaw = Convert.ToString(row["MediaType"], CultureInfo.InvariantCulture);
+                    var spindleRaw = Convert.ToString(row["SpindleSpeed"], CultureInfo.InvariantCulture);
+                    if (int.TryParse(mediaTypeRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var mediaTypeCode))
+                    {
+                        map[driveIdx] = mediaTypeCode switch
+                        {
+                            3 => "HDD",
+                            4 => "SSD",
+                            5 => "SCM",
+                            _ => "Не определён"
+                        };
+                        continue;
+                    }
+
+                    if (int.TryParse(spindleRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var spindle))
+                    {
+                        map[driveIdx] = spindle > 0 ? "HDD" : "SSD";
+                        continue;
+                    }
+
+                    var name = row["FriendlyName"]?.ToString() ?? string.Empty;
+                    map[driveIdx] = InferMediaType(string.Empty, name);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "WMI MSFT_PhysicalDisk media type query failed.");
+        }
+
+        return map;
     }
 
     private static DiskHealthStatus CalculateStatus(int reallocated, int pending, int uncorrectable, int? ssdLife)
