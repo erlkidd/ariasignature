@@ -689,6 +689,7 @@ label.check {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface-soft);
+  overflow: hidden;
 }
 
 .settings-collapsible-summary {
@@ -699,14 +700,51 @@ label.check {
   line-height: 1.35;
   padding: 12px 14px;
   user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  transition: background-color 0.15s ease;
+}
+
+.settings-collapsible-summary:hover {
+  background: rgba(128, 128, 128, 0.14);
+}
+
+.settings-collapsible-summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .settings-collapsible-summary::-webkit-details-marker {
-  margin-right: 10px;
+  display: none;
+}
+
+.settings-collapsible-summary::marker {
+  content: "";
+}
+
+/* Шеврон справа: закрыто — указывает вправо, открыто — вниз */
+.settings-collapsible-summary::after {
+  content: "";
+  flex-shrink: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0.32em 0 0.32em 0.48em;
+  border-color: transparent transparent transparent var(--muted);
+  transform: rotate(0deg);
+  transform-origin: 35% 50%;
+  transition: transform 0.2s ease;
+}
+
+.settings-collapsible[open] .settings-collapsible-summary::after {
+  transform: rotate(90deg);
 }
 
 .settings-collapsible[open] .settings-collapsible-summary {
   border-bottom: 1px solid var(--border);
+  border-radius: 10px 10px 0 0;
 }
 
 .settings-collapsible-body {
