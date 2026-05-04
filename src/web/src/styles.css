@@ -630,15 +630,26 @@ label.check {
   background: var(--bg);
 }
 
-.job-editor-details summary {
-  cursor: pointer;
-  font-weight: 700;
-  padding: 12px 4px;
-  list-style: none;
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0 6px;
 }
 
-.job-editor-details summary::-webkit-details-marker {
-  display: none;
+.editor-close-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
 }
 
 .new-task-page {

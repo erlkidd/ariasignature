@@ -418,6 +418,24 @@ type WindowsServiceStatus = {
   error?: string;
 };
 
+type MsSqlDraft = {
+  server: string;
+  database: string;
+  auth: "sql" | "windows";
+  user: string;
+  password: string;
+  trustServerCertificate: boolean;
+};
+
+const defaultMsSqlDraft: MsSqlDraft = {
+  server: "",
+  database: "",
+  auth: "sql",
+  user: "",
+  password: "",
+  trustServerCertificate: true,
+};
+
 export default function App() {
   const smartPageSize = 5;
   const [tab, setTab] = useState<"system" | "disks" | "backup" | "settings" | "about">("system");
@@ -436,6 +454,7 @@ export default function App() {
   const [logs, setLogs] = useState<BackupLog[]>([]);
   const [logFilterStatus, setLogFilterStatus] = useState("");
   const [selectedJob, setSelectedJob] = useState<BackupJob | null>(null);
+  const [selectedMsSql, setSelectedMsSql] = useState<MsSqlDraft | null>(null);
   const [runningJobIds, setRunningJobIds] = useState<Record<string, boolean>>({});
   const [backupTopTab, setBackupTopTab] = useState<"configure" | "active">("configure");
   const [backupPageTab, setBackupPageTab] = useState<"tasks" | "history" | "new">("tasks");
@@ -479,6 +498,61 @@ export default function App() {
   const [outboundHour, setOutboundHour] = useState(2);
   const [outboundMinute, setOutboundMinute] = useState(0);
   const [outboundCustomCron, setOutboundCustomCron] = useState("0 0/30 * * * ?");
+
+  const parseConnectionString = useCallback((source: string): MsSqlDraft => {
+    const draft: MsSqlDraft = { ...defaultMsSqlDraft };
+    const parts = (source ?? "")
+      .split(";")
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+    for (const part of parts) {
+      const eq = part.indexOf("=");
+      if (eq <= 0) continue;
+      const key = part.slice(0, eq).trim().toLowerCase();
+      const value = part.slice(eq + 1).trim();
+      if (!value) continue;
+
+      if (key === "data source" || key === "server") draft.server = value;
+      else if (key === "initial catalog" || key === "database") draft.database = value;
+      else if (key === "user id" || key === "uid" || key === "user") draft.user = value;
+      else if (key === "password" || key === "pwd") draft.password = value;
+      else if (key === "integrated security" || key === "trusted_connection") {
+        const normalized = value.toLowerCase();
+        if (normalized === "true" || normalized === "sspi" || normalized === "yes") {
+          draft.auth = "windows";
+        }
+      } else if (key === "trust server certificate") {
+        const normalized = value.toLowerCase();
+        draft.trustServerCertificate = normalized === "true" || normalized === "yes";
+      }
+    }
+
+    if (draft.auth === "sql" && !draft.user && !draft.password) {
+      const maybeWindows = (source ?? "").toLowerCase();
+      if (maybeWindows.includes("integrated security=true") || maybeWindows.includes("trusted_connection=true")) {
+        draft.auth = "windows";
+      }
+    }
+
+    return draft;
+  }, []);
+
+  const buildConnectionString = useCallback((draft: MsSqlDraft): string => {
+    const chunks: string[] = [];
+    if (draft.server.trim()) chunks.push(`Data Source=${draft.server.trim()}`);
+    if (draft.database.trim()) chunks.push(`Initial Catalog=${draft.database.trim()}`);
+    if (draft.auth === "windows") {
+      chunks.push("Integrated Security=True");
+    } else {
+      if (draft.user.trim()) chunks.push(`User ID=${draft.user.trim()}`);
+      if (draft.password.trim()) chunks.push(`Password=${draft.password}`);
+    }
+    chunks.push("Connect Timeout=20");
+    chunks.push("Encrypt=True");
+    chunks.push(`Trust Server Certificate=${draft.trustServerCertificate ? "True" : "False"}`);
+    return chunks.join(";");
+  }, []);
 
   const cronValue = useMemo(() => {
     if (useAdvancedCron && advancedCron.trim()) return advancedCron.trim();
@@ -664,6 +738,14 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    if (!selectedJob || selectedJob.type.toLowerCase() !== "mssql") {
+      setSelectedMsSql(null);
+      return;
+    }
+    setSelectedMsSql(parseConnectionString(selectedJob.source));
+  }, [selectedJob, parseConnectionString]);
+
+  useEffect(() => {
     if (tab !== "system") {
       return;
     }
@@ -705,9 +787,6 @@ export default function App() {
   }, [loadDisks, refreshJobs, refreshSettings, refreshServiceVersion]);
 
   useEffect(() => {
-    if (tab !== "backup") {
-      return;
-    }
     let cancelled = false;
     const ping = async () => {
       try {
@@ -728,13 +807,19 @@ export default function App() {
       }
     };
     void ping();
-    void refreshJobs();
-    void refreshLogs();
     const id = window.setInterval(ping, 12_000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
+  }, []);
+
+  useEffect(() => {
+    if (tab !== "backup") {
+      return;
+    }
+    void refreshJobs();
+    void refreshLogs();
   }, [tab, refreshJobs, refreshLogs]);
 
   useEffect(() => {
@@ -923,6 +1008,25 @@ export default function App() {
     }
   };
 
+  const testSelectedMsSql = async () => {
+    if (!selectedMsSql) return;
+    setError(null);
+    setStatus("Проверка MSSQL (редактирование)…");
+    try {
+      await apiSend("/backups/test-mssql", "POST", {
+        server: selectedMsSql.server,
+        database: selectedMsSql.database,
+        auth: selectedMsSql.auth,
+        user: selectedMsSql.user,
+        password: selectedMsSql.password,
+        trustServerCertificate: selectedMsSql.trustServerCertificate,
+      });
+      setStatus("Подключение к MSSQL успешно.");
+    } catch (e) {
+      showErr(e);
+    }
+  };
+
   const createJob = async () => {
     setError(null);
     const nextErrors: CreateJobFieldErrors = {};
@@ -983,10 +1087,15 @@ export default function App() {
     if (!selectedJob) return;
     setError(null);
     try {
+      const isMsSql = selectedJob.type.toLowerCase() === "mssql";
+      const sourceForSave =
+        isMsSql && selectedMsSql
+          ? buildConnectionString(selectedMsSql)
+          : selectedJob.source;
       const body: Record<string, unknown> = {
         name: selectedJob.name,
         type: selectedJob.type,
-        source: selectedJob.source,
+        source: sourceForSave,
         destination: selectedJob.destination,
         scheduleCron: selectedJob.scheduleCron,
         retentionCount: selectedJob.retentionCount,
@@ -1576,10 +1685,16 @@ export default function App() {
 
             {selectedJob && (
               <div className="job-editor-details">
-                <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <div className="editor-header">
                   <h3 style={{ margin: 0 }}>Редактирование: {selectedJob.name}</h3>
-                  <button type="button" className="secondary" onClick={() => setSelectedJob(null)}>
-                    Закрыть редактор
+                  <button
+                    type="button"
+                    className="editor-close-btn"
+                    aria-label="Закрыть редактор"
+                    title="Закрыть редактор"
+                    onClick={() => setSelectedJob(null)}
+                  >
+                    ×
                   </button>
                 </div>
                 <div className="job-editor-body box backup-edit-box">
@@ -1590,14 +1705,67 @@ export default function App() {
                       onChange={(e) => setSelectedJob({ ...selectedJob, name: e.target.value })}
                     />
                   </label>
-                  <label>
-                    Источник (путь или строка подключения)
-                    <textarea
-                      value={selectedJob.source}
-                      onChange={(e) => setSelectedJob({ ...selectedJob, source: e.target.value })}
-                      rows={3}
-                    />
-                  </label>
+                  {selectedJob.type.toLowerCase() === "mssql" && selectedMsSql ? (
+                    <div className="box">
+                      <label>
+                        Сервер
+                        <input
+                          value={selectedMsSql.server}
+                          onChange={(e) => setSelectedMsSql({ ...selectedMsSql, server: e.target.value })}
+                        />
+                      </label>
+                      <label>
+                        База данных
+                        <input
+                          value={selectedMsSql.database}
+                          onChange={(e) => setSelectedMsSql({ ...selectedMsSql, database: e.target.value })}
+                        />
+                      </label>
+                      <label>
+                        Аутентификация
+                        <select
+                          value={selectedMsSql.auth}
+                          onChange={(e) => setSelectedMsSql({ ...selectedMsSql, auth: e.target.value as "sql" | "windows" })}
+                        >
+                          <option value="sql">SQL (логин / пароль)</option>
+                          <option value="windows">Windows (Integrated)</option>
+                        </select>
+                      </label>
+                      {selectedMsSql.auth === "sql" && (
+                        <>
+                          <label>
+                            Логин
+                            <input
+                              autoComplete="off"
+                              value={selectedMsSql.user}
+                              onChange={(e) => setSelectedMsSql({ ...selectedMsSql, user: e.target.value })}
+                            />
+                          </label>
+                          <label>
+                            Пароль
+                            <input
+                              type="password"
+                              autoComplete="off"
+                              value={selectedMsSql.password}
+                              onChange={(e) => setSelectedMsSql({ ...selectedMsSql, password: e.target.value })}
+                            />
+                          </label>
+                        </>
+                      )}
+                      <button type="button" className="secondary" onClick={() => void testSelectedMsSql()}>
+                        Проверить подключение
+                      </button>
+                    </div>
+                  ) : (
+                    <label>
+                      Источник (путь или строка подключения)
+                      <textarea
+                        value={selectedJob.source}
+                        onChange={(e) => setSelectedJob({ ...selectedJob, source: e.target.value })}
+                        rows={3}
+                      />
+                    </label>
+                  )}
                   <label>
                     {backupTopTab === "active" ? "Папка архива" : "Папка архивов"}
                     <input
@@ -1914,13 +2082,6 @@ export default function App() {
             </div>
           )}
 
-          <div
-            className={`status-bar-effector${svcLine.includes("нет ответа") ? " err" : ""}`}
-            role="status"
-            aria-live="polite"
-          >
-            {svcLine || "Состояние API: ожидание…"}
-          </div>
         </section>
       )}
 
@@ -2286,6 +2447,14 @@ export default function App() {
           ) : null}
         </section>
       )}
+
+      <div
+        className={`status-bar-effector${svcLine.includes("нет ответа") ? " err" : ""}`}
+        role="status"
+        aria-live="polite"
+      >
+        {svcLine || "Состояние API: ожидание…"}
+      </div>
 
       <footer className="footer">
         <span>AriaSignature v{serviceVersion ?? UI_BUILD_VERSION}</span>
