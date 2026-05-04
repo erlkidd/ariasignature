@@ -1575,67 +1575,72 @@ export default function App() {
             </div>
 
             {selectedJob && (
-              <details className="job-editor-details">
-                <summary>Редактирование: {selectedJob.name}</summary>
+              <div className="job-editor-details">
+                <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                  <h3 style={{ margin: 0 }}>Редактирование: {selectedJob.name}</h3>
+                  <button type="button" className="secondary" onClick={() => setSelectedJob(null)}>
+                    Закрыть редактор
+                  </button>
+                </div>
                 <div className="job-editor-body box backup-edit-box">
-                <label>
-                  Имя
-                  <input
-                    value={selectedJob.name}
-                    onChange={(e) => setSelectedJob({ ...selectedJob, name: e.target.value })}
-                  />
-                </label>
-                <label>
-                  Источник (путь или строка подключения)
-                  <textarea
-                    value={selectedJob.source}
-                    onChange={(e) => setSelectedJob({ ...selectedJob, source: e.target.value })}
-                    rows={3}
-                  />
-                </label>
-                <label>
-                  {backupTopTab === "active" ? "Папка архива" : "Папка архивов"}
-                  <input
-                    value={selectedJob.destination}
-                    onChange={(e) => setSelectedJob({ ...selectedJob, destination: e.target.value })}
-                  />
-                </label>
-                <label>
-                  Cron
-                  <input
-                    value={selectedJob.scheduleCron}
-                    onChange={(e) => setSelectedJob({ ...selectedJob, scheduleCron: e.target.value })}
-                  />
-                </label>
-                <label>
-                  Копий
-                  <input
-                    type="number"
-                    value={selectedJob.retentionCount}
-                    onChange={(e) => setSelectedJob({ ...selectedJob, retentionCount: Number(e.target.value) })}
-                  />
-                </label>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={selectedJob.isEnabled}
-                    onChange={(e) => setSelectedJob({ ...selectedJob, isEnabled: e.target.checked })}
-                  />
-                  Включена
-                </label>
-                <div className="row">
-                  <button type="button" onClick={() => void saveSelectedJob()}>
-                    Сохранить
-                  </button>
-                  <button type="button" disabled={Boolean(runningJobIds[selectedJob.id])} onClick={() => void runJob(selectedJob.id)}>
-                    {runningJobIds[selectedJob.id] ? "Выполняется…" : "Запустить"}
-                  </button>
-                  <button type="button" className="danger" onClick={() => void deleteJob(selectedJob.id)}>
-                    Удалить
-                  </button>
+                  <label>
+                    Имя
+                    <input
+                      value={selectedJob.name}
+                      onChange={(e) => setSelectedJob({ ...selectedJob, name: e.target.value })}
+                    />
+                  </label>
+                  <label>
+                    Источник (путь или строка подключения)
+                    <textarea
+                      value={selectedJob.source}
+                      onChange={(e) => setSelectedJob({ ...selectedJob, source: e.target.value })}
+                      rows={3}
+                    />
+                  </label>
+                  <label>
+                    {backupTopTab === "active" ? "Папка архива" : "Папка архивов"}
+                    <input
+                      value={selectedJob.destination}
+                      onChange={(e) => setSelectedJob({ ...selectedJob, destination: e.target.value })}
+                    />
+                  </label>
+                  <label>
+                    Cron
+                    <input
+                      value={selectedJob.scheduleCron}
+                      onChange={(e) => setSelectedJob({ ...selectedJob, scheduleCron: e.target.value })}
+                    />
+                  </label>
+                  <label>
+                    Копий
+                    <input
+                      type="number"
+                      value={selectedJob.retentionCount}
+                      onChange={(e) => setSelectedJob({ ...selectedJob, retentionCount: Number(e.target.value) })}
+                    />
+                  </label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={selectedJob.isEnabled}
+                      onChange={(e) => setSelectedJob({ ...selectedJob, isEnabled: e.target.checked })}
+                    />
+                    Включена
+                  </label>
+                  <div className="row">
+                    <button type="button" onClick={() => void saveSelectedJob()}>
+                      Сохранить
+                    </button>
+                    <button type="button" disabled={Boolean(runningJobIds[selectedJob.id])} onClick={() => void runJob(selectedJob.id)}>
+                      {runningJobIds[selectedJob.id] ? "Выполняется…" : "Запустить"}
+                    </button>
+                    <button type="button" className="danger" onClick={() => void deleteJob(selectedJob.id)}>
+                      Удалить
+                    </button>
+                  </div>
                 </div>
-                </div>
-              </details>
+              </div>
             )}
           </div>
           )}
