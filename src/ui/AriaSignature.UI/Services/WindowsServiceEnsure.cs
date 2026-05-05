@@ -1,6 +1,9 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.ServiceProcess;
+using System.Text;
 
 namespace AriaSignature.UI.Services;
 
@@ -10,6 +13,17 @@ namespace AriaSignature.UI.Services;
 public static class WindowsServiceEnsure
 {
     public const string ServiceName = "AriaSignatureService";
+
+    /// <summary>Win32 ERROR_SERVICE_REQUEST_TIMEOUT — SCM не дождался ответа службы за отведённое время.</summary>
+    private const int ErrorServiceRequestTimeout = 1053;
+
+    /// <summary>Служба уже запущена.</summary>
+    private const int ErrorServiceAlreadyRunning = 1056;
+
+    static WindowsServiceEnsure()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+    }
 
     public static void TryStartOrFallback(string serviceExePath, TimeSpan wait, out string? warningMessage)
     {
@@ -29,9 +43,18 @@ public static class WindowsServiceEnsure
                 return;
             }
 
-            sc.Start();
-            sc.WaitForStatus(ServiceControllerStatus.Running, wait);
-            return;
+            try
+            {
+                sc.Start();
+                sc.WaitForStatus(ServiceControllerStatus.Running, wait);
+                return;
+            }
+            catch (InvalidOperationException ex) when (TryFindNativeError(ex, out var code) && code == ErrorServiceRequestTimeout)
+            {
+                using var scAfter1053 = new ServiceController(ServiceName);
+                scAfter1053.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(120));
+                return;
+            }
         }
         catch (InvalidOperationException ex)
         {
@@ -52,6 +75,39 @@ public static class WindowsServiceEnsure
         {
             warningMessage = $"Не удалось запустить фоновый сервис (службу): {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Запускает службу и ждёт Running. Если SCM вернёт 1053 (таймаут ответа службы), дополнительно ждём до 120 с —
+    /// процесс мог успеть перейти в Running после сообщения об ошибке.
+    /// </summary>
+    public static void StartServiceAllowingScmTimeout1053(ServiceController sc, TimeSpan primaryWait)
+    {
+        try
+        {
+            sc.Start();
+            sc.WaitForStatus(ServiceControllerStatus.Running, primaryWait);
+        }
+        catch (InvalidOperationException ex) when (TryFindNativeError(ex, out var code) && code == ErrorServiceRequestTimeout)
+        {
+            using var fresh = new ServiceController(ServiceName);
+            fresh.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(120));
+        }
+    }
+
+    private static bool TryFindNativeError(Exception ex, out int nativeErrorCode)
+    {
+        for (Exception? e = ex; e is not null; e = e.InnerException)
+        {
+            if (e is Win32Exception w32)
+            {
+                nativeErrorCode = w32.NativeErrorCode;
+                return true;
+            }
+        }
+
+        nativeErrorCode = 0;
+        return false;
     }
 
     private static void KillOrphanServiceProcessesBestEffort()
@@ -149,14 +205,35 @@ public static class WindowsServiceEnsure
             }
 
             RunScBestEffort(scPath, $"failure {ServiceName} reset= 86400 actions= restart/5000/restart/5000/restart/5000");
-            if (!RunSc(scPath, $"start {ServiceName}", out var startExit, out var startOutput) && startExit != 1056)
+            var startOk = RunSc(scPath, $"start {ServiceName}", out var startExit, out var startOutput);
+            if (!startOk && startExit == ErrorServiceAlreadyRunning)
+            {
+                startOk = true;
+            }
+
+            if (!startOk && startExit == ErrorServiceRequestTimeout)
+            {
+                try
+                {
+                    using var scWait = new ServiceController(ServiceName);
+                    scWait.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(120));
+                    startOk = true;
+                }
+                catch (Exception waitEx)
+                {
+                    error =
+                        $"sc start вернул {ErrorServiceRequestTimeout} (таймаут SCM — служба могла всё же продолжить запуск). Ожидание Running не удалось: {waitEx.Message}. Вывод sc: {startOutput}";
+                    return false;
+                }
+            }
+            else if (!startOk)
             {
                 error = $"sc start failed ({startExit}): {startOutput}";
                 return false;
             }
 
             using var sc = new ServiceController(ServiceName);
-            sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
+            sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(120));
             return true;
         }
         catch (Exception ex)
@@ -209,6 +286,7 @@ public static class WindowsServiceEnsure
                 CreateNoWindow = true,
                 RedirectStandardOutput = true
             };
+            ApplyScConsoleEncoding(psi);
             using var proc = Process.Start(psi);
             if (proc is null)
             {
@@ -246,6 +324,45 @@ public static class WindowsServiceEnsure
         return null;
     }
 
+    private static Encoding TryGetScOutputEncoding()
+    {
+        try
+        {
+            var cp = CultureInfo.CurrentCulture.TextInfo.OEMCodePage;
+            if (cp > 0)
+            {
+                return Encoding.GetEncoding(cp);
+            }
+        }
+        catch
+        {
+            // fall through
+        }
+
+        try
+        {
+            return Encoding.GetEncoding(866);
+        }
+        catch
+        {
+            return Encoding.UTF8;
+        }
+    }
+
+    private static void ApplyScConsoleEncoding(ProcessStartInfo psi)
+    {
+        try
+        {
+            var enc = TryGetScOutputEncoding();
+            psi.StandardOutputEncoding = enc;
+            psi.StandardErrorEncoding = enc;
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
     private static bool RunSc(string scPath, string args, out int exitCode, out string output)
     {
         output = string.Empty;
@@ -258,6 +375,7 @@ public static class WindowsServiceEnsure
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
+        ApplyScConsoleEncoding(psi);
         using var proc = Process.Start(psi);
         if (proc is null)
         {

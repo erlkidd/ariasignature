@@ -3,6 +3,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -23,7 +23,7 @@
 
 1. Запуск `AriaSignature.Service`.
 2. Инициализация хоста и логирования.
-3. Запуск `LocalApiHostedService` и bind URL.
+3. Запуск `LocalApiHostedService` как `BackgroundService`: SCM получает Running без блокировки на долгом подъёме Kestrel; затем bind URL и слушание порта.
 4. Готовность API проверяется локальным probe (`/api/v1/status`).
 5. UI подключается к `127.0.0.1:{port}` и отображает SPA.
 
@@ -32,6 +32,7 @@
 - Логи службы: `%ProgramData%/AriaSignature/logs/service-*.log`.
 - Если сервис не стартует после установки:
   - проверить `services.msc` (`AriaSignatureService`);
+  - код **1053** у SCM — часто таймаут ответа при долгом старте; проверить состояние службы и логи через минуту, см. `docs/USER_GUIDE.md` §9;
   - проверить порт `5160` (конфликт);
   - проверить `Api:Bind` (`all`/`loopback`) в настройках.
 - Инсталлятор логирует шаги `sc create/start` и health probe API.

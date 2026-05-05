@@ -760,8 +760,7 @@ public partial class MainWindow : Window
                 case "start":
                     if (sc.Status == ServiceControllerStatus.Stopped)
                     {
-                        sc.Start();
-                        sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(90));
+                        WindowsServiceEnsure.StartServiceAllowingScmTimeout1053(sc, TimeSpan.FromSeconds(90));
                     }
 
                     break;
@@ -783,8 +782,7 @@ public partial class MainWindow : Window
                     sc.Refresh();
                     if (sc.Status == ServiceControllerStatus.Stopped)
                     {
-                        sc.Start();
-                        sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(90));
+                        WindowsServiceEnsure.StartServiceAllowingScmTimeout1053(sc, TimeSpan.FromSeconds(90));
                     }
 
                     break;
