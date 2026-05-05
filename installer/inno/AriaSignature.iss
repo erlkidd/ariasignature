@@ -67,6 +67,7 @@ Type: filesandordirs; Name: "{app}"
 const
   TrayTaskName = 'AriaSignatureTrayLogon';
   ServiceName = 'AriaSignatureService';
+  PostInstallTimeoutSeconds = 90;
   SC_ACCEPTABLE_NOT_FOUND = 1060;
   SC_ACCEPTABLE_NOT_ACTIVE = 1062;
   SC_ACCEPTABLE_ALREADY_RUNNING = 1056;
@@ -82,6 +83,8 @@ var
   LastBootstrapExitCode: Integer;
   LastBootstrapErrorClass: string;
   LastBootstrapFailureDetail: string;
+  PostInstallBudgetSecondsLeft: Integer;
+  PostInstallTimedOut: Boolean;
 
 function ScExePath: string;
 begin
@@ -91,6 +94,57 @@ begin
     Result := ExpandConstant('{win}\System32\sc.exe');
   if not FileExists(Result) then
     Result := ExpandConstant('{sys}\sc.exe');
+end;
+
+procedure PumpWizardUi(const StatusText: string);
+begin
+  if StatusText <> '' then
+    WizardForm.StatusLabel.Caption := StatusText;
+  WizardForm.Update;
+end;
+
+procedure SleepWithWizardUi(const DelayMs: Integer; const StatusText: string);
+var
+  Remaining: Integer;
+  SliceMs: Integer;
+begin
+  Remaining := DelayMs;
+  while Remaining > 0 do
+  begin
+    PumpWizardUi(StatusText);
+    if Remaining > 200 then
+      SliceMs := 200
+    else
+      SliceMs := Remaining;
+    Sleep(SliceMs);
+    Remaining := Remaining - SliceMs;
+  end;
+  PumpWizardUi(StatusText);
+  PostInstallBudgetSecondsLeft := PostInstallBudgetSecondsLeft - (DelayMs div 1000);
+end;
+
+procedure StartPostInstallBudget();
+begin
+  PostInstallTimedOut := False;
+  PostInstallBudgetSecondsLeft := PostInstallTimeoutSeconds;
+end;
+
+function IsPostInstallTimedOut(const StageName: string): Boolean;
+begin
+  if PostInstallTimedOut then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  Result := PostInstallBudgetSecondsLeft <= 0;
+  if Result then
+  begin
+    PostInstallTimedOut := True;
+    InstallHealthStatus := 'install-health:timeout';
+    Log('Post-install timeout reached at stage: ' + StageName);
+    PumpWizardUi('Установка завершает настройку. Служба догревается в фоне...');
+  end;
 end;
 
 function ExecSc(const Params: string; const AcceptableCodeA: Integer; const AcceptableCodeB: Integer): Boolean;
@@ -177,7 +231,7 @@ begin
       end;
     end;
 
-    Sleep(1000);
+    SleepWithWizardUi(1000, 'Ожидание освобождения службы AriaSignature...');
   end;
 end;
 
@@ -386,6 +440,7 @@ var
   PortAttempt: Integer;
 begin
   InstallHealthStatus := 'install-health:starting';
+  PumpWizardUi('Настройка службы AriaSignature...');
 
   if not IsAdminInstallMode then
   begin
@@ -400,7 +455,8 @@ begin
   AssertFileExistsOrAbort(ScExePath, 'sc.exe');
   AssertFileExistsOrAbort(ExpandConstant('{app}\service\smartctl\smartctl.exe'), 'smartctl.exe');
   AssertFileExistsOrAbort(ExpandConstant('{app}\service\smartctl\drivedb.h'), 'drivedb.h');
-  AssertFileExistsOrAbort(ExpandConstant('{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe'), 'WebView2 offline installer');
+  if NeedsWebView2Runtime() then
+    AssertFileExistsOrAbort(ExpandConstant('{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe'), 'WebView2 offline installer');
 
   { binPath в кавычках (AddQuotes): иначе "Program Files" ломает sc create и служба не регистрируется }
   CreateParams := 'create ' + ServiceName + ' binPath= ' + AddQuotes(BinPath) + ' start= auto DisplayName= "AriaSignature" obj= LocalSystem';
@@ -410,6 +466,13 @@ begin
   Created := False;
   for Attempt := 1 to 20 do
   begin
+    if IsPostInstallTimedOut('create-service') then
+    begin
+      InstallHealthStatus := 'install-health:degraded-timeout-create';
+      Exit;
+    end;
+
+    PumpWizardUi(Format('Регистрация службы AriaSignature (%d/20)...', [Attempt]));
     if ExecSc(CreateParams, 0, SC_ALREADY_EXISTS) then
     begin
       Created := True;
@@ -449,24 +512,34 @@ begin
       Log('Service is marked for delete; waiting for SCM to finalize deletion before next create.');
       if not WaitServiceAbsent(15) then
         Log('WaitServiceAbsent after SC_MARKED_FOR_DELETE timed out; will still retry create.');
-      Sleep(2500);
+      SleepWithWizardUi(2500, 'Ожидание обновления состояния службы в Windows...');
     end
     else
     begin
-      Sleep(1500);
+      SleepWithWizardUi(1500, 'Повторная попытка регистрации службы...');
     end;
   end;
 
   if not Created then
   begin
-    RaiseException(
-      'Не удалось зарегистрировать службу AriaSignatureService (sc create). Код sc.exe: ' +
-      IntToStr(LastScExitCode) + '. См. лог установщика.');
+    InstallHealthStatus := 'install-health:degraded-service-create-failed';
+    Log('Warning: service create did not succeed; installer continues in degraded mode.');
+    SuppressibleMsgBox(
+      'Служба AriaSignature не зарегистрировалась автоматически (sc create код ' +
+      IntToStr(LastScExitCode) + ').' #13#10 +
+      'Установка приложения завершена, но служба будет донастроена при первом запуске UI.' #13#10 +
+      'Логи: %ProgramData%\AriaSignature\logs\.',
+      mbInformation,
+      MB_OK,
+      IDOK);
+    Exit;
   end;
 
   if not ServiceIsRegistered then
   begin
-    RaiseException('Служба AriaSignatureService не найдена в системе сразу после регистрации. Проверьте антивирус и политики (запрет изменения служб).');
+    InstallHealthStatus := 'install-health:degraded-service-not-registered';
+    Log('Warning: service registration did not appear in SCM immediately; installer continues in degraded mode.');
+    Exit;
   end;
 
   if not ExecSc(Format('failure %s reset= 86400 actions= restart/5000/restart/5000/restart/5000', [ServiceName]), 0, -1) then
@@ -477,6 +550,13 @@ begin
   Started := False;
   for Attempt := 1 to 12 do
   begin
+    if IsPostInstallTimedOut('start-service') then
+    begin
+      InstallHealthStatus := 'install-health:degraded-timeout-start';
+      Exit;
+    end;
+
+    PumpWizardUi(Format('Запуск службы AriaSignature (%d/12)...', [Attempt]));
     if ExecSc(Format('start %s', [ServiceName]), 0, SC_ACCEPTABLE_ALREADY_RUNNING) then
     begin
       Started := True;
@@ -484,7 +564,7 @@ begin
     end;
 
     Log(Format('sc start retry %d failed with code %d', [Attempt, LastScExitCode]));
-    Sleep(1500);
+    SleepWithWizardUi(1500, 'Повторный запуск службы...');
   end;
 
   if not Started then
@@ -521,13 +601,20 @@ begin
   Healthy := False;
   for PortAttempt := 1 to 8 do
   begin
+    if IsPostInstallTimedOut('api-health') then
+    begin
+      InstallHealthStatus := 'install-health:degraded-timeout-api';
+      Exit;
+    end;
+
+    PumpWizardUi(Format('Проверка локального API (%d/8)...', [PortAttempt]));
     if ProbeLocalApiHealth(5160) then
     begin
       Healthy := True;
       Break;
     end;
     Log(Format('Health probe attempt %d failed with code %d', [PortAttempt, LastProbeExitCode]));
-    Sleep(1500);
+    SleepWithWizardUi(1500, 'Ожидание готовности локального API...');
   end;
 
   if not Healthy then
@@ -568,6 +655,15 @@ begin
   Log(InstallHealthStatus);
 end;
 
+procedure RunPreInstallCleanup();
+begin
+  PumpWizardUi('Подготовка к установке...');
+  StopAndDeleteServiceBestEffort();
+  KillServiceProcessBestEffort();
+  if not WaitServiceAbsent(8) then
+    Log('Service still exists before file copy; installer continues and will retry create later.');
+end;
+
 function SchTasksExePath: string;
 begin
   Result := ExpandConstant('{sysnative}\schtasks.exe');
@@ -596,19 +692,42 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
   begin
-    StopAndDeleteServiceBestEffort();
-    KillServiceProcessBestEffort();
-    if not WaitServiceAbsent(45) then
-    begin
-      Log('Service still exists before file copy; installer continues and will retry create later.');
-    end;
+    RunPreInstallCleanup();
   end;
 
   if CurStep = ssPostInstall then
   begin
+    StartPostInstallBudget();
     InstallServiceOrAbort();
     RemoveLegacyCommonStartupShortcutBestEffort();
+    if Pos('install-health:degraded', InstallHealthStatus) = 1 then
+    begin
+      SuppressibleMsgBox(
+        'Установка завершена в режиме ограниченной готовности.'#13#10 +
+        'Служба/локальный API могут прогреваться после закрытия мастера.'#13#10 +
+        'При необходимости запустите AriaSignature.UI от администратора.'#13#10 +
+        'Логи: %ProgramData%\AriaSignature\logs\.',
+        mbInformation,
+        MB_OK,
+        IDOK);
+    end
+    else if InstallHealthStatus = 'install-health:timeout' then
+    begin
+      SuppressibleMsgBox(
+        'Установка завершена по таймауту настройки службы.'#13#10 +
+        'Приложение установлено, служба догревается в фоне.'#13#10 +
+        'Логи: %ProgramData%\AriaSignature\logs\.',
+        mbInformation,
+        MB_OK,
+        IDOK);
+    end;
   end;
+end;
+
+procedure InitializeWizard();
+begin
+  WizardForm.BorderIcons := WizardForm.BorderIcons + [biMinimize];
+  PumpWizardUi('Подготовка установщика AriaSignature...');
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

@@ -26,6 +26,52 @@ function Assert-ExitCode {
     }
 }
 
+function Stop-RepoLockedProcess {
+    param(
+        [string]$ProcessName,
+        [string]$LockedRoot
+    )
+
+    $targetRoot = [System.IO.Path]::GetFullPath($LockedRoot).TrimEnd('\')
+    $escapedName = $ProcessName.Replace("'", "''")
+    $candidates = Get-CimInstance Win32_Process -Filter ("Name = '{0}'" -f $escapedName) -ErrorAction SilentlyContinue
+    if (-not $candidates) {
+        return
+    }
+
+    foreach ($proc in $candidates) {
+        $procId = [int]$proc.ProcessId
+        $exePath = $proc.ExecutablePath
+        if ([string]::IsNullOrWhiteSpace($exePath)) {
+            continue
+        }
+
+        $fullExePath = [System.IO.Path]::GetFullPath($exePath)
+        if (-not $fullExePath.StartsWith($targetRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+
+        Write-Host ("[release-gate][check] stopping lock holder pid={0} exe=""{1}""" -f $procId, $fullExePath)
+        $service = Get-CimInstance Win32_Service -Filter ("ProcessId = {0}" -f $procId) -ErrorAction SilentlyContinue
+        if ($service) {
+            Write-Host ("[release-gate][check] stopping service name=""{0}"" for pid={1}" -f $service.Name, $procId)
+            & sc.exe stop $service.Name | Out-Null
+            Start-Sleep -Seconds 2
+        }
+
+        try {
+            $stillRunning = Get-Process -Id $procId -ErrorAction SilentlyContinue
+            if ($stillRunning) {
+                Stop-Process -Id $procId -Force -ErrorAction Stop
+                Start-Sleep -Milliseconds 500
+            }
+        }
+        catch {
+            throw "[release-gate][step-fail] operation=""release-publish-preflight"" reason=""failed-to-stop-lock-holder"" pid=$procId process=""$ProcessName"""
+        }
+    }
+}
+
 Write-Step -Index 1 -Total 8 -Name "build-web-ui"
 Push-Location .\src\web
 npm ci
@@ -43,6 +89,7 @@ dotnet test .\AriaSignature.slnx -c $Configuration
 Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-test"
 
 Write-Step -Index 4 -Total 8 -Name "publish-ui"
+Stop-RepoLockedProcess -ProcessName "AriaSignature.UI.exe" -LockedRoot (Join-Path (Get-Location) "publish\ui")
 Remove-Item -Path .\publish\ui -Recurse -Force -ErrorAction SilentlyContinue
 dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c $Configuration -r $RuntimeIdentifier --self-contained true -o .\publish\ui
 Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-publish-ui"
@@ -70,6 +117,8 @@ if (-not (Test-Path $bootstrapHostFxr)) { throw "[release-gate][step-fail] opera
 if (-not (Test-Path $bootstrapHostPolicy)) { throw "[release-gate][step-fail] operation=""verify-bootstrap-self-contained"" reason=""hostpolicy-missing""" }
 
 Write-Step -Index 5 -Total 8 -Name "publish-service"
+Stop-RepoLockedProcess -ProcessName "AriaSignature.Service.exe" -LockedRoot (Join-Path (Get-Location) "publish\service")
+Stop-RepoLockedProcess -ProcessName "AriaSignature.Api.exe" -LockedRoot (Join-Path (Get-Location) "publish\service")
 Remove-Item -Path .\publish\service -Recurse -Force -ErrorAction SilentlyContinue
 dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c $Configuration -r $RuntimeIdentifier --self-contained true -o .\publish\service
 Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-publish-service"
@@ -97,11 +146,25 @@ if ($depsRaw -notmatch '"Microsoft\.Extensions\.Hosting\.WindowsServices"\s*:\s*
 Write-Step -Index 6 -Total 8 -Name "prepare-webview2"
 $webView2Dir = ".\installer\webview2"
 $webView2Exe = Join-Path $webView2Dir "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+$webView2OfflineUrl = "https://go.microsoft.com/fwlink/?linkid=2124703"
+$webView2MinimumBytes = 50MB
 if (-not (Test-Path $webView2Exe)) {
     New-Item -Path $webView2Dir -ItemType Directory -Force | Out-Null
-    $url = "https://go.microsoft.com/fwlink/?linkid=2124701"
-    Write-Host "Downloading WebView2 offline runtime installer from Microsoft..."
-    Invoke-WebRequest -Uri $url -OutFile $webView2Exe
+    Write-Host "Downloading WebView2 standalone offline runtime installer from Microsoft..."
+    Invoke-WebRequest -Uri $webView2OfflineUrl -OutFile $webView2Exe
+}
+
+$webView2File = Get-Item -Path $webView2Exe -ErrorAction Stop
+if ($webView2File.Length -lt $webView2MinimumBytes) {
+    throw "[release-gate][step-fail] operation=""prepare-webview2"" reason=""webview2-installer-too-small"" bytes=$($webView2File.Length) min_bytes=$webView2MinimumBytes"
+}
+
+$webView2Signature = Get-AuthenticodeSignature -FilePath $webView2Exe
+if ($webView2Signature.Status -ne "Valid") {
+    throw "[release-gate][step-fail] operation=""prepare-webview2"" reason=""webview2-signature-invalid"" status=""$($webView2Signature.Status)"""
+}
+if ($webView2Signature.SignerCertificate.Subject -notmatch "Microsoft") {
+    throw "[release-gate][step-fail] operation=""prepare-webview2"" reason=""webview2-signer-unexpected"" subject=""$($webView2Signature.SignerCertificate.Subject)"""
 }
 
 Write-Step -Index 7 -Total 8 -Name "prepare-smartctl"
@@ -180,6 +243,7 @@ $probeLog = Join-Path $logsRoot "release-gate-write-test.log"
 Remove-Item -Path $probeLog -Force -ErrorAction SilentlyContinue
 
 Write-Step -Index 8 -Total 8 -Name "build-installer"
+Stop-RepoLockedProcess -ProcessName "AriaSignature-Setup.exe" -LockedRoot (Join-Path (Get-Location) "artifacts\installer")
 $isccPath = Get-Command iscc -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue
 if (-not $isccPath) {
     $fallback = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
