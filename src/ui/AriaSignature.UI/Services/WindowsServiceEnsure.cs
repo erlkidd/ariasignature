@@ -95,6 +95,19 @@ public static class WindowsServiceEnsure
         }
     }
 
+    /// <summary>Процесс исполняемого файла службы (не обязательно совпадает с PID из SCM).</summary>
+    private static bool AnyAriaSignatureServiceHostProcessExists()
+    {
+        try
+        {
+            return Process.GetProcessesByName("AriaSignature.Service").Length > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static bool TryFindNativeError(Exception ex, out int nativeErrorCode)
     {
         for (Exception? e = ex; e is not null; e = e.InnerException)
@@ -213,17 +226,33 @@ public static class WindowsServiceEnsure
 
             if (!startOk && startExit == ErrorServiceRequestTimeout)
             {
-                try
+                using var scProbe = new ServiceController(ServiceName);
+                scProbe.Refresh();
+                if (scProbe.Status == ServiceControllerStatus.Running)
                 {
-                    using var scWait = new ServiceController(ServiceName);
-                    scWait.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(120));
                     startOk = true;
                 }
-                catch (Exception waitEx)
+                else if (
+                    scProbe.Status == ServiceControllerStatus.Stopped &&
+                    !AnyAriaSignatureServiceHostProcessExists())
                 {
                     error =
-                        $"sc start вернул {ErrorServiceRequestTimeout} (таймаут SCM — служба могла всё же продолжить запуск). Ожидание Running не удалось: {waitEx.Message}. Вывод sc: {startOutput}";
+                        $"sc start вернул {ErrorServiceRequestTimeout}: служба остановлена и процесс AriaSignature.Service не найден (вероятно падение при старте). См. %ProgramData%\\AriaSignature\\logs\\. Вывод sc: {startOutput}";
                     return false;
+                }
+                else
+                {
+                    try
+                    {
+                        scProbe.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(120));
+                        startOk = true;
+                    }
+                    catch (Exception waitEx)
+                    {
+                        error =
+                            $"sc start вернул {ErrorServiceRequestTimeout} (таймаут SCM). Дополнительное ожидание Running не удалось: {waitEx.Message}. Вывод sc: {startOutput}";
+                        return false;
+                    }
                 }
             }
             else if (!startOk)
