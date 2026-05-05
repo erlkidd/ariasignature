@@ -23,9 +23,11 @@ try
     using var logWriter = new StreamWriter(logPath, append: false, Encoding.UTF8);
     logWriter.WriteLine($"{DateTime.UtcNow:O} ServiceBootstrap starting.");
     logWriter.WriteLine($"serviceExePath={serviceExePath}");
+    logWriter.WriteLine("marker=scm-bootstrap-start");
 
     var result = WindowsServiceInstaller.TryInstallAndStart(serviceExePath, logWriter.WriteLine);
-    logWriter.WriteLine($"{DateTime.UtcNow:O} Done Success={result.Success} Category={result.Category}");
+    logWriter.WriteLine($"{DateTime.UtcNow:O} marker=scm-bootstrap-done success={result.Success} category={result.Category} exit={result.LastNonZeroExitCode}");
+    logWriter.Flush();
 
     if (!result.Success)
     {

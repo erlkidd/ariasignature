@@ -402,13 +402,14 @@ public partial class MainWindow : Window
                     var warn = string.IsNullOrWhiteSpace(_deferredServiceStartWarning)
                         ? string.Empty
                         : " Дополнительно: " + _deferredServiceStartWarning;
+                    var stage = BuildStartupFailureStage(elapsed, startupSw.Elapsed, status, ensureDone, _deferredServiceStartWarning);
                     RenderFallbackPage(
                         "Локальный сервис не отвечает",
                         "Служба Windows или API на localhost не готовы дольше обычного. Ниже — последняя диагностика опроса; после запуска службы интерфейс откроется сам." + warn,
                         baseUrl,
                         null,
                         detail,
-                        $"Ожидание: {elapsed.TotalSeconds:F0} с · служба: {FormatServiceStatus(status)} · с момента открытия панели: {startupSw.Elapsed.TotalSeconds:F0} с");
+                        stage);
                     StartApiRecoveryLoop(baseUrl);
                 }, DispatcherPriority.Background);
                 return;
@@ -487,6 +488,34 @@ public partial class MainWindow : Window
         }
 
         return false;
+    }
+
+    private static string BuildStartupFailureStage(
+        TimeSpan elapsed,
+        TimeSpan appElapsed,
+        ServiceControllerStatus? status,
+        bool serviceEnsureCompleted,
+        string? warning)
+    {
+        var baseStage =
+            $"Ожидание: {elapsed.TotalSeconds:F0} с · служба: {FormatServiceStatus(status)} · ensure: {(serviceEnsureCompleted ? "done" : "running")} · с момента открытия панели: {appElapsed.TotalSeconds:F0} с";
+
+        if (string.IsNullOrWhiteSpace(warning))
+        {
+            return baseStage;
+        }
+
+        var marker = string.Empty;
+        if (warning.Contains("stage=post-1053-check", StringComparison.OrdinalIgnoreCase))
+        {
+            marker = " · этап: post-1053-check";
+        }
+        else if (warning.Contains("1053", StringComparison.OrdinalIgnoreCase))
+        {
+            marker = " · этап: scm-timeout-1053";
+        }
+
+        return baseStage + marker;
     }
 
     private bool IsAttemptedLocalApiNavigation(string? currentSource, string baseUrl) =>

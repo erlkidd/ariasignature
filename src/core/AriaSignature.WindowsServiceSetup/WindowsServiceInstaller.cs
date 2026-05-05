@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Net.Http;
 using System.ServiceProcess;
 using System.Text;
 
@@ -19,6 +20,7 @@ public static class WindowsServiceInstaller
 
     /// <summary>Служба уже запущена.</summary>
     private const int ErrorServiceAlreadyRunning = 1056;
+    private static readonly HttpClient StartupProbeHttp = new() { Timeout = TimeSpan.FromSeconds(2.5) };
 
     static WindowsServiceInstaller()
     {
@@ -121,35 +123,16 @@ public static class WindowsServiceInstaller
 
             if (!startOk && startExit == ErrorServiceRequestTimeout)
             {
-                using var scProbe = new ServiceController(ServiceName);
-                scProbe.Refresh();
-                if (scProbe.Status == ServiceControllerStatus.Running)
+                Log($"sc start returned {ErrorServiceRequestTimeout}; entering extended post-1053 verification");
+                var post1053 = VerifyAfterScmTimeout1053(Log);
+                if (post1053.Success)
                 {
                     startOk = true;
                 }
-                else if (
-                    scProbe.Status == ServiceControllerStatus.Stopped &&
-                    !AnyAriaSignatureServiceHostProcessExists())
-                {
-                    var msg =
-                        $"sc start вернул {ErrorServiceRequestTimeout}: служба остановлена и процесс AriaSignature.Service не найден (вероятно падение при старте). См. %ProgramData%\\AriaSignature\\logs\\. Вывод sc: {startOutput}";
-                    Log(msg);
-                    return new ServiceSetupResult(false, msg, ServiceSetupFailureCategory.ServiceCrashedOnStart, startExit);
-                }
                 else
                 {
-                    try
-                    {
-                        scProbe.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(120));
-                        startOk = true;
-                    }
-                    catch (Exception waitEx)
-                    {
-                        var msg =
-                            $"sc start вернул {ErrorServiceRequestTimeout} (таймаут SCM). Дополнительное ожидание Running не удалось: {waitEx.Message}. Вывод sc: {startOutput}";
-                        Log(msg);
-                        return new ServiceSetupResult(false, msg, ServiceSetupFailureCategory.ServiceStartTimeout, startExit);
-                    }
+                    var msg = $"{post1053.ErrorMessage} Вывод sc: {startOutput}";
+                    return new ServiceSetupResult(false, msg, post1053.Category, startExit);
                 }
             }
             else if (!startOk)
@@ -197,7 +180,7 @@ public static class WindowsServiceInstaller
             ServiceSetupFailureCategory.ServiceCrashedOnStart =>
                 "Процесс службы завершился при старте. Проверьте журналы в %ProgramData%\\AriaSignature\\logs\\.",
             ServiceSetupFailureCategory.ServiceStartTimeout =>
-                "Таймаут при переходе службы в состояние «Работает». Антивирус или медленный диск могут задерживать холодный старт.",
+                "Таймаут SCM (1053) при переходе службы в состояние «Работает». Выполнены дополнительное ожидание и probe API; возможно, холодный старт блокируют антивирус/диск.",
             ServiceSetupFailureCategory.NotFoundOrDeleted =>
                 "Запись службы не найдена или удалена другим процессом. Перезапустите установщик или восстановление службы.",
             ServiceSetupFailureCategory.ScCommandFailed =>
@@ -221,6 +204,80 @@ public static class WindowsServiceInstaller
 
         var msg = $"Команда sc завершилась с кодом {exitCode}. Вывод: {output}";
         return new ServiceSetupResult(false, msg, category, exitCode);
+    }
+
+    private static ServiceSetupResult VerifyAfterScmTimeout1053(Action<string>? logLine)
+    {
+        var startedAt = DateTime.UtcNow;
+        var timeline = new List<string>();
+        for (var i = 0; i < 24; i++)
+        {
+            Thread.Sleep(5000);
+            ServiceControllerStatus? status = null;
+            try
+            {
+                using var scProbe = new ServiceController(ServiceName);
+                scProbe.Refresh();
+                status = scProbe.Status;
+            }
+            catch
+            {
+                // ignore
+            }
+
+            var hostAlive = AnyAriaSignatureServiceHostProcessExists();
+            var elapsed = (DateTime.UtcNow - startedAt).TotalSeconds;
+            var row = $"t+{elapsed:F0}s status={(status?.ToString() ?? "unknown")} host={(hostAlive ? "alive" : "missing")}";
+            timeline.Add(row);
+            logLine?.Invoke("service status timeline: " + row);
+
+            if (status == ServiceControllerStatus.Running)
+            {
+                var (ready, detail) = TryProbeApiReadyOnce("http://127.0.0.1:5160");
+                logLine?.Invoke($"api probe result: ready={ready} detail={detail}");
+                if (ready)
+                {
+                    return new ServiceSetupResult(true, null, ServiceSetupFailureCategory.None, null);
+                }
+            }
+
+            if (status == ServiceControllerStatus.Stopped && !hostAlive)
+            {
+                var msg =
+                    "stage=post-1053-check: служба остановлена и процесс AriaSignature.Service не найден (вероятно падение на холодном старте). "
+                    + "См. %ProgramData%\\AriaSignature\\logs\\.";
+                logLine?.Invoke(msg);
+                return new ServiceSetupResult(false, msg, ServiceSetupFailureCategory.ServiceCrashedOnStart, ErrorServiceRequestTimeout);
+            }
+        }
+
+        var timelineSummary = string.Join(" | ", timeline);
+        var timeoutMsg =
+            "stage=post-1053-check: дополнительная проверка не подтвердила рабочий запуск службы/API после таймаута SCM. "
+            + $"timeline={timelineSummary}";
+        logLine?.Invoke(timeoutMsg);
+        return new ServiceSetupResult(false, timeoutMsg, ServiceSetupFailureCategory.ServiceStartTimeout, ErrorServiceRequestTimeout);
+    }
+
+    private static (bool Ready, string Detail) TryProbeApiReadyOnce(string baseUrl)
+    {
+        try
+        {
+            using var statusResponse = StartupProbeHttp.GetAsync($"{baseUrl.TrimEnd('/')}/api/v1/status").GetAwaiter().GetResult();
+            if (!statusResponse.IsSuccessStatusCode)
+            {
+                return (false, $"/api/v1/status => {(int)statusResponse.StatusCode}");
+            }
+
+            using var rootResponse = StartupProbeHttp.GetAsync($"{baseUrl.TrimEnd('/')}/").GetAwaiter().GetResult();
+            return rootResponse.IsSuccessStatusCode
+                ? (true, "ready")
+                : (false, $"/ => {(int)rootResponse.StatusCode}");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
     }
 
     private static bool AnyAriaSignatureServiceHostProcessExists()

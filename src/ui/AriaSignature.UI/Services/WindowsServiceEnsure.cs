@@ -133,7 +133,7 @@ public static class WindowsServiceEnsure
         {
             warningMessage =
                 WindowsServiceInstaller.BuildUserHint(
-                    new ServiceSetupResult(false, null, ServiceSetupFailureCategory.ServiceStartTimeout, null));
+                    new ServiceSetupResult(false, "stage=scm-timeout-1053", ServiceSetupFailureCategory.ServiceStartTimeout, ErrorServiceRequestTimeout));
         }
         catch (Exception ex)
         {

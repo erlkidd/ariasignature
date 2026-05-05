@@ -327,9 +327,8 @@ begin
     LogScCommandCapture('qc ' + ServiceName, 'Full sc qc output after failed start');
     SuppressibleMsgBox(
       'Служба AriaSignature установлена, но не была запущена автоматически.'#13#10 +
-      'Это не критично: откройте services.msc и запустите AriaSignatureService вручную, ' +
-      'или запустите AriaSignature — при нехватке прав Windows запросит UAC и попытается восстановить службу (AriaSignature.ServiceBootstrap). ' +
-      'Также можно один раз запустить AriaSignature.UI от имени администратора.',
+      'Это не критично: при ошибке 1053 UI выполнит расширенную проверку запуска и попробует доинициализировать службу через UAC (AriaSignature.ServiceBootstrap).'#13#10 +
+      'Если служба не поднимется, проверьте logs: %ProgramData%\AriaSignature\logs\ и services.msc (AriaSignatureService).',
       mbInformation,
       MB_OK,
       IDOK);
