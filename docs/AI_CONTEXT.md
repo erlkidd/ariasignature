@@ -21,6 +21,8 @@
 
 ## 3) Поток старта
 
+**Права и цепочка (Win10/11):** установщик **Inno** (`PrivilegesRequired=admin`) регистрирует службу и задаёт ожидаемый путь `{app}\service\AriaSignature.Service.exe` — тот же относительный путь, что UI строит как `..\service\` от `{app}\ui`. Обычный пользователь может получить **отказ в доступе** при `sc`/SCM; тогда UI **один раз за процесс** запускает рядом лежащий **`AriaSignature.ServiceBootstrap.exe`** через **UAC** (`runas`), helper повторяет ту же процедуру `create/start`, логируя шаги в `%ProgramData%\AriaSignature\logs\bootstrap-*.log`.
+
 1. Запуск `AriaSignature.Service`.
 2. Инициализация хоста и логирования.
 3. Запуск `LocalApiHostedService` как `BackgroundService`: SCM получает Running без блокировки на долгом подъёме Kestrel; затем bind URL и слушание порта.

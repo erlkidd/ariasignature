@@ -190,6 +190,36 @@ begin
   Result := ExitCode = 0;
 end;
 
+procedure LogScCommandCapture(const ArgsTail: string; const Banner: string);
+var
+  TempFile: string;
+  ExitCode: Integer;
+  Lines: TArrayOfString;
+  I: Integer;
+begin
+  TempFile := ExpandConstant('{tmp}\aria-sc-installer-cap.txt');
+  DeleteFile(TempFile);
+  if Exec(
+       ExpandConstant('{sys}\cmd.exe'),
+       '/c "' + ScExePath + '" ' + ArgsTail + ' > "' + TempFile + '" 2>&1',
+       '',
+       SW_HIDE,
+       ewWaitUntilTerminated,
+       ExitCode) then
+  begin
+    Log(Banner + ' (cmd exit ' + IntToStr(ExitCode) + ')');
+    if LoadStringsFromFile(TempFile, Lines) then
+    begin
+      for I := 0 to GetArrayLength(Lines) - 1 do
+        Log(Lines[I]);
+    end
+    else
+      Log('(installer sc capture: file unreadable)');
+  end
+  else
+    Log(Banner + ': cmd.exe capture failed to execute');
+end;
+
 procedure InstallServiceOrAbort();
 var
   BinPath: string;
@@ -291,10 +321,15 @@ begin
   if not Started then
   begin
     Log('Warning: AriaSignatureService was installed but did not start during setup.');
+    Log(Format('Installer binPath (same layout as UI ..\\service\\): %s', [BinPath]));
+    Log(Format('Last sc start exit code after retries: %d', [LastScExitCode]));
+    LogScCommandCapture('query ' + ServiceName, 'Full sc query output after failed start');
+    LogScCommandCapture('qc ' + ServiceName, 'Full sc qc output after failed start');
     SuppressibleMsgBox(
       'Служба AriaSignature установлена, но не была запущена автоматически.'#13#10 +
       'Это не критично: откройте services.msc и запустите AriaSignatureService вручную, ' +
-      'либо просто запустите AriaSignature.UI от имени администратора — UI попробует восстановить службу.',
+      'или запустите AriaSignature — при нехватке прав Windows запросит UAC и попытается восстановить службу (AriaSignature.ServiceBootstrap). ' +
+      'Также можно один раз запустить AriaSignature.UI от имени администратора.',
       mbInformation,
       MB_OK,
       IDOK);

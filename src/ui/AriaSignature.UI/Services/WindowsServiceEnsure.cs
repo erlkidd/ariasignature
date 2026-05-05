@@ -4,6 +4,8 @@ using System.Globalization;
 using System.IO;
 using System.ServiceProcess;
 using System.Text;
+using System.Threading;
+using AriaSignature.WinSvc;
 
 namespace AriaSignature.UI.Services;
 
@@ -12,20 +14,36 @@ namespace AriaSignature.UI.Services;
 /// </summary>
 public static class WindowsServiceEnsure
 {
-    public const string ServiceName = "AriaSignatureService";
+    public const string ServiceName = WindowsServiceInstaller.ServiceName;
 
     /// <summary>Win32 ERROR_SERVICE_REQUEST_TIMEOUT — SCM не дождался ответа службы за отведённое время.</summary>
     private const int ErrorServiceRequestTimeout = 1053;
 
-    /// <summary>Служба уже запущена.</summary>
-    private const int ErrorServiceAlreadyRunning = 1056;
+    /// <summary>Win32 ERROR_ACCESS_DENIED.</summary>
+    private const int ErrorAccessDenied = 5;
+
+    /// <summary>Пользователь отменил повышение прав (UAC).</summary>
+    private const int ErrorCancelled = 1223;
+
+    private static int _elevatedBootstrapLaunched;
 
     static WindowsServiceEnsure()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
     }
 
-    public static void TryStartOrFallback(string serviceExePath, TimeSpan wait, out string? warningMessage)
+    /// <param name="bootstrapExePath">Путь к <c>AriaSignature.ServiceBootstrap.exe</c> для одного запроса UAC при отказе прав SCM.</param>
+    public static void TryStartOrFallback(string serviceExePath, TimeSpan wait, string? bootstrapExePath, out string? warningMessage)
+    {
+        TryStartOrFallbackCore(serviceExePath, wait, bootstrapExePath, allowElevatedRecovery: true, out warningMessage);
+    }
+
+    private static void TryStartOrFallbackCore(
+        string serviceExePath,
+        TimeSpan wait,
+        string? bootstrapExePath,
+        bool allowElevatedRecovery,
+        out string? warningMessage)
     {
         warningMessage = null;
         try
@@ -43,6 +61,7 @@ public static class WindowsServiceEnsure
                 return;
             }
 
+            InvalidOperationException? startFailure = null;
             try
             {
                 sc.Start();
@@ -55,25 +74,181 @@ public static class WindowsServiceEnsure
                 scAfter1053.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(120));
                 return;
             }
-        }
-        catch (InvalidOperationException ex)
-        {
-            if (TryInstallAndStartWindowsService(serviceExePath, out var installError))
+            catch (InvalidOperationException ex)
             {
-                warningMessage = null;
+                startFailure = ex;
+            }
+
+            var setupResult = WindowsServiceInstaller.TryInstallAndStart(serviceExePath, logLine: null);
+            if (setupResult.Success)
+            {
+                return;
+            }
+
+            string? elevationFailure = null;
+            if (allowElevatedRecovery
+                && TryRecoverViaElevatedBootstrap(
+                    serviceExePath,
+                    bootstrapExePath,
+                    setupResult,
+                    startFailure,
+                    out elevationFailure))
+            {
+                TryStartOrFallbackCore(serviceExePath, wait, bootstrapExePath, allowElevatedRecovery: false, out warningMessage);
                 return;
             }
 
             warningMessage =
-                $"Не удалось запустить фоновую службу.\n{ex.Message}\n{installError}";
+                WindowsServiceInstaller.BuildUserHint(setupResult)
+                + (startFailure is null ? string.Empty : $"\nИсходная ошибка SCM: {startFailure.Message}")
+                + (string.IsNullOrEmpty(elevationFailure) ? string.Empty : $"\n{elevationFailure}");
         }
-        catch (System.ServiceProcess.TimeoutException)
+        catch (InvalidOperationException ex)
         {
-            warningMessage = "Превышено время ожидания запуска фонового сервиса. Проверьте оснастку «Службы» (services.msc).";
+            // На случай если служба отсутствует до первого вызова TryInstall внутри другого потока контекста.
+            var setupResult = WindowsServiceInstaller.TryInstallAndStart(serviceExePath, logLine: null);
+            if (setupResult.Success)
+            {
+                return;
+            }
+
+            string? outerElevationFailure = null;
+            if (allowElevatedRecovery && TryRecoverViaElevatedBootstrap(
+                    serviceExePath,
+                    bootstrapExePath,
+                    setupResult,
+                    ex,
+                    out outerElevationFailure))
+            {
+                TryStartOrFallbackCore(serviceExePath, wait, bootstrapExePath, allowElevatedRecovery: false, out warningMessage);
+                return;
+            }
+
+            warningMessage =
+                WindowsServiceInstaller.BuildUserHint(setupResult)
+                + $"\nИсходная ошибка SCM: {ex.Message}"
+                + (string.IsNullOrEmpty(outerElevationFailure) ? string.Empty : $"\n{outerElevationFailure}");
+        }
+        catch (System.TimeoutException)
+        {
+            warningMessage =
+                WindowsServiceInstaller.BuildUserHint(
+                    new ServiceSetupResult(false, null, ServiceSetupFailureCategory.ServiceStartTimeout, null));
         }
         catch (Exception ex)
         {
-            warningMessage = $"Не удалось запустить фоновый сервис (службу): {ex.Message}";
+            var hint = WindowsServiceInstaller.BuildUserHint(
+                new ServiceSetupResult(false, ex.Message, ServiceSetupFailureCategory.Unknown, null));
+            warningMessage = hint;
+        }
+    }
+
+    private static bool ShouldOfferElevatedBootstrap(ServiceSetupResult setupResult, InvalidOperationException? scmException)
+    {
+        if (setupResult.Category == ServiceSetupFailureCategory.AccessDenied
+            || setupResult.LastNonZeroExitCode == ErrorAccessDenied)
+        {
+            return true;
+        }
+
+        if (scmException is not null && TryFindNativeError(scmException, out var code) && code == ErrorAccessDenied)
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryRecoverViaElevatedBootstrap(
+        string serviceExePath,
+        string? bootstrapExePath,
+        ServiceSetupResult setupResult,
+        InvalidOperationException? scmException,
+        out string? elevationFailureMessage)
+    {
+        elevationFailureMessage = null;
+        if (!ShouldOfferElevatedBootstrap(setupResult, scmException))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(bootstrapExePath) || !File.Exists(bootstrapExePath))
+        {
+            elevationFailureMessage =
+                "Рядом с AriaSignature.UI не найден AriaSignature.ServiceBootstrap.exe — переустановите приложение или запустите его от имени администратора.";
+            return false;
+        }
+
+        if (Interlocked.CompareExchange(ref _elevatedBootstrapLaunched, 1, 0) != 0)
+        {
+            return false;
+        }
+
+        if (!TryRunElevatedBootstrapProcess(bootstrapExePath, serviceExePath, out var err))
+        {
+            elevationFailureMessage = err;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryRunElevatedBootstrapProcess(string bootstrapExePath, string serviceExePath, out string? errorToUser)
+    {
+        errorToUser = null;
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = bootstrapExePath,
+                Arguments = $"\"{serviceExePath}\"",
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc is null)
+            {
+                errorToUser = "Не удалось запустить восстановление службы с правами администратора.";
+                return false;
+            }
+
+            if (!proc.WaitForExit(180_000))
+            {
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // ignore
+                }
+
+                errorToUser =
+                    "Истекло время ожидания восстановления службы (запрос прав администратора). Проверьте журнал bootstrap в %ProgramData%\\AriaSignature\\logs\\.";
+                return false;
+            }
+
+            if (proc.ExitCode != 0)
+            {
+                errorToUser =
+                    $"Восстановление службы завершилось с кодом {proc.ExitCode}. Подробности — в журнале bootstrap в %ProgramData%\\AriaSignature\\logs\\.";
+                return false;
+            }
+
+            return true;
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == ErrorCancelled)
+        {
+            errorToUser =
+                "Запрос прав администратора отменён. Запустите AriaSignature от имени администратора один раз или включите службу вручную в services.msc.";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            errorToUser = ex.Message;
+            return false;
         }
     }
 
@@ -92,19 +267,6 @@ public static class WindowsServiceEnsure
         {
             using var fresh = new ServiceController(ServiceName);
             fresh.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(120));
-        }
-    }
-
-    /// <summary>Процесс исполняемого файла службы (не обязательно совпадает с PID из SCM).</summary>
-    private static bool AnyAriaSignatureServiceHostProcessExists()
-    {
-        try
-        {
-            return Process.GetProcessesByName("AriaSignature.Service").Length > 0;
-        }
-        catch
-        {
-            return false;
         }
     }
 
@@ -157,121 +319,6 @@ public static class WindowsServiceEnsure
         }
     }
 
-    private static bool TryInstallAndStartWindowsService(string serviceExePath, out string? error)
-    {
-        error = null;
-        try
-        {
-            if (string.IsNullOrWhiteSpace(serviceExePath) || !File.Exists(serviceExePath))
-            {
-                error = $"Файл сервиса не найден: {serviceExePath}";
-                return false;
-            }
-
-            var scPath = GetScExePath();
-            if (string.IsNullOrEmpty(scPath))
-            {
-                error = "Не найден sc.exe";
-                return false;
-            }
-
-            RunScBestEffort(scPath, $"stop {ServiceName}");
-            RunScBestEffort(scPath, $"delete {ServiceName}");
-            Thread.Sleep(1000);
-
-            var createAttempts = new[]
-            {
-                $"create {ServiceName} binPath= \"{serviceExePath}\" start= auto DisplayName= \"AriaSignature\" obj= LocalSystem",
-                $"create {ServiceName} binPath= \"{serviceExePath}\" start= auto DisplayName= \"AriaSignature Service\" obj= LocalSystem",
-                $"create {ServiceName} binPath= \"{serviceExePath}\" start= auto obj= LocalSystem"
-            };
-
-            var created = false;
-            var lastCreateExit = -1;
-            var lastCreateOutput = string.Empty;
-            foreach (var createArgs in createAttempts)
-            {
-                if (RunSc(scPath, createArgs, out var createExit, out var createOutput))
-                {
-                    created = true;
-                    break;
-                }
-
-                lastCreateExit = createExit;
-                lastCreateOutput = createOutput;
-                if (createExit == 1073)
-                {
-                    created = true;
-                    break;
-                }
-
-                if (createExit != 1078)
-                {
-                    break;
-                }
-            }
-
-            if (!created)
-            {
-                error = $"sc create failed ({lastCreateExit}): {lastCreateOutput}";
-                return false;
-            }
-
-            RunScBestEffort(scPath, $"failure {ServiceName} reset= 86400 actions= restart/5000/restart/5000/restart/5000");
-            var startOk = RunSc(scPath, $"start {ServiceName}", out var startExit, out var startOutput);
-            if (!startOk && startExit == ErrorServiceAlreadyRunning)
-            {
-                startOk = true;
-            }
-
-            if (!startOk && startExit == ErrorServiceRequestTimeout)
-            {
-                using var scProbe = new ServiceController(ServiceName);
-                scProbe.Refresh();
-                if (scProbe.Status == ServiceControllerStatus.Running)
-                {
-                    startOk = true;
-                }
-                else if (
-                    scProbe.Status == ServiceControllerStatus.Stopped &&
-                    !AnyAriaSignatureServiceHostProcessExists())
-                {
-                    error =
-                        $"sc start вернул {ErrorServiceRequestTimeout}: служба остановлена и процесс AriaSignature.Service не найден (вероятно падение при старте). См. %ProgramData%\\AriaSignature\\logs\\. Вывод sc: {startOutput}";
-                    return false;
-                }
-                else
-                {
-                    try
-                    {
-                        scProbe.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(120));
-                        startOk = true;
-                    }
-                    catch (Exception waitEx)
-                    {
-                        error =
-                            $"sc start вернул {ErrorServiceRequestTimeout} (таймаут SCM). Дополнительное ожидание Running не удалось: {waitEx.Message}. Вывод sc: {startOutput}";
-                        return false;
-                    }
-                }
-            }
-            else if (!startOk)
-            {
-                error = $"sc start failed ({startExit}): {startOutput}";
-                return false;
-            }
-
-            using var sc = new ServiceController(ServiceName);
-            sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(120));
-            return true;
-        }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-            return false;
-        }
-    }
-
     private static string? GetScExePath()
     {
         var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
@@ -290,11 +337,6 @@ public static class WindowsServiceEnsure
         }
 
         return null;
-    }
-
-    private static void RunScBestEffort(string scPath, string args)
-    {
-        RunSc(scPath, args, out _, out _);
     }
 
     private static int? TryGetServiceProcessId()
@@ -390,37 +432,5 @@ public static class WindowsServiceEnsure
         {
             // ignore
         }
-    }
-
-    private static bool RunSc(string scPath, string args, out int exitCode, out string output)
-    {
-        output = string.Empty;
-        var psi = new ProcessStartInfo
-        {
-            FileName = scPath,
-            Arguments = args,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        ApplyScConsoleEncoding(psi);
-        using var proc = Process.Start(psi);
-        if (proc is null)
-        {
-            exitCode = -1;
-            return false;
-        }
-
-        var stdOut = proc.StandardOutput.ReadToEnd();
-        var stdErr = proc.StandardError.ReadToEnd();
-        proc.WaitForExit(20000);
-        exitCode = proc.ExitCode;
-        output = string.IsNullOrWhiteSpace(stdErr)
-            ? stdOut
-            : string.IsNullOrWhiteSpace(stdOut)
-                ? stdErr
-                : $"{stdOut}{Environment.NewLine}{stdErr}";
-        return exitCode == 0;
     }
 }

@@ -25,11 +25,13 @@ public partial class MainWindow : Window
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(8) };
     private static readonly HttpClient StartupProbeHttp = new() { Timeout = TimeSpan.FromSeconds(2.5) };
     private CancellationTokenSource? _startupRetryCts;
+    private DateTime _recoveryServiceEnsureNotBeforeUtc = DateTime.MinValue;
     private CancellationTokenSource? _appReadyFallbackCts;
     private bool _expectStartupLoadingHtml;
     private string? _deferredServiceStartWarning;
     private string? _startupBaseUrl;
     private string? _serviceExePath;
+    private string? _serviceBootstrapExePath;
     private Stopwatch? _startupSw;
     private bool _startupFlowStarted;
     private bool _startupWarmupPrepared;
@@ -97,6 +99,7 @@ public partial class MainWindow : Window
     {
         _startupSw = Stopwatch.StartNew();
         _serviceExePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "service", "AriaSignature.Service.exe"));
+        _serviceBootstrapExePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "AriaSignature.ServiceBootstrap.exe"));
         ShowLoadingOverlay("Проверка адреса API…", "Краткий запрос к локальному сервису…");
         _startupBaseUrl = await ResolveApiBaseAsync();
 
@@ -321,6 +324,7 @@ public partial class MainWindow : Window
         _startupRetryCts?.Dispose();
         _startupRetryCts = new CancellationTokenSource();
         var token = _startupRetryCts.Token;
+        _recoveryServiceEnsureNotBeforeUtc = DateTime.UtcNow.AddSeconds(38);
         _ = Task.Run(async () =>
         {
             while (!token.IsCancellationRequested)
@@ -334,6 +338,19 @@ public partial class MainWindow : Window
                         Browser.Source = new Uri($"{baseUrl.TrimEnd('/')}/");
                     }, DispatcherPriority.Background);
                     return;
+                }
+
+                var exePath = _serviceExePath;
+                if (!string.IsNullOrWhiteSpace(exePath)
+                    && DateTime.UtcNow >= _recoveryServiceEnsureNotBeforeUtc)
+                {
+                    var status = TryGetServiceControllerStatus();
+                    if (status == ServiceControllerStatus.Stopped)
+                    {
+                        _recoveryServiceEnsureNotBeforeUtc = DateTime.UtcNow.AddSeconds(38);
+                        await Task.Run(() =>
+                            WindowsServiceEnsure.TryStartOrFallback(exePath, TimeSpan.FromSeconds(30), _serviceBootstrapExePath, out _), token).ConfigureAwait(false);
+                    }
                 }
 
                 await Task.Delay(800, token).ConfigureAwait(false);
@@ -350,7 +367,7 @@ public partial class MainWindow : Window
         var lastOverlaySecond = -1;
         var ensureTask = Task.Run(() =>
         {
-            WindowsServiceEnsure.TryStartOrFallback(serviceExePath, TimeSpan.FromSeconds(30), out var warning);
+            WindowsServiceEnsure.TryStartOrFallback(serviceExePath, TimeSpan.FromSeconds(30), _serviceBootstrapExePath, out var warning);
             _deferredServiceStartWarning = warning;
         });
 
@@ -432,29 +449,41 @@ public partial class MainWindow : Window
 
     private static bool ShouldShowHardStartupFailure(TimeSpan elapsed, ServiceControllerStatus? status, bool serviceEnsureCompleted)
     {
+        const int ensureHardCapSeconds = 210;
+        const int stoppedGraceAfterEnsureSeconds = 15;
+
+        // SCM reports start is taking unusually long.
         if (status == ServiceControllerStatus.StartPending)
         {
             return elapsed >= TimeSpan.FromMinutes(4);
         }
 
-        if (elapsed >= TimeSpan.FromMinutes(4) && status == ServiceControllerStatus.Running)
+        // Service process is up but HTTP never becomes ready.
+        if (status == ServiceControllerStatus.Running && elapsed >= TimeSpan.FromMinutes(4))
         {
             return true;
         }
 
-        if (!serviceEnsureCompleted && elapsed < TimeSpan.FromSeconds(75))
+        // Stopped while ensureTask may still be waiting (e.g. after 1053, up to ~120 s): no hard failure until ensure finishes or absolute cap.
+        if (status == ServiceControllerStatus.Stopped)
         {
-            return false;
+            if (!serviceEnsureCompleted)
+            {
+                return elapsed >= TimeSpan.FromSeconds(ensureHardCapSeconds);
+            }
+
+            return elapsed >= TimeSpan.FromSeconds(stoppedGraceAfterEnsureSeconds);
         }
 
-        if (elapsed >= TimeSpan.FromSeconds(60) && status == ServiceControllerStatus.Stopped)
+        // Could not query SCM — align with ensure lifecycle so we do not flash failure during long TryStartOrFallback.
+        if (!status.HasValue)
         {
-            return true;
-        }
+            if (!serviceEnsureCompleted && elapsed < TimeSpan.FromSeconds(ensureHardCapSeconds))
+            {
+                return false;
+            }
 
-        if (elapsed >= TimeSpan.FromSeconds(120) && !status.HasValue)
-        {
-            return true;
+            return elapsed >= TimeSpan.FromSeconds(120);
         }
 
         return false;
@@ -563,6 +592,15 @@ public partial class MainWindow : Window
         var stageText = string.IsNullOrWhiteSpace(stage)
             ? string.Empty
             : "<p>Текущий этап: <strong>" + System.Net.WebUtility.HtmlEncode(stage) + "</strong></p>";
+        var logsDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "AriaSignature",
+            "logs");
+        var hints =
+            "<p class=\"muted\"><strong>Подсказки:</strong> журналы — <code>" +
+            System.Net.WebUtility.HtmlEncode(logsDir) +
+            "</code>; при отказе автозапуска службы попробуйте запустить это приложение от имени администратора; " +
+            "службу можно проверить в <code>services.msc</code> (AriaSignatureService).</p>";
         var html =
             "<!DOCTYPE html><html lang=\"ru\"><head><meta charset=\"utf-8\"/><title>AriaSignature</title>" +
             "<style>body{font-family:Segoe UI,sans-serif;padding:24px;background:#111;color:#eee;max-width:760px}" +
@@ -573,6 +611,7 @@ public partial class MainWindow : Window
             errorCodeText +
             probeText +
             stageText +
+            hints +
             "<p class=\"muted\">Проверьте службу AriaSignatureService и доступность localhost. " +
             "После восстановления сервиса окно автоматически загрузит интерфейс.</p></body></html>";
         Browser.CoreWebView2.NavigateToString(html);
@@ -643,7 +682,7 @@ public partial class MainWindow : Window
                 {
                     var serviceExePath = Path.GetFullPath(
                         Path.Combine(AppContext.BaseDirectory, "..", "service", "AriaSignature.Service.exe"));
-                    WindowsServiceEnsure.TryStartOrFallback(serviceExePath, TimeSpan.FromSeconds(25), out var svcWarn);
+                    WindowsServiceEnsure.TryStartOrFallback(serviceExePath, TimeSpan.FromSeconds(25), _serviceBootstrapExePath, out var svcWarn);
                     if (!string.IsNullOrEmpty(svcWarn))
                     {
                         System.Windows.MessageBox.Show(svcWarn, "AriaSignature", MessageBoxButton.OK, MessageBoxImage.Warning);

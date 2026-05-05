@@ -9,7 +9,29 @@
   <ItemGroup>
     <ProjectReference Include="..\..\core\AriaSignature.Application\AriaSignature.Application.csproj" />
     <ProjectReference Include="..\..\core\AriaSignature.Domain\AriaSignature.Domain.csproj" />
+    <ProjectReference Include="..\..\core\AriaSignature.WindowsServiceSetup\AriaSignature.WindowsServiceSetup.csproj" />
+    <ProjectReference Include="..\..\tools\AriaSignature.ServiceBootstrap\AriaSignature.ServiceBootstrap.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
   </ItemGroup>
+
+  <PropertyGroup>
+    <ServiceBootstrapDir>$(MSBuildThisFileDirectory)..\..\tools\AriaSignature.ServiceBootstrap\bin\$(Configuration)\net8.0-windows\</ServiceBootstrapDir>
+  </PropertyGroup>
+
+  <Target Name="CopyServiceBootstrapExe" AfterTargets="Build">
+    <Copy SourceFiles="$(ServiceBootstrapDir)AriaSignature.ServiceBootstrap.exe"
+          DestinationFolder="$(TargetDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(ServiceBootstrapDir)AriaSignature.ServiceBootstrap.exe')" />
+  </Target>
+
+  <Target Name="CopyServiceBootstrapExePublish" AfterTargets="Publish">
+    <Copy SourceFiles="$(ServiceBootstrapDir)AriaSignature.ServiceBootstrap.exe"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(ServiceBootstrapDir)AriaSignature.ServiceBootstrap.exe')" />
+  </Target>
 
   <ItemGroup>
     <Content Include="..\..\..\assets\branding\logo.png" Link="Assets\logo.png">
