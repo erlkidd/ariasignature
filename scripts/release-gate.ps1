@@ -1,31 +1,100 @@
 param(
-    [string]$Configuration = "Release"
+    [string]$Configuration = "Release",
+    [string]$RuntimeIdentifier = "win-x64"
 )
 
 $ErrorActionPreference = "Stop"
 Set-Location (Resolve-Path "$PSScriptRoot\..")
+$startedAt = Get-Date
 
-Write-Host "1/6 Build web UI (npm)..."
+function Write-Step {
+    param(
+        [int]$Index,
+        [int]$Total,
+        [string]$Name
+    )
+    Write-Host ("[release-gate][step-start] index={0}/{1} name=""{2}"" utc={3}" -f $Index, $Total, $Name, (Get-Date).ToUniversalTime().ToString("o"))
+}
+
+function Assert-ExitCode {
+    param(
+        [int]$Code,
+        [string]$Operation
+    )
+    if ($Code -ne 0) {
+        throw "[release-gate][step-fail] operation=""$Operation"" exit_code=$Code"
+    }
+}
+
+Write-Step -Index 1 -Total 8 -Name "build-web-ui"
 Push-Location .\src\web
 npm ci
-if ($LASTEXITCODE -ne 0) { Pop-Location; throw "npm ci failed" }
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw "[release-gate][step-fail] operation=""npm-ci"" exit_code=$LASTEXITCODE" }
 npm run build
-if ($LASTEXITCODE -ne 0) { Pop-Location; throw "npm run build failed" }
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw "[release-gate][step-fail] operation=""npm-build"" exit_code=$LASTEXITCODE" }
 Pop-Location
 
-Write-Host "2/6 Build solution..."
+Write-Step -Index 2 -Total 8 -Name "build-solution"
 dotnet build .\AriaSignature.slnx -c $Configuration
+Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-build"
 
-Write-Host "3/6 Run tests..."
+Write-Step -Index 3 -Total 8 -Name "run-tests"
 dotnet test .\AriaSignature.slnx -c $Configuration
+Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-test"
 
-Write-Host "4/6 Publish UI..."
-dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c $Configuration -o .\publish\ui
+Write-Step -Index 4 -Total 8 -Name "publish-ui"
+Remove-Item -Path .\publish\ui -Recurse -Force -ErrorAction SilentlyContinue
+dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c $Configuration -r $RuntimeIdentifier --self-contained true -o .\publish\ui
+Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-publish-ui"
 
-Write-Host "5/6 Publish service..."
-dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c $Configuration -o .\publish\service
+Write-Host "[release-gate][check] bootstrap package source = publish/bootstrap"
+$bootstrapPublishDir = ".\publish\bootstrap"
+Remove-Item -Path $bootstrapPublishDir -Recurse -Force -ErrorAction SilentlyContinue
+dotnet publish .\src\tools\AriaSignature.ServiceBootstrap\AriaSignature.ServiceBootstrap.csproj -c $Configuration -r $RuntimeIdentifier --self-contained true -o $bootstrapPublishDir
+Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-publish-bootstrap"
+if (-not (Test-Path (Join-Path $bootstrapPublishDir "AriaSignature.ServiceBootstrap.exe"))) {
+    throw "[release-gate][step-fail] operation=""verify-publish-bootstrap"" reason=""bootstrap-exe-missing-in-bootstrap-publish"""
+}
+$bootstrapInUiDir = ".\publish\ui\bootstrap"
+Remove-Item -Path $bootstrapInUiDir -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -Path $bootstrapInUiDir -ItemType Directory -Force | Out-Null
+Copy-Item -Path (Join-Path $bootstrapPublishDir "*") -Destination $bootstrapInUiDir -Recurse -Force
 
-Write-Host "6/8 Prepare WebView2 offline runtime..."
+$uiExe = ".\publish\ui\AriaSignature.UI.exe"
+$bootstrapExe = ".\publish\ui\bootstrap\AriaSignature.ServiceBootstrap.exe"
+if (-not (Test-Path $uiExe)) { throw "[release-gate][step-fail] operation=""verify-publish-ui"" reason=""ui-exe-missing""" }
+if (-not (Test-Path $bootstrapExe)) { throw "[release-gate][step-fail] operation=""verify-publish-ui"" reason=""bootstrap-exe-missing""" }
+$bootstrapHostFxr = ".\publish\ui\bootstrap\hostfxr.dll"
+$bootstrapHostPolicy = ".\publish\ui\bootstrap\hostpolicy.dll"
+if (-not (Test-Path $bootstrapHostFxr)) { throw "[release-gate][step-fail] operation=""verify-bootstrap-self-contained"" reason=""hostfxr-missing""" }
+if (-not (Test-Path $bootstrapHostPolicy)) { throw "[release-gate][step-fail] operation=""verify-bootstrap-self-contained"" reason=""hostpolicy-missing""" }
+
+Write-Step -Index 5 -Total 8 -Name "publish-service"
+Remove-Item -Path .\publish\service -Recurse -Force -ErrorAction SilentlyContinue
+dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c $Configuration -r $RuntimeIdentifier --self-contained true -o .\publish\service
+Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-publish-service"
+$serviceExe = ".\publish\service\AriaSignature.Service.exe"
+if (-not (Test-Path $serviceExe)) { throw "[release-gate][step-fail] operation=""verify-publish-service"" reason=""service-exe-missing""" }
+$serviceDeps = ".\publish\service\AriaSignature.Service.deps.json"
+$serviceRuntimeConfig = ".\publish\service\AriaSignature.Service.runtimeconfig.json"
+if (-not (Test-Path $serviceDeps)) { throw "[release-gate][step-fail] operation=""verify-publish-service"" reason=""service-deps-missing""" }
+if (-not (Test-Path $serviceRuntimeConfig)) { throw "[release-gate][step-fail] operation=""verify-publish-service"" reason=""service-runtimeconfig-missing""" }
+$depsRaw = Get-Content -Path $serviceDeps -Raw
+$ridPattern = "/" + [regex]::Escape($RuntimeIdentifier) + '"'
+if ($depsRaw -notmatch $ridPattern) {
+    throw "[release-gate][step-fail] operation=""verify-service-runtime-target"" reason=""rid-mismatch-in-deps"" expected=""$RuntimeIdentifier"""
+}
+if ($depsRaw -notmatch '"runtimeTarget"\s*:\s*\{\s*"name"\s*:\s*"\.NETCoreApp,Version=v8\.0/' + [regex]::Escape($RuntimeIdentifier) + '"') {
+    throw "[release-gate][step-fail] operation=""verify-service-runtime-target"" reason=""runtime-target-missing-in-deps"" expected=""$RuntimeIdentifier"""
+}
+if ($depsRaw -notmatch '"Microsoft\.Extensions\.Hosting\.WindowsServices"\s*:\s*"') {
+    throw "[release-gate][step-fail] operation=""verify-service-runtime-target"" reason=""windowsservices-dependency-missing"""
+}
+if ($depsRaw -notmatch '"Microsoft\.Extensions\.Hosting\.WindowsServices"\s*:\s*"8\.') {
+    throw "[release-gate][step-fail] operation=""verify-service-runtime-target"" reason=""windowsservices-version-not-net8-compatible"""
+}
+
+Write-Step -Index 6 -Total 8 -Name "prepare-webview2"
 $webView2Dir = ".\installer\webview2"
 $webView2Exe = Join-Path $webView2Dir "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
 if (-not (Test-Path $webView2Exe)) {
@@ -35,7 +104,7 @@ if (-not (Test-Path $webView2Exe)) {
     Invoke-WebRequest -Uri $url -OutFile $webView2Exe
 }
 
-Write-Host "7/8 Prepare smartctl runtime..."
+Write-Step -Index 7 -Total 8 -Name "prepare-smartctl"
 $smartCtlDir = ".\installer\smartctl"
 $smartCtlExe = Join-Path $smartCtlDir "smartctl.exe"
 $driveDbPath = Join-Path $smartCtlDir "drivedb.h"
@@ -95,7 +164,22 @@ if ((Get-Item $driveDbPath).Length -le 0) {
     throw "drivedb.h is empty after prepare step."
 }
 
-Write-Host "8/8 Build installer..."
+Write-Host "[release-gate][check] validating host dependencies"
+$requiredCommands = @("powershell.exe", "sc.exe", "taskkill.exe")
+foreach ($cmd in $requiredCommands) {
+    $resolved = Get-Command $cmd -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue
+    if (-not $resolved) {
+        throw "[release-gate][step-fail] operation=""host-dependency-check"" missing=""$cmd"""
+    }
+}
+
+$logsRoot = Join-Path $env:ProgramData "AriaSignature\logs"
+New-Item -Path $logsRoot -ItemType Directory -Force | Out-Null
+$probeLog = Join-Path $logsRoot "release-gate-write-test.log"
+"ok" | Out-File -FilePath $probeLog -Encoding utf8 -Force
+Remove-Item -Path $probeLog -Force -ErrorAction SilentlyContinue
+
+Write-Step -Index 8 -Total 8 -Name "build-installer"
 $isccPath = Get-Command iscc -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue
 if (-not $isccPath) {
     $fallback = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
@@ -109,8 +193,7 @@ if (-not $isccPath) {
 }
 
 & $isccPath .\installer\inno\AriaSignature.iss
-if ($LASTEXITCODE -ne 0) {
-    throw "ISCC failed with exit code $LASTEXITCODE"
-}
+Assert-ExitCode -Code $LASTEXITCODE -Operation "iscc-build-installer"
 
-Write-Host "Release gate completed successfully."
+$elapsed = [int]((Get-Date) - $startedAt).TotalSeconds
+Write-Host ("[release-gate][done] status=success elapsed_sec={0} utc={1}" -f $elapsed, (Get-Date).ToUniversalTime().ToString("o"))

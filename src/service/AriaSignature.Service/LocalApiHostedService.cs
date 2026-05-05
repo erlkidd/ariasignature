@@ -8,17 +8,22 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Net.Http;
+using System.Net.Sockets;
 
 namespace AriaSignature.Service;
 
-public sealed class LocalApiHostedService : IHostedService
+/// <summary>
+/// Локальный Kestrel с REST API. Реализован как <see cref="BackgroundService"/>, чтобы не блокировать
+/// завершение фазы старта Windows Service Control Manager (иначе возможен код 1053 при долгом холодном старте).
+/// </summary>
+public sealed class LocalApiHostedService : BackgroundService
 {
     private readonly ILogger<LocalApiHostedService> _logger;
     private readonly IConfiguration _configuration;
     private readonly IServiceProvider _serviceProvider;
-    private WebApplication? _webApp;
 
     public LocalApiHostedService(
         ILogger<LocalApiHostedService> logger,
@@ -30,54 +35,109 @@ public sealed class LocalApiHostedService : IHostedService
         _serviceProvider = serviceProvider;
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var startupSw = Stopwatch.StartNew();
-        var port = await ResolveApiPortAsync(cancellationToken);
-        var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
-        var webRootExists = Directory.Exists(webRoot);
-
-        var options = new WebApplicationOptions
+        WebApplication? webApp = null;
+        try
         {
-            ContentRootPath = AppContext.BaseDirectory,
-            WebRootPath = webRootExists ? webRoot : null
-        };
+            var startupSw = Stopwatch.StartNew();
+            var port = await ResolveApiPortAsync(stoppingToken).ConfigureAwait(false);
+            var bindMode = await ResolveBindModeAsync(stoppingToken).ConfigureAwait(false);
+            var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+            var webRootExists = Directory.Exists(webRoot);
 
-        // CreateSlimBuilder не регистрирует regex route constraints; Swashbuckle (UseSwagger) падает при старте.
-        var webBuilder = WebApplication.CreateBuilder(options);
-        var listenUrls = await ResolveListenUrlsAsync(port, cancellationToken);
-        webBuilder.WebHost.UseUrls(listenUrls);
-        webBuilder.Services.AddApplication();
-        webBuilder.Services.AddInfrastructure();
-        webBuilder.Services.AddAriaApi();
-        var cronApplier = _serviceProvider.GetRequiredService<ISmartRefreshCronApplier>();
-        webBuilder.Services.AddSingleton<ISmartRefreshCronApplier>(cronApplier);
-        var outboundCronApplier = _serviceProvider.GetRequiredService<IOutboundSyncCronApplier>();
-        webBuilder.Services.AddSingleton<IOutboundSyncCronApplier>(outboundCronApplier);
+            var options = new WebApplicationOptions
+            {
+                ContentRootPath = AppContext.BaseDirectory,
+                WebRootPath = webRootExists ? webRoot : null
+            };
 
-        _webApp = webBuilder.Build();
-        _webApp.UseAriaApi();
+            // CreateSlimBuilder не регистрирует regex route constraints; Swashbuckle (UseSwagger) падает при старте.
+            var webBuilder = WebApplication.CreateBuilder(options);
+            var listenUrls = ResolveListenUrls(port, bindMode);
+            webBuilder.WebHost.UseUrls(listenUrls);
+            webBuilder.Services.AddApplication();
+            webBuilder.Services.AddInfrastructure();
+            webBuilder.Services.AddAriaApi();
+            var cronApplier = _serviceProvider.GetRequiredService<ISmartRefreshCronApplier>();
+            webBuilder.Services.AddSingleton<ISmartRefreshCronApplier>(cronApplier);
+            var outboundCronApplier = _serviceProvider.GetRequiredService<IOutboundSyncCronApplier>();
+            webBuilder.Services.AddSingleton<IOutboundSyncCronApplier>(outboundCronApplier);
 
-        _logger.LogInformation(
-            "Starting API on {ListenUrls} (wwwroot: {WebRoot}). Локальная панель: http://127.0.0.1:{Port}",
-            listenUrls,
-            webRootExists ? webRoot : "(none)",
-            port);
-        await _webApp.StartAsync(cancellationToken);
-        _logger.LogInformation("API bind/start completed in {ElapsedMs} ms", startupSw.ElapsedMilliseconds);
-        await LogFirstReadyAsync(port, cancellationToken);
+            webApp = webBuilder.Build();
+            webApp.UseAriaApi();
+
+            _logger.LogInformation(
+                "marker=api-start-enter bind={BindMode}; urls={ListenUrls}; contentRoot={ContentRoot}; webRoot={WebRoot}; localPanel=http://127.0.0.1:{Port}",
+                bindMode,
+                listenUrls,
+                AppContext.BaseDirectory,
+                webRootExists ? webRoot : "(none)",
+                port);
+            try
+            {
+                await webApp.StartAsync(stoppingToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsListenAddressFailure(ex))
+            {
+                _logger.LogError(
+                    ex,
+                    "marker=api-bind-failed API start failed. bind={BindMode}; urls={ListenUrls}; port={Port}; rootError={RootError}. Check for IPv6 restrictions or port conflicts.",
+                    bindMode,
+                    listenUrls,
+                    port,
+                    GetDeepestExceptionMessage(ex));
+                return;
+            }
+
+            _logger.LogInformation("marker=api-started API bind/start completed in {ElapsedMs} ms", startupSw.ElapsedMilliseconds);
+            await LogFirstReadyAsync(port, stoppingToken).ConfigureAwait(false);
+
+            try
+            {
+                await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // нормальная остановка службы
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // отмена до или во время старта
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "marker=api-host-fatal Local API host failed during startup. rootError={RootError}", GetDeepestExceptionMessage(ex));
+        }
+        finally
+        {
+            if (webApp is not null)
+            {
+                try
+                {
+                    await webApp.StopAsync(CancellationToken.None).ConfigureAwait(false);
+                    await webApp.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error while stopping local API host.");
+                }
+
+                _logger.LogInformation("Local API host stopped.");
+            }
+        }
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken)
+    private static string GetDeepestExceptionMessage(Exception ex)
     {
-        if (_webApp is null)
+        var current = ex;
+        while (current.InnerException is not null)
         {
-            return;
+            current = current.InnerException;
         }
 
-        _logger.LogInformation("Stopping local API host");
-        await _webApp.StopAsync(cancellationToken);
-        await _webApp.DisposeAsync();
+        return current.Message;
     }
 
     private async Task<int> ResolveApiPortAsync(CancellationToken cancellationToken)
@@ -89,7 +149,7 @@ public sealed class LocalApiHostedService : IHostedService
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
             await using var scope = _serviceProvider.CreateAsyncScope();
             var settings = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-            var fromDb = await settings.GetAsync("Api:Port", linkedCts.Token);
+            var fromDb = await settings.GetAsync("Api:Port", linkedCts.Token).ConfigureAwait(false);
             if (int.TryParse(fromDb, out var p) && p is > 0 and < 65536)
             {
                 return p;
@@ -103,7 +163,7 @@ public sealed class LocalApiHostedService : IHostedService
         return fallback;
     }
 
-    private async Task<string> ResolveListenUrlsAsync(int port, CancellationToken cancellationToken)
+    private async Task<string> ResolveBindModeAsync(CancellationToken cancellationToken)
     {
         var fallbackBind = _configuration.GetValue<string>("Api:Bind") ?? "all";
         try
@@ -112,26 +172,55 @@ public sealed class LocalApiHostedService : IHostedService
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
             await using var scope = _serviceProvider.CreateAsyncScope();
             var settings = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-            var fromDb = await settings.GetAsync(AppSettingsApiKeys.Bind, linkedCts.Token);
+            var fromDb = await settings.GetAsync(AppSettingsApiKeys.Bind, linkedCts.Token).ConfigureAwait(false);
             var mode = string.IsNullOrWhiteSpace(fromDb) ? fallbackBind : fromDb.Trim();
-            if (string.Equals(mode, "loopback", StringComparison.OrdinalIgnoreCase))
-            {
-                return $"http://127.0.0.1:{port}";
-            }
-
-            return $"http://0.0.0.0:{port};http://[::]:{port}";
+            return string.Equals(mode, "loopback", StringComparison.OrdinalIgnoreCase) ? "loopback" : "all";
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to read Api:Bind from DB; using configuration fallback {FallbackBind}", fallbackBind);
         }
 
-        if (string.Equals(fallbackBind.Trim(), "loopback", StringComparison.OrdinalIgnoreCase))
+        return string.Equals(fallbackBind.Trim(), "loopback", StringComparison.OrdinalIgnoreCase) ? "loopback" : "all";
+    }
+
+    private static string ResolveListenUrls(int port, string bindMode)
+    {
+        if (string.Equals(bindMode, "loopback", StringComparison.OrdinalIgnoreCase))
         {
             return $"http://127.0.0.1:{port}";
         }
 
-        return $"http://0.0.0.0:{port};http://[::]:{port}";
+        // Prefer IPv4 wildcard only: on hardened Win11 hosts, explicit [::] may fail startup.
+        return $"http://0.0.0.0:{port}";
+    }
+
+    private static bool IsListenAddressFailure(Exception ex)
+    {
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is SocketException)
+            {
+                return true;
+            }
+
+            if (current is IOException ioEx && ioEx.InnerException is SocketException)
+            {
+                return true;
+            }
+
+            if (current is HttpRequestException && current.InnerException is SocketException)
+            {
+                return true;
+            }
+
+            if (current is Win32Exception win32 && win32.NativeErrorCode is 10013 or 10048)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task LogFirstReadyAsync(int port, CancellationToken cancellationToken)
@@ -141,8 +230,8 @@ public sealed class LocalApiHostedService : IHostedService
         var baseUrl = $"http://127.0.0.1:{port}";
         try
         {
-            using var status = await http.GetAsync($"{baseUrl}/api/v1/status", cancellationToken);
-            using var root = await http.GetAsync($"{baseUrl}/", cancellationToken);
+            using var status = await http.GetAsync($"{baseUrl}/api/v1/status", cancellationToken).ConfigureAwait(false);
+            using var root = await http.GetAsync($"{baseUrl}/", cancellationToken).ConfigureAwait(false);
             _logger.LogInformation(
                 "API first-ready probe in {ElapsedMs} ms: status={StatusCode}, root={RootCode}",
                 readySw.ElapsedMilliseconds,

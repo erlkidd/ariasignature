@@ -6,14 +6,63 @@
 
 ## [Unreleased]
 
+### Added
+
+- Утилита **`AriaSignature.ServiceBootstrap`** и библиотека **`AriaSignature.WindowsServiceSetup`**: общая регистрация/запуск службы через `sc`, классификация отказов (в т.ч. **ACCESS_DENIED**), лог bootstrap в `%ProgramData%\AriaSignature\logs\`; UI один раз запускает helper с **UAC** при отказе прав SCM.
+- Документация `docs/AI_CONTEXT.md` для AI-first onboarding: карта компонентов, инварианты, startup sequence, диагностика и тестовые ориентиры.
+
+### Changed
+
+- Release gate/publish: UI и Service публикуются как `win-x64` **self-contained**; после publish обязательно проверяется наличие `AriaSignature.UI.exe`, `AriaSignature.Service.exe`, `AriaSignature.ServiceBootstrap.exe`.
+- Релизные заметки унифицированы: `docs/CHANGELOG.md` остаётся каноничным источником истории; `docs/DEVELOPMENT_NOTES.md` превращён в короткий указатель без дублирования.
+- UI (`src/web/src/App.tsx`): стартовая вкладка по умолчанию сменена на `О системе`; отображение наработки диска переведено на формат в днях (с остатком часов).
+- Service startup (`LocalApiHostedService`): bind URL для режима `all` упрощён до IPv4 wildcard, добавлены более подробные диагностические логи по режиму bind/URL/root path.
+- Installer (`AriaSignature.iss`): после `sc start` добавлен локальный health probe `GET /api/v1/status` с уведомлением при нездоровом старте; при неуспешном старте службы в лог установщика пишется полный вывод **`sc query`** и **`sc qc`** (сброс в временный файл через `cmd.exe`).
+- `release-gate.ps1`: шаги и ошибки логируются в стабильном machine-friendly формате (`[release-gate][step-*]`).
+
 ### Fixed
 
+- Bootstrap rescue: при `bootstrap exit=1` setup теперь подхватывает structured detail из `%ProgramData%\AriaSignature\logs\bootstrap-last-result.txt` и показывает конкретную причину; bootstrap пишет stage/category/message в stderr и marker-файл.
+- Bootstrap/API verification: критерий готовности после восстановления упрощён до успешного `/api/v1/status` (без обязательного `GET /`), чтобы убрать ложные fail-hard при рабочей службе.
+- Installer/bootstrap packaging: источник `AriaSignature.ServiceBootstrap` для installer переключён на dedicated self-contained publish (`publish/bootstrap -> publish/ui`), чтобы исключить host/runtime сбой `-2147450726` на чистых Win10/11.
+- Installer (`AriaSignature.iss`): добавлены preflight-проверки обязательных файлов/инструментов, auto-repair через `AriaSignature.ServiceBootstrap` при неуспешном старте службы/API и fail-hard при недостижимом `service running + /api/v1/status`.
+- Win11 startup (1053): `WindowsServiceInstaller` и UI (`WindowsServiceEnsure`/`MainWindow`) получили расширенную post-1053 верификацию (service status timeline + API probe) перед финальным отказом; fallback теперь показывает stage (`scm-timeout-1053` / `post-1053-check`) и более конкретную диагностику.
+- UI (`MainWindow`): стартовая панель не показывает преждевременное «локальный сервис не отвечает» при **Stopped**, пока не завершился фоновый **TryStartOrFallback** (или не истёк верхний предел ~210 с); в цикле восстановления при **Stopped** периодически повторяется попытка запуска службы с ограничением частоты; на fallback-странице добавлены подсказки по журналам, правам администратора и **services.msc**.
+- Служба Windows: **`LocalApiHostedService`** переведён на **`BackgroundService`**, чтобы подъём Kestrel не блокировал переход службы в Running у SCM и не провоцировал **ошибку 1053** на медленном холодном старте (Win11 / антивирус).
+- UI (`WindowsServiceEnsure`, `MainWindow`): при **1053** от SCM дополнительное ожидание **Running** до 120 с; вывод **`sc.exe`** читается в OEM-кодировке консоли (читаемые русские сообщения).
 - UI (`MainWindow`): меньше ложных жёстких ошибок при старте — временные сбои WebView2 к локальному API обрабатываются через восстановление; `EnsureDefaultAutostartApplied` после инициализации WebView, даже если SPA не прислала `appReady`; часть обновлений UI на `DispatcherPriority.Background`.
+- Телеметрия дисков: расширен парсинг smartctl ATA-атрибутов наработки (`ID 9`, `ID 12`), улучшена нормализация ресурса SSD (`ID 231/233`), снижена вероятность ложного определения носителя как SSD.
 
 ### Docs
 
+- `AI_CONTEXT.md`, `DEVELOPMENT_NOTES.md`: цепочка установщик → SCM → UI и **UAC** через **ServiceBootstrap**; матрица ручных проверок службы на Win10/11.
 - `DEVELOPER_GUIDE.md`: политика Git — выкат в `production` с рабочих веток; ветка `test/agent-work-legacy-pre-opt` архивная (не сливается в прод, не удаляется).
 - В документации и пользовательских формулировках API везде используется термин **токен** (удалённого API) вместо «секрет».
+
+## [1.0.1] - 2026-05-05
+
+### Added
+
+- Детализирован playbook инцидента запуска Win10/Win11: отдельный документ `docs/INCIDENT_STARTUP_W10_W11.md` с подтвержденными root cause, стратегией фикса и обязательной матрицей верификации перед релизом.
+- Дополнительные guardrail-проверки в `scripts/release-gate.ps1`: в service publish валидируется `Microsoft.Extensions.Hosting.WindowsServices` из линии `8.x`.
+
+### Changed
+
+- Сервис `AriaSignature.Service` выровнен по hosting-зависимостям под `net8.0-windows`; устранен риск PNSE на bootstrap этапе (`HostApplicationBuilder.Build()` / `WindowsServiceLifetime`) из-за несовместимого пакета.
+- `release-gate` очищает `publish/ui` и `publish/service` перед публикацией для исключения артефактов от предыдущих сборок.
+- Bootstrap payload (`AriaSignature.ServiceBootstrap`) изолирован в подпапке `ui/bootstrap` вместо корня UI publish; пути в UI/installer обновлены на новую схему.
+
+### Fixed
+
+- Критическая регрессия «UI не запускается ни на Win10, ни на Win11»: устранена коллизия WPF-зависимостей (`WindowsBase`) из-за копирования bootstrap runtime в корень UI.
+- Инсталлятор устойчиво обрабатывает `SC 1072` (`ERROR_SERVICE_MARKED_FOR_DELETE`): `WaitServiceAbsent` анализирует полный вывод `sc query`, retries `sc create` усилены backoff-логикой.
+- Уменьшен класс ложных fail-hard сценариев на старте/переустановке: улучшены preflight проверки и детерминированная диагностика по stage marker.
+- Single-instance ветка UI больше не оставляет пользователя в состоянии «ничего не произошло»: улучшены сообщения и логика восстановления/активации.
+
+### Docs
+
+- `docs/INCIDENT_STARTUP_W10_W11.md` полностью переведен на русский и дополнен новыми фактическими находками (PNSE, SCM 1072, bootstrap/UI runtime collision).
+- `docs/RELEASE_GATE.md` и сопутствующие заметки синхронизированы с контуром релиза 1.0.1.
 
 ## [1.0.0] - 2026-05-02
 

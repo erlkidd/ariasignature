@@ -74,6 +74,15 @@ public sealed class ApiEndpointsTests : IClassFixture<TestWebApplicationFactory>
         var response = await _client.GetAsync("/api/v1/disks");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var doc = await JsonDocument.ParseAsync(stream);
+        Assert.Equal(JsonValueKind.Array, doc.RootElement.ValueKind);
+        foreach (var disk in doc.RootElement.EnumerateArray())
+        {
+            Assert.True(disk.TryGetProperty("mediaType", out var mediaType) && mediaType.ValueKind == JsonValueKind.String);
+            Assert.True(disk.TryGetProperty("powerOnHours", out var powerOnHours) && powerOnHours.ValueKind == JsonValueKind.Number);
+            Assert.True(disk.TryGetProperty("healthPercent", out _));
+        }
     }
 
     [Fact]
@@ -171,6 +180,22 @@ public sealed class ApiEndpointsTests : IClassFixture<TestWebApplicationFactory>
 
         var response = await _client.PostAsJsonAsync("/api/v1/backups", request);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task StatusEndpoint_ReturnsVersionAndTimestamp()
+    {
+        var response = await _client.GetAsync("/api/v1/status");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var doc = await JsonDocument.ParseAsync(stream);
+
+        Assert.True(doc.RootElement.TryGetProperty("version", out var version) &&
+                    version.ValueKind == JsonValueKind.String &&
+                    !string.IsNullOrWhiteSpace(version.GetString()));
+        Assert.True(doc.RootElement.TryGetProperty("timestampUtc", out var timestamp) &&
+                    timestamp.ValueKind == JsonValueKind.String &&
+                    !string.IsNullOrWhiteSpace(timestamp.GetString()));
     }
 
     [Fact]

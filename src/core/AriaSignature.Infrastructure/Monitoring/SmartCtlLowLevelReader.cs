@@ -269,10 +269,17 @@ public sealed class SmartCtlLowLevelReader
             {
                 var id = GetInt(row, "id");
                 var raw = row.TryGetProperty("raw", out var rawObj) ? (GetLong(rawObj, "value") ?? 0) : 0;
+                var attrName = GetString(row, "name") ?? string.Empty;
                 switch (id)
                 {
                     case 5:
                         snap.ReallocatedSectors = (int)Math.Clamp(raw, 0, int.MaxValue);
+                        break;
+                    case 9:
+                        snap.PowerOnHours = Math.Max(snap.PowerOnHours, Math.Clamp(raw, 0, long.MaxValue));
+                        break;
+                    case 12:
+                        snap.PowerCycleCount = Math.Max(snap.PowerCycleCount, Math.Clamp(raw, 0, long.MaxValue));
                         break;
                     case 194:
                         if (raw > 0 && raw < 125)
@@ -291,7 +298,10 @@ public sealed class SmartCtlLowLevelReader
                     case 233:
                         if (raw is > 0 and <= 100)
                         {
-                            snap.SsdLifeRemainingPercent = (int)raw;
+                            var normalized = NormalizeLifePercent((int)raw, attrName);
+                            snap.SsdLifeRemainingPercent = snap.SsdLifeRemainingPercent is int prev
+                                ? Math.Min(prev, normalized)
+                                : normalized;
                         }
 
                         break;
@@ -490,6 +500,19 @@ public sealed class SmartCtlLowLevelReader
             JsonValueKind.String when int.TryParse(p.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) => i,
             _ => null
         };
+    }
+
+    private static int NormalizeLifePercent(int rawPercent, string attrName)
+    {
+        var normalizedName = attrName.Trim().ToUpperInvariant();
+        if (normalizedName.Contains("WEAR", StringComparison.Ordinal) ||
+            normalizedName.Contains("USED", StringComparison.Ordinal) ||
+            normalizedName.Contains("LIFE_USED", StringComparison.Ordinal))
+        {
+            return Math.Clamp(100 - rawPercent, 0, 100);
+        }
+
+        return Math.Clamp(rawPercent, 0, 100);
     }
 
     private static long? GetLong(JsonElement element, string name)

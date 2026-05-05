@@ -27,11 +27,30 @@ public partial class App : System.Windows.Application
         _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out var createdNew);
         if (!createdNew)
         {
-            SingleInstanceActivator.SignalExistingInstance(ActivateExistingEventName);
-            _singleInstanceMutex.Dispose();
-            _singleInstanceMutex = null;
-            Shutdown();
-            return;
+            var activatedExisting = SingleInstanceActivator.SignalExistingInstance(ActivateExistingEventName);
+            if (!activatedExisting && TryRecoverFromStaleSingleInstanceMutex(out createdNew))
+            {
+                // Stale mutex case: continue startup as primary instance.
+            }
+            else
+            {
+                // Prevent "nothing happened" UX: explicit message when process is already running.
+                if (!e.Args.Any(arg => string.Equals(arg, "--tray", StringComparison.OrdinalIgnoreCase)))
+                {
+                    System.Windows.MessageBox.Show(
+                        activatedExisting
+                            ? "AriaSignature уже запущен. Окно существующего экземпляра должно быть поднято на передний план."
+                            : "AriaSignature уже запущен, но не удалось активировать существующее окно. Проверьте значок в системном трее и завершите зависший процесс при необходимости.",
+                        "AriaSignature",
+                        System.Windows.MessageBoxButton.OK,
+                        System.Windows.MessageBoxImage.Information);
+                }
+
+                _singleInstanceMutex.Dispose();
+                _singleInstanceMutex = null;
+                Shutdown();
+                return;
+            }
         }
 
         _ownsSingleInstanceMutex = true;
@@ -61,6 +80,23 @@ public partial class App : System.Windows.Application
         else
         {
             mainWindow.Show();
+        }
+    }
+
+    private bool TryRecoverFromStaleSingleInstanceMutex(out bool createdNew)
+    {
+        createdNew = false;
+        try
+        {
+            _singleInstanceMutex?.Dispose();
+            _singleInstanceMutex = null;
+            Thread.Sleep(250);
+            _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out createdNew);
+            return createdNew;
+        }
+        catch
+        {
+            return false;
         }
     }
 

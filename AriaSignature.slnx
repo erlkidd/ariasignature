@@ -7,6 +7,10 @@
     <Project Path="src/core/AriaSignature.Application/AriaSignature.Application.csproj" />
     <Project Path="src/core/AriaSignature.Domain/AriaSignature.Domain.csproj" />
     <Project Path="src/core/AriaSignature.Infrastructure/AriaSignature.Infrastructure.csproj" />
+    <Project Path="src/core/AriaSignature.WindowsServiceSetup/AriaSignature.WindowsServiceSetup.csproj" />
+  </Folder>
+  <Folder Name="/src/tools/">
+    <Project Path="src/tools/AriaSignature.ServiceBootstrap/AriaSignature.ServiceBootstrap.csproj" />
   </Folder>
   <Folder Name="/src/service/">
     <Project Path="src/service/AriaSignature.Service/AriaSignature.Service.csproj" />

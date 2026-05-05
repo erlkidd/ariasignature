@@ -3,12 +3,33 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\core\AriaSignature.Application\AriaSignature.Application.csproj" />
     <ProjectReference Include="..\..\core\AriaSignature.Domain\AriaSignature.Domain.csproj" />
+    <ProjectReference Include="..\..\core\AriaSignature.WindowsServiceSetup\AriaSignature.WindowsServiceSetup.csproj" />
+    <ProjectReference Include="..\..\tools\AriaSignature.ServiceBootstrap\AriaSignature.ServiceBootstrap.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
   </ItemGroup>
+
+  <PropertyGroup>
+    <ResolvedRid Condition="'$(RuntimeIdentifier)' == ''">win-x64</ResolvedRid>
+    <ResolvedRid Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</ResolvedRid>
+    <ServiceBootstrapDir>$(MSBuildThisFileDirectory)..\..\tools\AriaSignature.ServiceBootstrap\bin\$(Configuration)\net8.0-windows\$(ResolvedRid)\</ServiceBootstrapDir>
+  </PropertyGroup>
+
+  <Target Name="CopyServiceBootstrapExe" AfterTargets="Build">
+    <Copy SourceFiles="$(ServiceBootstrapDir)AriaSignature.ServiceBootstrap.exe"
+          DestinationFolder="$(TargetDir)bootstrap\"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(ServiceBootstrapDir)AriaSignature.ServiceBootstrap.exe')" />
+  </Target>
+
+  <!-- Installer/release-gate injects bootstrap from dedicated self-contained publish output.
+       Keep publish target clean to avoid accidentally copying framework-dependent bootstrap from bin/. -->
 
   <ItemGroup>
     <Content Include="..\..\..\assets\branding\logo.png" Link="Assets\logo.png">
@@ -24,6 +45,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>

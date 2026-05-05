@@ -1,6 +1,6 @@
 # AriaSignature — регламент release-gate
 
-Версия документа: 1.0.0.
+Версия документа: 1.0.1.
 
 ## 1. Цель
 
@@ -21,8 +21,8 @@ Pipeline выполняет:
 1. `npm ci` + `npm run build` (`src/web`)
 2. `dotnet build .\AriaSignature.slnx -c Release`
 3. `dotnet test .\AriaSignature.slnx -c Release`
-4. `dotnet publish` UI и Service
-5. подготовку runtime-зависимостей (`WebView2`, `smartctl`, `drivedb.h`) с проверкой целостности
+4. `dotnet publish` UI и Service в `win-x64 --self-contained true`; bootstrap публикуется отдельным шагом в `publish/bootstrap` и затем копируется в `publish/ui` (единственный разрешённый источник bootstrap для installer)
+5. подготовку runtime-зависимостей (`WebView2`, `smartctl`, `drivedb.h`) с проверкой целостности и host-dependency-check (`powershell/sc/taskkill`, запись в `%ProgramData%\AriaSignature\logs\`)
 6. `ISCC` сборку `installer/inno/AriaSignature.iss`
 
 Выходной артефакт:
@@ -48,6 +48,15 @@ Pipeline выполняет:
 - записи появляются в `/api/v1/backups/logs`;
 - после перезагрузки ОС служба запускается автоматически; панель UI появляется в трее (ярлык в автозагрузке пользователя и/или задача планировщика);
 - uninstall корректно удаляет службу и компоненты.
+
+### Матрица Win11 (обязательная)
+
+- `fresh install` (стандартный пользователь): setup проходит preflight, при сбое старта выполняется auto-repair.
+- `fresh install` (администратор): подтверждается `install-health:ok`.
+- сценарий `1053`: post-1053-check фиксирует timeline и исход (`Running` или детализированный `fail-hard`).
+- сценарий падения службы: setup и UI показывают stage-код и путь к логам.
+- сценарий блокировки (антивирус/Controlled Folder Access): получаем детерминированный `fail-hard` без «тихого успеха».
+- reinstall поверх старой версии: удаление/повторная регистрация службы проходит штатно.
 
 ## 5. Критерии блокировки релиза
 
