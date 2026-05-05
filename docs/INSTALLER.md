@@ -24,8 +24,8 @@
 Из корня репозитория:
 
 ```powershell
-dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c Release -o .\publish\ui
-dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c Release -o .\publish\service
+dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c Release -r win-x64 --self-contained true -o .\publish\ui
+dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c Release -r win-x64 --self-contained true -o .\publish\service
 ```
 
 ## 4. Сборка installer
@@ -59,9 +59,10 @@ dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj 
 - после регистрации выполняется проверка существования службы;
 - применяется политика автозапуска и recovery;
 - запуск службы после установки выполняется с retry;
-- если служба не стартовала в окне установки, инсталляция завершается успешно с информационным уведомлением и дальнейшим восстановлением через UI.
+- при неуспешном старте setup выполняет preflight/postflight проверки и запускает auto-repair через `AriaSignature.ServiceBootstrap.exe`;
+- установка не оставляет полу-рабочее состояние: если после auto-repair не подтверждены `service running + /api/v1/status`, setup завершается ошибкой.
 
-При критической ошибке регистрации (невозможно создать службу) установка завершается с ошибкой.
+При критической ошибке регистрации/здоровья (`install-health:fail-hard`) установка завершается с ошибкой.
 
 ## 7. Поведение удаления
 

@@ -22,6 +22,7 @@
 ## 3) Поток старта
 
 **Права и цепочка (Win10/11):** установщик **Inno** (`PrivilegesRequired=admin`) регистрирует службу и задаёт ожидаемый путь `{app}\service\AriaSignature.Service.exe` — тот же относительный путь, что UI строит как `..\service\` от `{app}\ui`. Обычный пользователь может получить **отказ в доступе** при `sc`/SCM; тогда UI **один раз за процесс** запускает рядом лежащий **`AriaSignature.ServiceBootstrap.exe`** через **UAC** (`runas`), helper повторяет ту же процедуру `create/start`, логируя шаги в `%ProgramData%\AriaSignature\logs\bootstrap-*.log`.
+Артефакты UI/Service публикуются как `win-x64` self-contained: запуск не зависит от внешней установки .NET runtime на целевой Win11.
 При **SCM 1053** выполняется расширенная post-1053 проверка: timeline статусов службы (до ~120 с), наличие процесса хоста и probe API; только после этого фиксируется финальный фейл с stage-маркером (`scm-timeout-1053` / `post-1053-check`).
 
 1. Запуск `AriaSignature.Service`.
@@ -39,6 +40,7 @@
   - проверить порт `5160` (конфликт);
   - проверить `Api:Bind` (`all`/`loopback`) в настройках.
 - Инсталлятор логирует шаги `sc create/start`, а при неуспехе старта дополнительно пишет полный `sc query` и `sc qc`; bootstrap пишет timeline/checkpoint-маркеры для 1053-диагностики.
+- Setup использует статус `install-health` (`ok`, `fail-with-repair`, `fail-hard`) и после неуспешного старта выполняет auto-repair; `fail-hard` блокирует завершение установки в полу-рабочем состоянии.
 
 ## 5) Карта тестов
 

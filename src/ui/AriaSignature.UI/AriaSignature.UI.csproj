@@ -16,7 +16,9 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <ServiceBootstrapDir>$(MSBuildThisFileDirectory)..\..\tools\AriaSignature.ServiceBootstrap\bin\$(Configuration)\net8.0-windows\</ServiceBootstrapDir>
+    <ResolvedRid Condition="'$(RuntimeIdentifier)' == ''">win-x64</ResolvedRid>
+    <ResolvedRid Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</ResolvedRid>
+    <ServiceBootstrapDir>$(MSBuildThisFileDirectory)..\..\tools\AriaSignature.ServiceBootstrap\bin\$(Configuration)\net8.0-windows\$(ResolvedRid)\</ServiceBootstrapDir>
   </PropertyGroup>
 
   <Target Name="CopyServiceBootstrapExe" AfterTargets="Build">
@@ -47,6 +49,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>

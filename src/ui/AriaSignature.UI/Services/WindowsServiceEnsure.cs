@@ -100,7 +100,7 @@ public static class WindowsServiceEnsure
 
             warningMessage =
                 WindowsServiceInstaller.BuildUserHint(setupResult)
-                + (startFailure is null ? string.Empty : $"\nИсходная ошибка SCM: {startFailure.Message}")
+                + (ShouldAppendScmSourceError(startFailure, setupResult.ErrorMessage) ? $"\nИсходная ошибка SCM: {startFailure!.Message}" : string.Empty)
                 + (string.IsNullOrEmpty(elevationFailure) ? string.Empty : $"\n{elevationFailure}");
         }
         catch (InvalidOperationException ex)
@@ -126,14 +126,14 @@ public static class WindowsServiceEnsure
 
             warningMessage =
                 WindowsServiceInstaller.BuildUserHint(setupResult)
-                + $"\nИсходная ошибка SCM: {ex.Message}"
+                + (ShouldAppendScmSourceError(ex, setupResult.ErrorMessage) ? $"\nИсходная ошибка SCM: {ex.Message}" : string.Empty)
                 + (string.IsNullOrEmpty(outerElevationFailure) ? string.Empty : $"\n{outerElevationFailure}");
         }
         catch (System.TimeoutException)
         {
             warningMessage =
                 WindowsServiceInstaller.BuildUserHint(
-                    new ServiceSetupResult(false, "stage=scm-timeout-1053", ServiceSetupFailureCategory.ServiceStartTimeout, ErrorServiceRequestTimeout));
+                    new ServiceSetupResult(false, "stage=post-1053-check scm-timeout-1053", ServiceSetupFailureCategory.ServiceStartTimeout, ErrorServiceRequestTimeout));
         }
         catch (Exception ex)
         {
@@ -157,6 +157,29 @@ public static class WindowsServiceEnsure
         }
 
         return false;
+    }
+
+    private static bool ShouldAppendScmSourceError(Exception? scmException, string? setupError)
+    {
+        if (scmException is null)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(setupError))
+        {
+            return true;
+        }
+
+        var sourceText = scmException.Message;
+        if (sourceText.Contains("was not found", StringComparison.OrdinalIgnoreCase)
+            && setupError.Contains("stage=post-1053-check", StringComparison.OrdinalIgnoreCase))
+        {
+            // Avoid contradictory UI text like "service not found" next to post-1053 crash diagnosis.
+            return false;
+        }
+
+        return true;
     }
 
     private static bool TryRecoverViaElevatedBootstrap(

@@ -13,6 +13,7 @@
 
 ### Changed
 
+- Release gate/publish: UI и Service публикуются как `win-x64` **self-contained**; после publish обязательно проверяется наличие `AriaSignature.UI.exe`, `AriaSignature.Service.exe`, `AriaSignature.ServiceBootstrap.exe`.
 - Релизные заметки унифицированы: `docs/CHANGELOG.md` остаётся каноничным источником истории; `docs/DEVELOPMENT_NOTES.md` превращён в короткий указатель без дублирования.
 - UI (`src/web/src/App.tsx`): стартовая вкладка по умолчанию сменена на `О системе`; отображение наработки диска переведено на формат в днях (с остатком часов).
 - Service startup (`LocalApiHostedService`): bind URL для режима `all` упрощён до IPv4 wildcard, добавлены более подробные диагностические логи по режиму bind/URL/root path.
@@ -21,6 +22,7 @@
 
 ### Fixed
 
+- Installer (`AriaSignature.iss`): добавлены preflight-проверки обязательных файлов/инструментов, auto-repair через `AriaSignature.ServiceBootstrap` при неуспешном старте службы/API и fail-hard при недостижимом `service running + /api/v1/status`.
 - Win11 startup (1053): `WindowsServiceInstaller` и UI (`WindowsServiceEnsure`/`MainWindow`) получили расширенную post-1053 верификацию (service status timeline + API probe) перед финальным отказом; fallback теперь показывает stage (`scm-timeout-1053` / `post-1053-check`) и более конкретную диагностику.
 - UI (`MainWindow`): стартовая панель не показывает преждевременное «локальный сервис не отвечает» при **Stopped**, пока не завершился фоновый **TryStartOrFallback** (или не истёк верхний предел ~210 с); в цикле восстановления при **Stopped** периодически повторяется попытка запуска службы с ограничением частоты; на fallback-странице добавлены подсказки по журналам, правам администратора и **services.msc**.
 - Служба Windows: **`LocalApiHostedService`** переведён на **`BackgroundService`**, чтобы подъём Kestrel не блокировал переход службы в Running у SCM и не провоцировал **ошибку 1053** на медленном холодном старте (Win11 / антивирус).

@@ -1,5 +1,6 @@
 param(
-    [string]$Configuration = "Release"
+    [string]$Configuration = "Release",
+    [string]$RuntimeIdentifier = "win-x64"
 )
 
 $ErrorActionPreference = "Stop"
@@ -42,12 +43,22 @@ dotnet test .\AriaSignature.slnx -c $Configuration
 Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-test"
 
 Write-Step -Index 4 -Total 8 -Name "publish-ui"
-dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c $Configuration -o .\publish\ui
+dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c $Configuration -r $RuntimeIdentifier --self-contained true -o .\publish\ui
 Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-publish-ui"
+$uiExe = ".\publish\ui\AriaSignature.UI.exe"
+$bootstrapExe = ".\publish\ui\AriaSignature.ServiceBootstrap.exe"
+if (-not (Test-Path $uiExe)) { throw "[release-gate][step-fail] operation=""verify-publish-ui"" reason=""ui-exe-missing""" }
+if (-not (Test-Path $bootstrapExe)) { throw "[release-gate][step-fail] operation=""verify-publish-ui"" reason=""bootstrap-exe-missing""" }
+$bootstrapHostFxr = ".\publish\ui\hostfxr.dll"
+$bootstrapHostPolicy = ".\publish\ui\hostpolicy.dll"
+if (-not (Test-Path $bootstrapHostFxr)) { throw "[release-gate][step-fail] operation=""verify-bootstrap-self-contained"" reason=""hostfxr-missing""" }
+if (-not (Test-Path $bootstrapHostPolicy)) { throw "[release-gate][step-fail] operation=""verify-bootstrap-self-contained"" reason=""hostpolicy-missing""" }
 
 Write-Step -Index 5 -Total 8 -Name "publish-service"
-dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c $Configuration -o .\publish\service
+dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c $Configuration -r $RuntimeIdentifier --self-contained true -o .\publish\service
 Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-publish-service"
+$serviceExe = ".\publish\service\AriaSignature.Service.exe"
+if (-not (Test-Path $serviceExe)) { throw "[release-gate][step-fail] operation=""verify-publish-service"" reason=""service-exe-missing""" }
 
 Write-Step -Index 6 -Total 8 -Name "prepare-webview2"
 $webView2Dir = ".\installer\webview2"
@@ -118,6 +129,21 @@ if (-not (Test-Path $driveDbPath)) {
 if ((Get-Item $driveDbPath).Length -le 0) {
     throw "drivedb.h is empty after prepare step."
 }
+
+Write-Host "[release-gate][check] validating host dependencies"
+$requiredCommands = @("powershell.exe", "sc.exe", "taskkill.exe")
+foreach ($cmd in $requiredCommands) {
+    $resolved = Get-Command $cmd -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue
+    if (-not $resolved) {
+        throw "[release-gate][step-fail] operation=""host-dependency-check"" missing=""$cmd"""
+    }
+}
+
+$logsRoot = Join-Path $env:ProgramData "AriaSignature\logs"
+New-Item -Path $logsRoot -ItemType Directory -Force | Out-Null
+$probeLog = Join-Path $logsRoot "release-gate-write-test.log"
+"ok" | Out-File -FilePath $probeLog -Encoding utf8 -Force
+Remove-Item -Path $probeLog -Force -ErrorAction SilentlyContinue
 
 Write-Step -Index 8 -Total 8 -Name "build-installer"
 $isccPath = Get-Command iscc -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue

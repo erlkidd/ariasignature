@@ -76,6 +76,9 @@ const
 var
   LastScExitCode: Integer;
   LastProbeExitCode: Integer;
+  InstallHealthStatus: string;
+  LastBootstrapExitCode: Integer;
+  LastBootstrapErrorClass: string;
 
 function ScExePath: string;
 begin
@@ -158,6 +161,85 @@ begin
             not IsWebView2InstalledInRoot(HKCU);
 end;
 
+function IsServiceRunningViaSc(): Boolean;
+var
+  TempFile: string;
+  ExitCode: Integer;
+  Lines: TArrayOfString;
+  I: Integer;
+begin
+  Result := False;
+  TempFile := ExpandConstant('{tmp}\aria-sc-running-check.txt');
+  DeleteFile(TempFile);
+  if not Exec(
+       ExpandConstant('{sys}\cmd.exe'),
+       '/c "' + ScExePath + '" query ' + ServiceName + ' > "' + TempFile + '" 2>&1',
+       '',
+       SW_HIDE,
+       ewWaitUntilTerminated,
+       ExitCode) then
+  begin
+    Exit;
+  end;
+
+  if not LoadStringsFromFile(TempFile, Lines) then
+    Exit;
+
+  for I := 0 to GetArrayLength(Lines) - 1 do
+  begin
+    if Pos('RUNNING', UpperCase(Lines[I])) > 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+end;
+
+procedure AssertFileExistsOrAbort(const PathValue: string; const LabelText: string);
+begin
+  if not FileExists(PathValue) then
+    RaiseException('Preflight failed: missing ' + LabelText + ': ' + PathValue);
+end;
+
+function RunBootstrapRepair(const ServiceExePath: string): Boolean;
+var
+  BootstrapExe: string;
+  ExitCode: Integer;
+begin
+  Result := False;
+  LastBootstrapExitCode := -1;
+  LastBootstrapErrorClass := 'none';
+  BootstrapExe := ExpandConstant('{app}\ui\AriaSignature.ServiceBootstrap.exe');
+  if not FileExists(BootstrapExe) then
+  begin
+    LastBootstrapErrorClass := 'bootstrap-missing';
+    Log('Auto-repair skipped: bootstrap exe missing: ' + BootstrapExe);
+    Exit;
+  end;
+
+  Log('Auto-repair: launching bootstrap helper...');
+  if not Exec(BootstrapExe, AddQuotes(ServiceExePath), '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+  begin
+    LastBootstrapErrorClass := 'bootstrap-exec-failed';
+    Log('Auto-repair failed: unable to execute bootstrap helper.');
+    Exit;
+  end;
+
+  LastBootstrapExitCode := ExitCode;
+  Log(Format('Auto-repair bootstrap exit code: %d', [ExitCode]));
+  if ExitCode = -2147450726 then
+  begin
+    LastBootstrapErrorClass := 'host-runtime-missing';
+    Log('Auto-repair bootstrap classification: host-runtime-missing');
+  end
+  else if ExitCode <> 0 then
+  begin
+    LastBootstrapErrorClass := 'bootstrap-runtime-failed';
+    Log('Auto-repair bootstrap classification: bootstrap-runtime-failed');
+  end;
+  Result := ExitCode = 0;
+end;
+
 procedure StopAndDeleteServiceBestEffort();
 begin
   ExecSc(Format('stop %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
@@ -232,16 +314,22 @@ var
   Healthy: Boolean;
   PortAttempt: Integer;
 begin
+  InstallHealthStatus := 'install-health:starting';
+
   if not IsAdminInstallMode then
   begin
     RaiseException('Установка требует прав администратора: без них служба Windows не может быть зарегистрирована. Запустите установщик от имени администратора.');
   end;
 
+  AssertFileExistsOrAbort(ExpandConstant('{app}\ui\{#MyAppExeName}'), 'UI exe');
   BinPath := ExpandConstant('{app}\service\{#MyServiceExeName}');
-  if not FileExists(BinPath) then
-  begin
-    RaiseException('Не найден файл службы: ' + BinPath);
-  end;
+  AssertFileExistsOrAbort(BinPath, 'service exe');
+  AssertFileExistsOrAbort(ExpandConstant('{app}\ui\AriaSignature.ServiceBootstrap.exe'), 'bootstrap exe');
+  AssertFileExistsOrAbort(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), 'powershell.exe');
+  AssertFileExistsOrAbort(ScExePath, 'sc.exe');
+  AssertFileExistsOrAbort(ExpandConstant('{app}\service\smartctl\smartctl.exe'), 'smartctl.exe');
+  AssertFileExistsOrAbort(ExpandConstant('{app}\service\smartctl\drivedb.h'), 'drivedb.h');
+  AssertFileExistsOrAbort(ExpandConstant('{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe'), 'WebView2 offline installer');
 
   { binPath в кавычках (AddQuotes): иначе "Program Files" ломает sc create и служба не регистрируется }
   CreateParams := 'create ' + ServiceName + ' binPath= ' + AddQuotes(BinPath) + ' start= auto DisplayName= "AriaSignature" obj= LocalSystem';
@@ -325,14 +413,22 @@ begin
     Log(Format('Last sc start exit code after retries: %d', [LastScExitCode]));
     LogScCommandCapture('query ' + ServiceName, 'Full sc query output after failed start');
     LogScCommandCapture('qc ' + ServiceName, 'Full sc qc output after failed start');
-    SuppressibleMsgBox(
-      'Служба AriaSignature установлена, но не была запущена автоматически.'#13#10 +
-      'Это не критично: при ошибке 1053 UI выполнит расширенную проверку запуска и попробует доинициализировать службу через UAC (AriaSignature.ServiceBootstrap).'#13#10 +
-      'Если служба не поднимется, проверьте logs: %ProgramData%\AriaSignature\logs\ и services.msc (AriaSignatureService).',
-      mbInformation,
-      MB_OK,
-      IDOK);
-    Exit;
+    InstallHealthStatus := 'install-health:fail-with-repair';
+    if RunBootstrapRepair(BinPath) then
+    begin
+      Started := IsServiceRunningViaSc();
+      if Started then
+        Log('Auto-repair succeeded: service is RUNNING after bootstrap.');
+    end;
+
+    if not Started then
+    begin
+      InstallHealthStatus := 'install-health:fail-hard';
+      RaiseException(
+        'Служба AriaSignature не запущена после auto-repair.'#13#10 +
+        'Проверьте %ProgramData%\AriaSignature\logs\, services.msc и setup log (sc query/qc).'#13#10 +
+        'Код bootstrap: ' + IntToStr(LastBootstrapExitCode) + '; класс: ' + LastBootstrapErrorClass);
+    end;
   end;
 
   Healthy := False;
@@ -349,13 +445,27 @@ begin
 
   if not Healthy then
   begin
-    SuppressibleMsgBox(
-      'Служба AriaSignature запущена, но API не ответил на локальную проверку /api/v1/status.'#13#10 +
-      'Проверьте журналы в %ProgramData%\AriaSignature\logs\service-*.log и состояние службы в services.msc.',
-      mbInformation,
-      MB_OK,
-      IDOK);
+    InstallHealthStatus := 'install-health:fail-with-repair';
+    if not RunBootstrapRepair(BinPath) then
+    begin
+      InstallHealthStatus := 'install-health:fail-hard';
+      RaiseException(
+        'Служба запущена, но API не прошёл локальную проверку /api/v1/status даже после auto-repair.'#13#10 +
+        'Проверьте %ProgramData%\AriaSignature\logs\service-*.log и setup log. Код bootstrap: ' + IntToStr(LastBootstrapExitCode));
+    end;
+
+    Healthy := ProbeLocalApiHealth(5160);
+    if not Healthy then
+    begin
+      InstallHealthStatus := 'install-health:fail-hard';
+      RaiseException(
+        'API не отвечает после auto-repair. Установка прервана для исключения полу-рабочего состояния.'#13#10 +
+        'Проверьте %ProgramData%\AriaSignature\logs\ и services.msc.');
+    end;
   end;
+
+  InstallHealthStatus := 'install-health:ok';
+  Log(InstallHealthStatus);
 end;
 
 function SchTasksExePath: string;

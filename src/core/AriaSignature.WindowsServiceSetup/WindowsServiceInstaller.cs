@@ -40,9 +40,10 @@ public static class WindowsServiceInstaller
 
         try
         {
+            Log("stage=start");
             if (string.IsNullOrWhiteSpace(serviceExePath) || !File.Exists(serviceExePath))
             {
-                var msg = $"Файл сервиса не найден: {serviceExePath}";
+                var msg = $"stage=preflight: Файл сервиса не найден: {serviceExePath}";
                 Log(msg);
                 return new ServiceSetupResult(false, msg, ServiceSetupFailureCategory.MissingServiceBinary, null);
             }
@@ -50,7 +51,7 @@ public static class WindowsServiceInstaller
             var scPath = GetScExePath();
             if (string.IsNullOrEmpty(scPath))
             {
-                const string msg = "Не найден sc.exe";
+                const string msg = "stage=preflight: Не найден sc.exe";
                 Log(msg);
                 return new ServiceSetupResult(false, msg, ServiceSetupFailureCategory.Unknown, null);
             }
@@ -107,6 +108,7 @@ public static class WindowsServiceInstaller
 
             RunScBestEffort(scPath, $"failure {ServiceName} reset= 86400 actions= restart/5000/restart/5000/restart/5000", Log);
 
+            Log("stage=sc-start");
             Log($"sc start {ServiceName}");
             var startOk = RunSc(scPath, $"start {ServiceName}", out var startExit, out var startOutput);
             Log($"sc start exit={startExit}: {startOutput}");
@@ -137,7 +139,7 @@ public static class WindowsServiceInstaller
             }
             else if (!startOk)
             {
-                var msg = $"Не удалось запустить службу (sc start). Код: {startExit}. Вывод: {startOutput}";
+                var msg = $"stage=sc-start: Не удалось запустить службу (sc start). Код: {startExit}. Вывод: {startOutput}";
                 Log(msg);
                 return ClassifyScFailure(startExit, startOutput, ServiceSetupFailureCategory.ScCommandFailed);
             }
@@ -151,6 +153,15 @@ public static class WindowsServiceInstaller
             {
                 var msg = $"Служба не перешла в Running после start: {ex.Message}";
                 Log(msg);
+                return new ServiceSetupResult(false, msg, ServiceSetupFailureCategory.ServiceStartTimeout, null);
+            }
+
+            Log("stage=api-probe");
+            var (ready, probeDetail) = TryProbeApiReadyOnce("http://127.0.0.1:5160");
+            Log($"api probe result: ready={ready} detail={probeDetail}");
+            if (!ready)
+            {
+                var msg = $"stage=api-probe: API не готов после запуска службы. detail={probeDetail}";
                 return new ServiceSetupResult(false, msg, ServiceSetupFailureCategory.ServiceStartTimeout, null);
             }
 
@@ -202,7 +213,7 @@ public static class WindowsServiceInstaller
             ? ServiceSetupFailureCategory.AccessDenied
             : fallback;
 
-        var msg = $"Команда sc завершилась с кодом {exitCode}. Вывод: {output}";
+        var msg = $"stage=sc-command: Команда sc завершилась с кодом {exitCode}. Вывод: {output}";
         return new ServiceSetupResult(false, msg, category, exitCode);
     }
 

@@ -510,6 +510,14 @@ public partial class MainWindow : Window
         {
             marker = " · этап: post-1053-check";
         }
+        else if (warning.Contains("stage=api-probe", StringComparison.OrdinalIgnoreCase))
+        {
+            marker = " · этап: api-probe";
+        }
+        else if (warning.Contains("stage=sc-start", StringComparison.OrdinalIgnoreCase))
+        {
+            marker = " · этап: sc-start";
+        }
         else if (warning.Contains("1053", StringComparison.OrdinalIgnoreCase))
         {
             marker = " · этап: scm-timeout-1053";
