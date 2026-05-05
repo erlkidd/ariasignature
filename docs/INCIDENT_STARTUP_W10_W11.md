@@ -1,136 +1,126 @@
-# Incident: startup regression on Win10/Win11
+# Инцидент: регрессия запуска на Win10/Win11
 
-## Purpose
+## Цель документа
 
-This document fixes one target problem permanently: service/UI startup instability after installer run, including the loop of `SC 1053`, `ServiceCrashedOnStart`, and "nothing happens" user experience.
+Закрыть инцидент запуска окончательно: служба, API, UI и установщик должны стабильно стартовать на Windows 10 и Windows 11 без циклов `SC 1053`, `SC 1072`, падений UI и «тихого» нестарта.
 
-The goal is to keep one deterministic playbook so this incident does not return.
+## Как это выглядело для пользователя
 
-## User-visible failure pattern
+- Установщик мог зависать на этапе регистрации/старта службы.
+- `sc start` возвращал `1053`, после чего процесс службы отсутствовал.
+- При переустановке всплывал `sc create` с кодом `1072` (служба «помечена на удаление»).
+- UI иногда «не открывался» (silent-exit/трей/single-instance), либо падал сразу после запуска.
+- В ряде сценариев мастер установки вел себя «неровно» (долгое ожидание, системный beep, неудобная UX-ветка при ошибках).
 
-- Installer reports service auto-start failure.
-- Bootstrap detail contains `stage=post-1053-check` and `category=ServiceCrashedOnStart`.
-- `sc start` returns `1053`, then service process is missing.
-- UI may look like it does not start (single-instance + tray behavior can hide feedback).
+## Корневые причины (подтвержденные)
 
-## Root causes
+### 1) Падение службы на раннем bootstrap (`PlatformNotSupportedException`)
 
-### 1) Early service startup path was too fragile
+Симптом из логов `%ProgramData%\AriaSignature\logs\service-startup-fatal.log`:
 
-`AriaSignature.Service` had extra work in critical startup path before stable run state.
-Any early exception led to process exit, which appears as:
+- `marker=fatal stage=startup-bootstrap`
+- `System.PlatformNotSupportedException` в `HostApplicationBuilder.Build()` / `WindowsServiceLifetime`.
 
-- SCM timeout `1053`
-- post-check sees service stopped and process missing
-- bootstrap reports runtime failure
+Причина: несогласованная связка publish/hosting для Windows Service (пакет `Microsoft.Extensions.Hosting.WindowsServices` не в линии net8 + артефакт, попадающий в installer, не всегда соответствовал ожидаемой конфигурации).
 
-### 2) Installer used hard-fail behavior for recoverable startup delays
+### 2) Гонка SCM при удалении/создании службы (`SC 1072`)
 
-Installer treated delayed API/service readiness as terminal in several branches.
-That created half-installed perception and repeated recovery loops.
+`sc delete` асинхронен; служба может оставаться в pending-delete.
+Старая логика ожидания в installer ориентировалась только на код `1060`, из-за чего `sc create` выполнялся слишком рано и падал с `1072`.
 
-### 3) UI startup had silent outcomes in single-instance branch
+### 3) Регрессия UI после внедрения bootstrap-помощника
 
-When another instance existed, second launch could terminate quickly.
-In failure/hung/tray-hidden scenarios this looked like "app does not launch at all".
+Критичная находка из практики: bootstrap-пакет копировался в корень `publish/ui` и подменял WPF-зависимости UI (`WindowsBase`), что приводило к падению UI при старте (`.NET Runtime 1026`, `FileNotFoundException: WindowsBase, Version=8.0.0.0`).
 
-## Final remediation strategy
+### 4) Переизбыточный fail-hard в installer/UI startup
 
-Do not roll back branches or history. Fix only in-place by hardening each startup stage.
+Часть recoverable-сценариев обрабатывалась как фатальные слишком рано: пользователь получал «поломанный» UX вместо детерминированного recovery с понятной диагностикой.
 
-### A. Service process hardening (highest priority)
+## Принятая стратегия исправления
 
-File: `src/service/AriaSignature.Service/Program.cs`
+Откат истории/веток не используется. Исправления — только in-place, с усилением всех этапов старта.
 
-- Keep startup path minimal and exception-safe.
-- Avoid fragile identity/log calls in the critical pre-run section.
-- Wrap build/run startup path with fatal guard and always write deterministic fatal log:
-  - `%ProgramData%\AriaSignature\logs\service-startup-fatal.log`
-- Emit clear stage markers:
-  - `startup-enter`
-  - `host-built`
-  - `run-enter`
-  - `fatal`
+### A. Служба: выравнивание hosting-пути и фатальная диагностика
 
-Expected result: no silent process death without root cause in logs.
+Файлы:
+- `src/service/AriaSignature.Service/AriaSignature.Service.csproj`
+- `src/service/AriaSignature.Service/Program.cs`
+- `src/service/AriaSignature.Service/LocalApiHostedService.cs`
 
-### B. API hosted service startup reporting
+Сделано:
+- `TargetFramework` и зависимость `Microsoft.Extensions.Hosting.WindowsServices` приведены к линии `net8.0-windows` (`8.x`).
+- Добавлены/усилены фатальные маркеры запуска в `service-startup-fatal.log`.
+- Локальный API запускается в неблокирующем режиме для SCM.
 
-File: `src/service/AriaSignature.Service/LocalApiHostedService.cs`
+### B. Release gate: контроль publish-артефактов и версии hosting
 
-- Keep API start non-blocking for SCM startup.
-- On bind/listen failure, emit explicit structured log marker with bind mode, URL, and native error if available.
-- Never leave ambiguous "service crashed" without details in service logs.
+Файл: `scripts/release-gate.ps1`
 
-Expected result: API bind issues are diagnosable in one read.
+Сделано:
+- Явная проверка, что service publish содержит `WindowsServices` версии `8.x`.
+- Очистка `publish/ui` и `publish/service` перед publish, чтобы исключить «мусор» прошлых сборок.
+- Проверки наличия ключевых self-contained артефактов.
 
-### C. Installer startup behavior: degrade, do not dead-end
+### C. Bootstrap: изоляция от UI runtime
 
-File: `installer/inno/AriaSignature.iss`
+Файлы:
+- `scripts/release-gate.ps1`
+- `src/ui/AriaSignature.UI/MainWindow.xaml.cs`
+- `src/ui/AriaSignature.UI/AriaSignature.UI.csproj`
+- `src/ui/AriaSignature.UI/Services/WindowsServiceEnsure.cs`
+- `installer/inno/AriaSignature.iss`
 
-- Keep installation successful when failure is recoverable (delayed readiness, temporary probe fail).
-- Replace hard abort branches with deterministic degraded flow and actionable message.
-- Surface bootstrap detail and always include log paths.
+Сделано:
+- `AriaSignature.ServiceBootstrap.exe` и его payload перенесены в подпапку `ui/bootstrap`.
+- UI и installer обновлены на новый путь helper.
+- Исключено подмешивание bootstrap runtime в корень UI publish.
 
-Expected result: installer does not trap user in dead-end state for transient startup conditions.
+### D. Installer: устойчивое ожидание SCM и retry под `1072`
 
-### D. Post-1053 classification and hinting
+Файл: `installer/inno/AriaSignature.iss`
 
-File: `src/core/AriaSignature.WindowsServiceSetup/WindowsServiceInstaller.cs`
+Сделано:
+- `WaitServiceAbsent` анализирует полный вывод `sc query`, включая `DELETE_PENDING`/`MARKED FOR DELETE`.
+- Увеличено ожидание и усилены retries `sc create` с backoff для `SC_MARKED_FOR_DELETE`.
+- Preflight-проверки обязательных бинарников и детерминированные диагностические сообщения.
 
-- Keep extended post-1053 verification.
-- Distinguish between:
-  - recoverable delayed warmup
-  - real process crash
-- In crash path, hint primary log:
-  - `%ProgramData%\AriaSignature\logs\service-startup-fatal.log`
+### E. UI: видимость запуска и anti-silent-exit
 
-Expected result: 1053 branch gives concrete next action, not generic loop.
-
-### E. UI launch visibility and single-instance behavior
-
-Files:
+Файлы:
 - `src/ui/AriaSignature.UI/App.xaml.cs`
 - `src/ui/AriaSignature.UI/SingleInstanceActivator.cs`
 
-- Do not silently exit in second-instance path.
-- If existing instance activation fails, show explicit user message.
-- Add stale mutex recovery attempt before giving up.
+Сделано:
+- При втором экземпляре больше нет «тихого» закрытия без объяснения.
+- Улучшена активация существующего окна и ветка stale-mutex.
 
-Expected result: no "nothing happened" behavior on manual launch.
+## Обязательный протокол проверки (release gate)
 
-## Verification protocol (mandatory)
-
-Run in this order for each release candidate:
+Для каждого RC/релиза в строгом порядке:
 
 1. `dotnet build AriaSignature.slnx -c Release`
 2. `dotnet test AriaSignature.slnx -c Release`
 3. `powershell -ExecutionPolicy Bypass -File .\scripts\release-gate.ps1`
-4. Fresh install smoke on Win10 and Win11:
-   - installer completes
-   - `AriaSignatureService` is present and starts
-   - `http://127.0.0.1:5160/api/v1/status` returns `200`
-   - UI opens from installer launch and desktop shortcut
-5. If failure:
-   - collect `%ProgramData%\AriaSignature\logs\bootstrap-last-result.txt`
-   - collect latest `%ProgramData%\AriaSignature\logs\service-*.log`
-   - collect `%ProgramData%\AriaSignature\logs\service-startup-fatal.log`
-   - attach exact installer/UI message text
+4. Чистый install smoke на Win10 и Win11:
+   - установщик завершился;
+   - `AriaSignatureService` зарегистрирована и запущена;
+   - `http://127.0.0.1:5160/api/v1/status` возвращает `200`;
+   - UI открывается из setup и с ярлыка.
+5. При сбое собираются:
+   - `%ProgramData%\AriaSignature\logs\bootstrap-last-result.txt`
+   - последний `%ProgramData%\AriaSignature\logs\service-*.log`
+   - `%ProgramData%\AriaSignature\logs\service-startup-fatal.log`
+   - точный текст окна installer/UI.
 
-No release is accepted without this matrix.
+Без этой матрицы релиз не принимается.
 
-## Non-regression guardrails
+## Защита от повторения инцидента
 
-- Do not add risky OS/security identity calls in service pre-run path unless wrapped and non-fatal.
-- Do not convert recoverable startup delays into installer hard-fail.
-- Do not add silent-exit paths in UI startup flow.
-- Every startup-stage failure must map to one deterministic log file and one explicit user-facing hint.
-
-## Ownership
-
-- Startup pipeline owner: service + installer maintainers.
-- Any startup change must include:
-  - explicit stage logs
-  - Win10/Win11 smoke evidence
-  - update to this document when behavior changes
+- Не добавлять рискованные OS/security вызовы в pre-run службы без non-fatal обертки.
+- Не смешивать runtime payload разных приложений в одном publish-каталоге.
+- Не превращать recoverable startup-ветки в преждевременный fail-hard.
+- Любой сбой запуска должен иметь:
+  - детерминированный лог-файл;
+  - явный user-facing hint;
+  - проверяемый stage marker.
 

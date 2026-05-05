@@ -39,6 +39,31 @@
 - `DEVELOPER_GUIDE.md`: политика Git — выкат в `production` с рабочих веток; ветка `test/agent-work-legacy-pre-opt` архивная (не сливается в прод, не удаляется).
 - В документации и пользовательских формулировках API везде используется термин **токен** (удалённого API) вместо «секрет».
 
+## [1.0.1] - 2026-05-05
+
+### Added
+
+- Детализирован playbook инцидента запуска Win10/Win11: отдельный документ `docs/INCIDENT_STARTUP_W10_W11.md` с подтвержденными root cause, стратегией фикса и обязательной матрицей верификации перед релизом.
+- Дополнительные guardrail-проверки в `scripts/release-gate.ps1`: в service publish валидируется `Microsoft.Extensions.Hosting.WindowsServices` из линии `8.x`.
+
+### Changed
+
+- Сервис `AriaSignature.Service` выровнен по hosting-зависимостям под `net8.0-windows`; устранен риск PNSE на bootstrap этапе (`HostApplicationBuilder.Build()` / `WindowsServiceLifetime`) из-за несовместимого пакета.
+- `release-gate` очищает `publish/ui` и `publish/service` перед публикацией для исключения артефактов от предыдущих сборок.
+- Bootstrap payload (`AriaSignature.ServiceBootstrap`) изолирован в подпапке `ui/bootstrap` вместо корня UI publish; пути в UI/installer обновлены на новую схему.
+
+### Fixed
+
+- Критическая регрессия «UI не запускается ни на Win10, ни на Win11»: устранена коллизия WPF-зависимостей (`WindowsBase`) из-за копирования bootstrap runtime в корень UI.
+- Инсталлятор устойчиво обрабатывает `SC 1072` (`ERROR_SERVICE_MARKED_FOR_DELETE`): `WaitServiceAbsent` анализирует полный вывод `sc query`, retries `sc create` усилены backoff-логикой.
+- Уменьшен класс ложных fail-hard сценариев на старте/переустановке: улучшены preflight проверки и детерминированная диагностика по stage marker.
+- Single-instance ветка UI больше не оставляет пользователя в состоянии «ничего не произошло»: улучшены сообщения и логика восстановления/активации.
+
+### Docs
+
+- `docs/INCIDENT_STARTUP_W10_W11.md` полностью переведен на русский и дополнен новыми фактическими находками (PNSE, SCM 1072, bootstrap/UI runtime collision).
+- `docs/RELEASE_GATE.md` и сопутствующие заметки синхронизированы с контуром релиза 1.0.1.
+
 ## [1.0.0] - 2026-05-02
 
 ### Added
