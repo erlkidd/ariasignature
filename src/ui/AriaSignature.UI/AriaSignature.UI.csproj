@@ -23,17 +23,13 @@
 
   <Target Name="CopyServiceBootstrapExe" AfterTargets="Build">
     <Copy SourceFiles="$(ServiceBootstrapDir)AriaSignature.ServiceBootstrap.exe"
-          DestinationFolder="$(TargetDir)"
+          DestinationFolder="$(TargetDir)bootstrap\"
           SkipUnchangedFiles="true"
           Condition="Exists('$(ServiceBootstrapDir)AriaSignature.ServiceBootstrap.exe')" />
   </Target>
 
-  <Target Name="CopyServiceBootstrapExePublish" AfterTargets="Publish">
-    <Copy SourceFiles="$(ServiceBootstrapDir)AriaSignature.ServiceBootstrap.exe"
-          DestinationFolder="$(PublishDir)"
-          SkipUnchangedFiles="true"
-          Condition="Exists('$(ServiceBootstrapDir)AriaSignature.ServiceBootstrap.exe')" />
-  </Target>
+  <!-- Installer/release-gate injects bootstrap from dedicated self-contained publish output.
+       Keep publish target clean to avoid accidentally copying framework-dependent bootstrap from bin/. -->
 
   <ItemGroup>
     <Content Include="..\..\..\assets\branding\logo.png" Link="Assets\logo.png">

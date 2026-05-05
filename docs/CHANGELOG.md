@@ -22,6 +22,9 @@
 
 ### Fixed
 
+- Bootstrap rescue: при `bootstrap exit=1` setup теперь подхватывает structured detail из `%ProgramData%\AriaSignature\logs\bootstrap-last-result.txt` и показывает конкретную причину; bootstrap пишет stage/category/message в stderr и marker-файл.
+- Bootstrap/API verification: критерий готовности после восстановления упрощён до успешного `/api/v1/status` (без обязательного `GET /`), чтобы убрать ложные fail-hard при рабочей службе.
+- Installer/bootstrap packaging: источник `AriaSignature.ServiceBootstrap` для installer переключён на dedicated self-contained publish (`publish/bootstrap -> publish/ui`), чтобы исключить host/runtime сбой `-2147450726` на чистых Win10/11.
 - Installer (`AriaSignature.iss`): добавлены preflight-проверки обязательных файлов/инструментов, auto-repair через `AriaSignature.ServiceBootstrap` при неуспешном старте службы/API и fail-hard при недостижимом `service running + /api/v1/status`.
 - Win11 startup (1053): `WindowsServiceInstaller` и UI (`WindowsServiceEnsure`/`MainWindow`) получили расширенную post-1053 верификацию (service status timeline + API probe) перед финальным отказом; fallback теперь показывает stage (`scm-timeout-1053` / `post-1053-check`) и более конкретную диагностику.
 - UI (`MainWindow`): стартовая панель не показывает преждевременное «локальный сервис не отвечает» при **Stopped**, пока не завершился фоновый **TryStartOrFallback** (или не истёк верхний предел ~210 с); в цикле восстановления при **Stopped** периодически повторяется попытка запуска службы с ограничением частоты; на fallback-странице добавлены подсказки по журналам, правам администратора и **services.msc**.

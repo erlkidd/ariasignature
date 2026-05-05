@@ -161,8 +161,7 @@ public static class WindowsServiceInstaller
             Log($"api probe result: ready={ready} detail={probeDetail}");
             if (!ready)
             {
-                var msg = $"stage=api-probe: API не готов после запуска службы. detail={probeDetail}";
-                return new ServiceSetupResult(false, msg, ServiceSetupFailureCategory.ServiceStartTimeout, null);
+                Log("stage=api-probe: service is RUNNING but API not ready yet; returning success and delegating readiness wait to UI.");
             }
 
             Log("Служба Running.");
@@ -189,7 +188,7 @@ public static class WindowsServiceInstaller
             ServiceSetupFailureCategory.MissingServiceBinary =>
                 "Не найден исполняемый файл службы. Переустановите приложение или проверьте целостность установки.",
             ServiceSetupFailureCategory.ServiceCrashedOnStart =>
-                "Процесс службы завершился при старте. Проверьте журналы в %ProgramData%\\AriaSignature\\logs\\.",
+                BuildServiceCrashHint(result.ErrorMessage),
             ServiceSetupFailureCategory.ServiceStartTimeout =>
                 "Таймаут SCM (1053) при переходе службы в состояние «Работает». Выполнены дополнительное ожидание и probe API; возможно, холодный старт блокируют антивирус/диск.",
             ServiceSetupFailureCategory.NotFoundOrDeleted =>
@@ -205,6 +204,17 @@ public static class WindowsServiceInstaller
             : $" Детали: {result.ErrorMessage}";
 
         return baseHint + tail;
+    }
+
+    private static string BuildServiceCrashHint(string? errorMessage)
+    {
+        if (!string.IsNullOrWhiteSpace(errorMessage)
+            && errorMessage.Contains("PlatformNotSupportedException", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Процесс службы завершился при старте из-за runtime mismatch (PlatformNotSupportedException). Проверьте %ProgramData%\\AriaSignature\\logs\\service-startup-fatal.log и соответствие windows-targeted publish артефакта.";
+        }
+
+        return "Процесс службы завершился при старте. Проверьте %ProgramData%\\AriaSignature\\logs\\service-startup-fatal.log и service-*.log.";
     }
 
     private static ServiceSetupResult ClassifyScFailure(int exitCode, string output, ServiceSetupFailureCategory fallback)
@@ -246,10 +256,12 @@ public static class WindowsServiceInstaller
             {
                 var (ready, detail) = TryProbeApiReadyOnce("http://127.0.0.1:5160");
                 logLine?.Invoke($"api probe result: ready={ready} detail={detail}");
-                if (ready)
+                if (!ready)
                 {
-                    return new ServiceSetupResult(true, null, ServiceSetupFailureCategory.None, null);
+                    logLine?.Invoke("post-1053: service is RUNNING but API probe is not ready yet; accepting service start and leaving API warmup to UI retry loop.");
                 }
+
+                return new ServiceSetupResult(true, null, ServiceSetupFailureCategory.None, null);
             }
 
             if (status == ServiceControllerStatus.Stopped && !hostAlive)
@@ -279,11 +291,7 @@ public static class WindowsServiceInstaller
             {
                 return (false, $"/api/v1/status => {(int)statusResponse.StatusCode}");
             }
-
-            using var rootResponse = StartupProbeHttp.GetAsync($"{baseUrl.TrimEnd('/')}/").GetAwaiter().GetResult();
-            return rootResponse.IsSuccessStatusCode
-                ? (true, "ready")
-                : (false, $"/ => {(int)rootResponse.StatusCode}");
+            return (true, "/api/v1/status => 200");
         }
         catch (Exception ex)
         {

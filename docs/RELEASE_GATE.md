@@ -21,7 +21,7 @@ Pipeline выполняет:
 1. `npm ci` + `npm run build` (`src/web`)
 2. `dotnet build .\AriaSignature.slnx -c Release`
 3. `dotnet test .\AriaSignature.slnx -c Release`
-4. `dotnet publish` UI и Service в `win-x64 --self-contained true` + проверку наличия ключевых exe (`UI`, `Service`, `ServiceBootstrap`)
+4. `dotnet publish` UI и Service в `win-x64 --self-contained true`; bootstrap публикуется отдельным шагом в `publish/bootstrap` и затем копируется в `publish/ui` (единственный разрешённый источник bootstrap для installer)
 5. подготовку runtime-зависимостей (`WebView2`, `smartctl`, `drivedb.h`) с проверкой целостности и host-dependency-check (`powershell/sc/taskkill`, запись в `%ProgramData%\AriaSignature\logs\`)
 6. `ISCC` сборку `installer/inno/AriaSignature.iss`
 

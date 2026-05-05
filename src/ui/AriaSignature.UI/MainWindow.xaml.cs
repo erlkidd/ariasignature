@@ -99,7 +99,7 @@ public partial class MainWindow : Window
     {
         _startupSw = Stopwatch.StartNew();
         _serviceExePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "service", "AriaSignature.Service.exe"));
-        _serviceBootstrapExePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "AriaSignature.ServiceBootstrap.exe"));
+        _serviceBootstrapExePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "bootstrap", "AriaSignature.ServiceBootstrap.exe"));
         ShowLoadingOverlay("Проверка адреса API…", "Краткий запрос к локальному сервису…");
         _startupBaseUrl = await ResolveApiBaseAsync();
 

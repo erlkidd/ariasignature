@@ -2,21 +2,23 @@ namespace AriaSignature.UI;
 
 internal static class SingleInstanceActivator
 {
-    public static void SignalExistingInstance(string eventName)
+    public static bool SignalExistingInstance(string eventName)
     {
         if (string.IsNullOrWhiteSpace(eventName))
         {
-            return;
+            return false;
         }
 
         try
         {
             using var eventHandle = EventWaitHandle.OpenExisting(eventName);
             eventHandle.Set();
+            return true;
         }
         catch
         {
-            // best-effort: if signaling fails, the new instance exits silently
+            // best-effort: if signaling fails, caller can decide fallback behavior
+            return false;
         }
     }
 }

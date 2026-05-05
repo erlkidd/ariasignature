@@ -43,22 +43,56 @@ dotnet test .\AriaSignature.slnx -c $Configuration
 Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-test"
 
 Write-Step -Index 4 -Total 8 -Name "publish-ui"
+Remove-Item -Path .\publish\ui -Recurse -Force -ErrorAction SilentlyContinue
 dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c $Configuration -r $RuntimeIdentifier --self-contained true -o .\publish\ui
 Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-publish-ui"
+
+Write-Host "[release-gate][check] bootstrap package source = publish/bootstrap"
+$bootstrapPublishDir = ".\publish\bootstrap"
+Remove-Item -Path $bootstrapPublishDir -Recurse -Force -ErrorAction SilentlyContinue
+dotnet publish .\src\tools\AriaSignature.ServiceBootstrap\AriaSignature.ServiceBootstrap.csproj -c $Configuration -r $RuntimeIdentifier --self-contained true -o $bootstrapPublishDir
+Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-publish-bootstrap"
+if (-not (Test-Path (Join-Path $bootstrapPublishDir "AriaSignature.ServiceBootstrap.exe"))) {
+    throw "[release-gate][step-fail] operation=""verify-publish-bootstrap"" reason=""bootstrap-exe-missing-in-bootstrap-publish"""
+}
+$bootstrapInUiDir = ".\publish\ui\bootstrap"
+Remove-Item -Path $bootstrapInUiDir -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -Path $bootstrapInUiDir -ItemType Directory -Force | Out-Null
+Copy-Item -Path (Join-Path $bootstrapPublishDir "*") -Destination $bootstrapInUiDir -Recurse -Force
+
 $uiExe = ".\publish\ui\AriaSignature.UI.exe"
-$bootstrapExe = ".\publish\ui\AriaSignature.ServiceBootstrap.exe"
+$bootstrapExe = ".\publish\ui\bootstrap\AriaSignature.ServiceBootstrap.exe"
 if (-not (Test-Path $uiExe)) { throw "[release-gate][step-fail] operation=""verify-publish-ui"" reason=""ui-exe-missing""" }
 if (-not (Test-Path $bootstrapExe)) { throw "[release-gate][step-fail] operation=""verify-publish-ui"" reason=""bootstrap-exe-missing""" }
-$bootstrapHostFxr = ".\publish\ui\hostfxr.dll"
-$bootstrapHostPolicy = ".\publish\ui\hostpolicy.dll"
+$bootstrapHostFxr = ".\publish\ui\bootstrap\hostfxr.dll"
+$bootstrapHostPolicy = ".\publish\ui\bootstrap\hostpolicy.dll"
 if (-not (Test-Path $bootstrapHostFxr)) { throw "[release-gate][step-fail] operation=""verify-bootstrap-self-contained"" reason=""hostfxr-missing""" }
 if (-not (Test-Path $bootstrapHostPolicy)) { throw "[release-gate][step-fail] operation=""verify-bootstrap-self-contained"" reason=""hostpolicy-missing""" }
 
 Write-Step -Index 5 -Total 8 -Name "publish-service"
+Remove-Item -Path .\publish\service -Recurse -Force -ErrorAction SilentlyContinue
 dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c $Configuration -r $RuntimeIdentifier --self-contained true -o .\publish\service
 Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-publish-service"
 $serviceExe = ".\publish\service\AriaSignature.Service.exe"
 if (-not (Test-Path $serviceExe)) { throw "[release-gate][step-fail] operation=""verify-publish-service"" reason=""service-exe-missing""" }
+$serviceDeps = ".\publish\service\AriaSignature.Service.deps.json"
+$serviceRuntimeConfig = ".\publish\service\AriaSignature.Service.runtimeconfig.json"
+if (-not (Test-Path $serviceDeps)) { throw "[release-gate][step-fail] operation=""verify-publish-service"" reason=""service-deps-missing""" }
+if (-not (Test-Path $serviceRuntimeConfig)) { throw "[release-gate][step-fail] operation=""verify-publish-service"" reason=""service-runtimeconfig-missing""" }
+$depsRaw = Get-Content -Path $serviceDeps -Raw
+$ridPattern = "/" + [regex]::Escape($RuntimeIdentifier) + '"'
+if ($depsRaw -notmatch $ridPattern) {
+    throw "[release-gate][step-fail] operation=""verify-service-runtime-target"" reason=""rid-mismatch-in-deps"" expected=""$RuntimeIdentifier"""
+}
+if ($depsRaw -notmatch '"runtimeTarget"\s*:\s*\{\s*"name"\s*:\s*"\.NETCoreApp,Version=v8\.0/' + [regex]::Escape($RuntimeIdentifier) + '"') {
+    throw "[release-gate][step-fail] operation=""verify-service-runtime-target"" reason=""runtime-target-missing-in-deps"" expected=""$RuntimeIdentifier"""
+}
+if ($depsRaw -notmatch '"Microsoft\.Extensions\.Hosting\.WindowsServices"\s*:\s*"') {
+    throw "[release-gate][step-fail] operation=""verify-service-runtime-target"" reason=""windowsservices-dependency-missing"""
+}
+if ($depsRaw -notmatch '"Microsoft\.Extensions\.Hosting\.WindowsServices"\s*:\s*"8\.') {
+    throw "[release-gate][step-fail] operation=""verify-service-runtime-target"" reason=""windowsservices-version-not-net8-compatible"""
+}
 
 Write-Step -Index 6 -Total 8 -Name "prepare-webview2"
 $webView2Dir = ".\installer\webview2"

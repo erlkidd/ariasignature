@@ -17,6 +17,20 @@ var logsRoot = Path.Combine(
 Directory.CreateDirectory(logsRoot);
 
 var logPath = Path.Combine(logsRoot, $"bootstrap-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Environment.ProcessId}.log");
+var lastResultPath = Path.Combine(logsRoot, "bootstrap-last-result.txt");
+
+void WriteLastResult(string stage, ServiceSetupFailureCategory category, string message, int exitCode)
+{
+    var line = $"stage={stage};category={category};exit={exitCode};log={logPath};message={message}";
+    try
+    {
+        File.WriteAllText(lastResultPath, line, Encoding.UTF8);
+    }
+    catch
+    {
+        // ignore
+    }
+}
 
 try
 {
@@ -31,10 +45,17 @@ try
 
     if (!result.Success)
     {
-        Console.Error.WriteLine(WindowsServiceInstaller.BuildUserHint(result));
+        var hint = WindowsServiceInstaller.BuildUserHint(result);
+        var structured = $"stage=bootstrap-final;category={result.Category};exit={result.LastNonZeroExitCode};message={result.ErrorMessage}";
+        logWriter.WriteLine($"{DateTime.UtcNow:O} {structured}");
+        logWriter.Flush();
+        WriteLastResult("bootstrap-final", result.Category, result.ErrorMessage ?? hint, 1);
+        Console.Error.WriteLine(structured);
+        Console.Error.WriteLine(hint);
         return 1;
     }
 
+    WriteLastResult("bootstrap-final", ServiceSetupFailureCategory.None, "success", 0);
     return 0;
 }
 catch (Exception ex)
@@ -48,6 +69,7 @@ catch (Exception ex)
         // ignore
     }
 
+    WriteLastResult("bootstrap-exception", ServiceSetupFailureCategory.Unknown, ex.Message, 1);
     Console.Error.WriteLine(ex.Message);
     return 1;
 }

@@ -68,7 +68,7 @@ public sealed class LocalApiHostedService : BackgroundService
             webApp.UseAriaApi();
 
             _logger.LogInformation(
-                "Starting API. bind={BindMode}; urls={ListenUrls}; contentRoot={ContentRoot}; webRoot={WebRoot}; localPanel=http://127.0.0.1:{Port}",
+                "marker=api-start-enter bind={BindMode}; urls={ListenUrls}; contentRoot={ContentRoot}; webRoot={WebRoot}; localPanel=http://127.0.0.1:{Port}",
                 bindMode,
                 listenUrls,
                 AppContext.BaseDirectory,
@@ -82,14 +82,15 @@ public sealed class LocalApiHostedService : BackgroundService
             {
                 _logger.LogError(
                     ex,
-                    "API start failed. bind={BindMode}; urls={ListenUrls}; port={Port}. Check for IPv6 restrictions or port conflicts.",
+                    "marker=api-bind-failed API start failed. bind={BindMode}; urls={ListenUrls}; port={Port}; rootError={RootError}. Check for IPv6 restrictions or port conflicts.",
                     bindMode,
                     listenUrls,
-                    port);
+                    port,
+                    GetDeepestExceptionMessage(ex));
                 return;
             }
 
-            _logger.LogInformation("API bind/start completed in {ElapsedMs} ms", startupSw.ElapsedMilliseconds);
+            _logger.LogInformation("marker=api-started API bind/start completed in {ElapsedMs} ms", startupSw.ElapsedMilliseconds);
             await LogFirstReadyAsync(port, stoppingToken).ConfigureAwait(false);
 
             try
@@ -107,7 +108,7 @@ public sealed class LocalApiHostedService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Local API host failed during startup.");
+            _logger.LogError(ex, "marker=api-host-fatal Local API host failed during startup. rootError={RootError}", GetDeepestExceptionMessage(ex));
         }
         finally
         {
@@ -126,6 +127,17 @@ public sealed class LocalApiHostedService : BackgroundService
                 _logger.LogInformation("Local API host stopped.");
             }
         }
+    }
+
+    private static string GetDeepestExceptionMessage(Exception ex)
+    {
+        var current = ex;
+        while (current.InnerException is not null)
+        {
+            current = current.InnerException;
+        }
+
+        return current.Message;
     }
 
     private async Task<int> ResolveApiPortAsync(CancellationToken cancellationToken)

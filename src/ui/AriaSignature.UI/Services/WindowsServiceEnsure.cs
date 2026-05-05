@@ -198,7 +198,7 @@ public static class WindowsServiceEnsure
         if (string.IsNullOrWhiteSpace(bootstrapExePath) || !File.Exists(bootstrapExePath))
         {
             elevationFailureMessage =
-                "Рядом с AriaSignature.UI не найден AriaSignature.ServiceBootstrap.exe — переустановите приложение или запустите его от имени администратора.";
+                "Не найден helper AriaSignature.ServiceBootstrap.exe (ожидается в подпапке bootstrap рядом с UI) — переустановите приложение или запустите его от имени администратора.";
             return false;
         }
 

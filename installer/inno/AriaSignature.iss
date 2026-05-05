@@ -13,6 +13,8 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
+DisableDirPage=no
+UsePreviousAppDir=no
 DefaultGroupName={#MyAppName}
 OutputDir=..\..\artifacts\installer
 OutputBaseFilename=AriaSignature-Setup
@@ -79,6 +81,7 @@ var
   InstallHealthStatus: string;
   LastBootstrapExitCode: Integer;
   LastBootstrapErrorClass: string;
+  LastBootstrapFailureDetail: string;
 
 function ScExePath: string;
 begin
@@ -115,12 +118,27 @@ end;
 
 function WaitServiceAbsent(const TimeoutSeconds: Integer): Boolean;
 var
+  TempFile: string;
   ExitCode: Integer;
+  Lines: TArrayOfString;
   I: Integer;
+  LineUpper: string;
+  LineIndex: Integer;
+  HasPendingDeleteMarker: Boolean;
 begin
+  Result := False;
+  TempFile := ExpandConstant('{tmp}\aria-sc-wait-absent.txt');
+
   for I := 1 to TimeoutSeconds do
   begin
-    if not Exec(ScExePath, 'query ' + ServiceName, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+    DeleteFile(TempFile);
+    if not Exec(
+         ExpandConstant('{sys}\cmd.exe'),
+         '/c "' + ScExePath + '" query ' + ServiceName + ' > "' + TempFile + '" 2>&1',
+         '',
+         SW_HIDE,
+         ewWaitUntilTerminated,
+         ExitCode) then
     begin
       ExitCode := -1;
     end;
@@ -131,10 +149,36 @@ begin
       Exit;
     end;
 
+    HasPendingDeleteMarker := False;
+    if LoadStringsFromFile(TempFile, Lines) then
+    begin
+      { Ищем pending-delete маркеры по всему выводу sc query, не только в первой строке. }
+      for LineIndex := 0 to GetArrayLength(Lines) - 1 do
+      begin
+        LineUpper := UpperCase(Lines[LineIndex]);
+        if (Pos('DELETE_PENDING', LineUpper) > 0) or
+           (Pos('MARKED FOR DELETE', LineUpper) > 0) or
+           (Pos('MARKED_FOR_DELETE', LineUpper) > 0) or
+           (Pos('MARKED FOR DELETION', LineUpper) > 0) then
+        begin
+          HasPendingDeleteMarker := True;
+          Break;
+        end;
+      end;
+
+      if HasPendingDeleteMarker then
+      begin
+        { Служба ещё помечена на удаление: ждём дальше. }
+      end
+      else
+      begin
+        { Если нет pending-delete, дальше ждать бессмысленно: либо служба всё ещё существует, либо другая ошибка. }
+        Break;
+      end;
+    end;
+
     Sleep(1000);
   end;
-
-  Result := False;
 end;
 
 function ServiceIsRegistered: Boolean;
@@ -205,11 +249,14 @@ function RunBootstrapRepair(const ServiceExePath: string): Boolean;
 var
   BootstrapExe: string;
   ExitCode: Integer;
+  LastResultPath: string;
+  LastLines: TArrayOfString;
 begin
   Result := False;
   LastBootstrapExitCode := -1;
   LastBootstrapErrorClass := 'none';
-  BootstrapExe := ExpandConstant('{app}\ui\AriaSignature.ServiceBootstrap.exe');
+  LastBootstrapFailureDetail := '';
+  BootstrapExe := ExpandConstant('{app}\ui\bootstrap\AriaSignature.ServiceBootstrap.exe');
   if not FileExists(BootstrapExe) then
   begin
     LastBootstrapErrorClass := 'bootstrap-missing';
@@ -227,6 +274,13 @@ begin
 
   LastBootstrapExitCode := ExitCode;
   Log(Format('Auto-repair bootstrap exit code: %d', [ExitCode]));
+  LastResultPath := ExpandConstant('{commonappdata}\AriaSignature\logs\bootstrap-last-result.txt');
+  if LoadStringsFromFile(LastResultPath, LastLines) and (GetArrayLength(LastLines) > 0) then
+  begin
+    LastBootstrapFailureDetail := LastLines[0];
+    Log('Auto-repair bootstrap detail: ' + LastBootstrapFailureDetail);
+  end;
+
   if ExitCode = -2147450726 then
   begin
     LastBootstrapErrorClass := 'host-runtime-missing';
@@ -238,6 +292,23 @@ begin
     Log('Auto-repair bootstrap classification: bootstrap-runtime-failed');
   end;
   Result := ExitCode = 0;
+end;
+
+function BuildBootstrapFailureHint(): string;
+begin
+  if LastBootstrapErrorClass = 'host-runtime-missing' then
+  begin
+    Result :=
+      'Auto-repair helper не смог стартовать из-за host/runtime ошибки (-2147450726). '#13#10 +
+      'Это признак неверной упаковки bootstrap или повреждённой установки. '#13#10 +
+      'Проверьте setup log и переустановите сборку с актуальным installer.';
+    Exit;
+  end;
+
+  Result :=
+    'Auto-repair helper завершился ошибкой. '#13#10 +
+    'Проверьте %ProgramData%\AriaSignature\logs\ и setup log.'#13#10 +
+    'Bootstrap detail: ' + LastBootstrapFailureDetail;
 end;
 
 procedure StopAndDeleteServiceBestEffort();
@@ -324,7 +395,7 @@ begin
   AssertFileExistsOrAbort(ExpandConstant('{app}\ui\{#MyAppExeName}'), 'UI exe');
   BinPath := ExpandConstant('{app}\service\{#MyServiceExeName}');
   AssertFileExistsOrAbort(BinPath, 'service exe');
-  AssertFileExistsOrAbort(ExpandConstant('{app}\ui\AriaSignature.ServiceBootstrap.exe'), 'bootstrap exe');
+  AssertFileExistsOrAbort(ExpandConstant('{app}\ui\bootstrap\AriaSignature.ServiceBootstrap.exe'), 'bootstrap exe');
   AssertFileExistsOrAbort(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), 'powershell.exe');
   AssertFileExistsOrAbort(ScExePath, 'sc.exe');
   AssertFileExistsOrAbort(ExpandConstant('{app}\service\smartctl\smartctl.exe'), 'smartctl.exe');
@@ -337,7 +408,7 @@ begin
   CreateParamsNoDisplay := 'create ' + ServiceName + ' binPath= ' + AddQuotes(BinPath) + ' start= auto obj= LocalSystem';
 
   Created := False;
-  for Attempt := 1 to 8 do
+  for Attempt := 1 to 20 do
   begin
     if ExecSc(CreateParams, 0, SC_ALREADY_EXISTS) then
     begin
@@ -373,7 +444,17 @@ begin
       end;
     end;
 
-    Sleep(1500);
+    if LastScExitCode = SC_MARKED_FOR_DELETE then
+    begin
+      Log('Service is marked for delete; waiting for SCM to finalize deletion before next create.');
+      if not WaitServiceAbsent(15) then
+        Log('WaitServiceAbsent after SC_MARKED_FOR_DELETE timed out; will still retry create.');
+      Sleep(2500);
+    end
+    else
+    begin
+      Sleep(1500);
+    end;
   end;
 
   if not Created then
@@ -423,11 +504,17 @@ begin
 
     if not Started then
     begin
-      InstallHealthStatus := 'install-health:fail-hard';
-      RaiseException(
-        'Служба AriaSignature не запущена после auto-repair.'#13#10 +
-        'Проверьте %ProgramData%\AriaSignature\logs\, services.msc и setup log (sc query/qc).'#13#10 +
-        'Код bootstrap: ' + IntToStr(LastBootstrapExitCode) + '; класс: ' + LastBootstrapErrorClass);
+      InstallHealthStatus := 'install-health:degraded-service-not-running';
+      Log('Warning: service did not start after auto-repair; installer will continue with degraded startup path.');
+      SuppressibleMsgBox(
+        'Служба AriaSignature не была запущена автоматически после установки.'#13#10 +
+        BuildBootstrapFailureHint() + #13#10 +
+        'Приложение всё равно установлено. Запустите AriaSignature.UI (лучше один раз от администратора) — UI выполнит повторный recovery.'#13#10 +
+        'Логи: %ProgramData%\AriaSignature\logs\; проверка службы: services.msc.',
+        mbInformation,
+        MB_OK,
+        IDOK);
+      Exit;
     end;
   end;
 
@@ -448,19 +535,32 @@ begin
     InstallHealthStatus := 'install-health:fail-with-repair';
     if not RunBootstrapRepair(BinPath) then
     begin
-      InstallHealthStatus := 'install-health:fail-hard';
-      RaiseException(
-        'Служба запущена, но API не прошёл локальную проверку /api/v1/status даже после auto-repair.'#13#10 +
-        'Проверьте %ProgramData%\AriaSignature\logs\service-*.log и setup log. Код bootstrap: ' + IntToStr(LastBootstrapExitCode));
+      InstallHealthStatus := 'install-health:degraded-api-not-ready';
+      Log('Warning: API health check failed and bootstrap repair also failed; installer will continue with degraded startup path.');
+      SuppressibleMsgBox(
+        BuildBootstrapFailureHint() + #13#10 +
+        'Служба запущена, но API пока не прошёл локальную проверку /api/v1/status.'#13#10 +
+        'Установка продолжена: UI подождёт прогрев API и повторит запуск.'#13#10 +
+        'Проверьте %ProgramData%\AriaSignature\logs\service-*.log при повторении проблемы.',
+        mbInformation,
+        MB_OK,
+        IDOK);
+      Exit;
     end;
 
     Healthy := ProbeLocalApiHealth(5160);
     if not Healthy then
     begin
-      InstallHealthStatus := 'install-health:fail-hard';
-      RaiseException(
-        'API не отвечает после auto-repair. Установка прервана для исключения полу-рабочего состояния.'#13#10 +
-        'Проверьте %ProgramData%\AriaSignature\logs\ и services.msc.');
+      InstallHealthStatus := 'install-health:degraded-api-warmup';
+      Log('Warning: API still not ready after auto-repair; installer continues and delegates warmup/retry to UI.');
+      SuppressibleMsgBox(
+        'API ещё не отвечает после автоматического восстановления, но установка завершена.'#13#10 +
+        'Откройте AriaSignature.UI — приложение продолжит ожидание/восстановление автоматически.'#13#10 +
+        'Логи: %ProgramData%\AriaSignature\logs\.',
+        mbInformation,
+        MB_OK,
+        IDOK);
+      Exit;
     end;
   end;
 
@@ -498,7 +598,7 @@ begin
   begin
     StopAndDeleteServiceBestEffort();
     KillServiceProcessBestEffort();
-    if not WaitServiceAbsent(25) then
+    if not WaitServiceAbsent(45) then
     begin
       Log('Service still exists before file copy; installer continues and will retry create later.');
     end;
