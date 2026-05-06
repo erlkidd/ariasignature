@@ -94,6 +94,22 @@
 - При втором экземпляре больше нет «тихого» закрытия без объяснения.
 - Улучшена активация существующего окна и ветка stale-mutex.
 
+### F. Reliability + Observability baseline (production-grade hardening)
+
+Файлы:
+- `src/api/AriaSignature.Api/AriaApiExtensions.cs`
+- `src/core/AriaSignature.Application/Runtime/RuntimeObservability.cs`
+- `src/service/AriaSignature.Service/Jobs/*.cs`
+- `src/core/AriaSignature.Infrastructure/Persistence/SqliteDatabaseInitializer.cs`
+- `src/ui/AriaSignature.UI/Services/WindowsServiceEnsure.cs`
+- `installer/inno/AriaSignature.iss`
+
+Сделано:
+- Единые деградационные маркеры installer/UI (`install-health:*`, `reliability-state=degraded`, `setup-category=*`).
+- Runtime baseline-метрики: latency старта API, first-ready latency, success/fail для backup/smart/outbound, счётчик DB busy-retry.
+- Добавлены health/readiness/degradation endpoints и runtime observability endpoint в API.
+- Корреляция запросов через `X-Correlation-Id` для ускоренного triage.
+
 ## Обязательный протокол проверки (release gate)
 
 Для каждого RC/релиза в строгом порядке:
@@ -110,6 +126,8 @@
    - `%ProgramData%\AriaSignature\logs\bootstrap-last-result.txt`
    - последний `%ProgramData%\AriaSignature\logs\service-*.log`
    - `%ProgramData%\AriaSignature\logs\service-startup-fatal.log`
+   - `GET /api/v1/health/degradation`
+   - `GET /api/v1/observability/runtime`
    - точный текст окна installer/UI.
 
 Без этой матрицы релиз не принимается.
@@ -123,4 +141,8 @@
   - детерминированный лог-файл;
   - явный user-facing hint;
   - проверяемый stage marker.
+- После каждого инцидента обязателен post-incident цикл:
+  - классификация первопричины (startup/install/runtime);
+  - обновление runbook (`docs/OPERATIONS_RUNBOOK.md`);
+  - добавление gate/check или теста, который предотвращает повтор.
 

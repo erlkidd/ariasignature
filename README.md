@@ -44,6 +44,7 @@
 | [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) | Модули, процессы разработки, версионирование. |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | История изменений. |
 | [`docs/INSTALLER.md`](docs/INSTALLER.md), [`docs/RELEASE_GATE.md`](docs/RELEASE_GATE.md) | Сборка установщика и проверки. |
+| [`docs/OPERATIONS_RUNBOOK.md`](docs/OPERATIONS_RUNBOOK.md) | Runbook эксплуатации, triage/recovery, SLO/SLI. |
 
 В работающей установке доступен **Swagger**: `http://<хост>:<порт>/swagger`.
 

@@ -99,9 +99,10 @@ public static class WindowsServiceEnsure
             }
 
             warningMessage =
-                WindowsServiceInstaller.BuildUserHint(setupResult)
+                BuildStructuredWarning(setupResult,
+                    WindowsServiceInstaller.BuildUserHint(setupResult)
                 + (ShouldAppendScmSourceError(startFailure, setupResult.ErrorMessage) ? $"\nИсходная ошибка SCM: {startFailure!.Message}" : string.Empty)
-                + (string.IsNullOrEmpty(elevationFailure) ? string.Empty : $"\n{elevationFailure}");
+                + (string.IsNullOrEmpty(elevationFailure) ? string.Empty : $"\n{elevationFailure}"));
         }
         catch (InvalidOperationException ex)
         {
@@ -125,22 +126,31 @@ public static class WindowsServiceEnsure
             }
 
             warningMessage =
-                WindowsServiceInstaller.BuildUserHint(setupResult)
+                BuildStructuredWarning(setupResult,
+                    WindowsServiceInstaller.BuildUserHint(setupResult)
                 + (ShouldAppendScmSourceError(ex, setupResult.ErrorMessage) ? $"\nИсходная ошибка SCM: {ex.Message}" : string.Empty)
-                + (string.IsNullOrEmpty(outerElevationFailure) ? string.Empty : $"\n{outerElevationFailure}");
+                + (string.IsNullOrEmpty(outerElevationFailure) ? string.Empty : $"\n{outerElevationFailure}"));
         }
         catch (System.TimeoutException)
         {
             warningMessage =
-                WindowsServiceInstaller.BuildUserHint(
-                    new ServiceSetupResult(false, "stage=post-1053-check scm-timeout-1053", ServiceSetupFailureCategory.ServiceStartTimeout, ErrorServiceRequestTimeout));
+                BuildStructuredWarning(
+                    new ServiceSetupResult(false, "stage=post-1053-check scm-timeout-1053", ServiceSetupFailureCategory.ServiceStartTimeout, ErrorServiceRequestTimeout),
+                    WindowsServiceInstaller.BuildUserHint(
+                        new ServiceSetupResult(false, "stage=post-1053-check scm-timeout-1053", ServiceSetupFailureCategory.ServiceStartTimeout, ErrorServiceRequestTimeout)));
         }
         catch (Exception ex)
         {
             var hint = WindowsServiceInstaller.BuildUserHint(
                 new ServiceSetupResult(false, ex.Message, ServiceSetupFailureCategory.Unknown, null));
-            warningMessage = hint;
+            warningMessage = BuildStructuredWarning(new ServiceSetupResult(false, ex.Message, ServiceSetupFailureCategory.Unknown, null), hint);
         }
+    }
+
+    private static string BuildStructuredWarning(ServiceSetupResult setupResult, string userHint)
+    {
+        var exitCode = setupResult.LastNonZeroExitCode?.ToString(CultureInfo.InvariantCulture) ?? "none";
+        return $"reliability-state=degraded;setup-category={setupResult.Category};setup-exit={exitCode};details={setupResult.ErrorMessage}\n{userHint}";
     }
 
     private static bool ShouldOfferElevatedBootstrap(ServiceSetupResult setupResult, InvalidOperationException? scmException)

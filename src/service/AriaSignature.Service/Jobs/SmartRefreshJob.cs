@@ -1,4 +1,5 @@
 using AriaSignature.Application.Abstractions;
+using AriaSignature.Application.Runtime;
 using Quartz;
 
 namespace AriaSignature.Service.Jobs;
@@ -17,6 +18,15 @@ public sealed class SmartRefreshJob : IJob
     public async Task Execute(IJobExecutionContext context)
     {
         _logger.LogInformation("Executing SMART refresh job");
-        await _telemetryService.RefreshAsync(context.CancellationToken);
+        try
+        {
+            await _telemetryService.RefreshAsync(context.CancellationToken);
+            RuntimeObservability.RecordSmartRefresh(success: true);
+        }
+        catch
+        {
+            RuntimeObservability.RecordSmartRefresh(success: false);
+            throw;
+        }
     }
 }

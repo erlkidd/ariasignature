@@ -24,7 +24,8 @@ Pipeline выполняет:
 4. `dotnet publish` UI и Service в `win-x64 --self-contained true`; bootstrap публикуется отдельным шагом в `publish/bootstrap` и затем копируется в `publish/ui` (единственный разрешённый источник bootstrap для installer)
 5. подготовку runtime-зависимостей (`WebView2`, `smartctl`, `drivedb.h`) с проверкой целостности и host-dependency-check (`powershell/sc/taskkill`, запись в `%ProgramData%\AriaSignature\logs\`)
    - `WebView2` принимается только как standalone offline installer: проверяется минимальный размер файла и валидная Microsoft-подпись (bootstrap online-пакет блокирует gate)
-6. `ISCC` сборку `installer/inno/AriaSignature.iss`
+6. regression smoke для уже установленной службы (`scripts/service-startup-smoke.ps1`) — если служба присутствует на build-host
+7. `ISCC` сборку `installer/inno/AriaSignature.iss`
 
 Выходной артефакт:
 - `artifacts/installer/AriaSignature-Setup.exe`
@@ -57,6 +58,13 @@ Pipeline выполняет:
 - при долгом старте службы/API используется hybrid-режим: ограниченное ожидание (таймаут) и завершение установки без бесконечной блокировки;
 - кнопка `Завершить` доступна после успешного копирования файлов, даже если служба/API продолжает прогрев в фоне;
 - при срабатывании таймаута в логе есть маркер `install-health:timeout`, а пользователю показывается путь к `%ProgramData%\AriaSignature\logs\`.
+
+### Observability критерии (обязательные)
+
+- API должен отвечать на `GET /api/v1/health/live`, `GET /api/v1/health/ready`, `GET /api/v1/health/degradation`;
+- API должен отвечать на `GET /api/v1/observability/runtime` с метриками startup/backup/smart/outbound/db-retry;
+- на каждый API-ответ возвращается `X-Correlation-Id` (или эхо клиентского заголовка, или сгенерированный сервером);
+- для triage используется единый runbook: `docs/OPERATIONS_RUNBOOK.md`.
 
 ### Матрица Win11 (обязательная)
 

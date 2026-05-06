@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
+using AriaSignature.Application.Runtime;
 
 namespace AriaSignature.Infrastructure.Persistence;
 
@@ -235,6 +236,7 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
             }
             catch (SqliteException ex) when ((ex.SqliteErrorCode == 5 || ex.SqliteErrorCode == 6) && attempt < maxAttempts)
             {
+                RuntimeObservability.RecordDbBusyRetry();
                 await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
             }
         }

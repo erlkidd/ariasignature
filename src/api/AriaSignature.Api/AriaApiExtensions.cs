@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using AriaSignature.Application;
 using AriaSignature.Application.Abstractions;
+using AriaSignature.Application.Runtime;
 using Microsoft.Extensions.Logging;
 using AriaSignature.Api.Contracts;
 using AriaSignature.Domain.Entities;
@@ -55,6 +56,8 @@ public static class AriaApiExtensions
 
     public static WebApplication UseAriaApi(this WebApplication app)
     {
+        var correlationLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Correlation");
+
         app.UseExceptionHandler(exceptionApp =>
         {
             exceptionApp.Run(async context =>
@@ -75,6 +78,25 @@ public static class AriaApiExtensions
             });
         });
 
+        app.Use(async (context, next) =>
+        {
+            var correlationIdHeader = context.Request.Headers["X-Correlation-Id"].ToString().Trim();
+            var correlationId = string.IsNullOrWhiteSpace(correlationIdHeader)
+                ? Guid.NewGuid().ToString("N")
+                : correlationIdHeader;
+            context.TraceIdentifier = correlationId;
+            context.Response.Headers["X-Correlation-Id"] = correlationId;
+
+            using (correlationLogger.BeginScope(new Dictionary<string, object>
+                   {
+                       ["CorrelationId"] = correlationId,
+                       ["RequestPath"] = context.Request.Path.Value ?? string.Empty
+                   }))
+            {
+                await next();
+            }
+        });
+
         app.UseMiddleware<RemoteApiAuthMiddleware>();
         app.UseSwagger();
         app.UseSwaggerUI();
@@ -90,6 +112,96 @@ public static class AriaApiExtensions
         }))
         .WithName("GetSystemStatus")
         .WithTags("Service")
+        .WithOpenApi();
+
+        api.MapGet("/health/live", () => Results.Ok(new
+        {
+            status = "live",
+            timestampUtc = DateTimeOffset.UtcNow
+        }))
+        .WithName("GetLiveHealth")
+        .WithTags("Health")
+        .WithOpenApi();
+
+        api.MapGet("/health/ready", async (IAppSettingsService settings, CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var configuredPort = await settings.GetAsync("Api:Port", cancellationToken);
+                return Results.Ok(new
+                {
+                    status = "ready",
+                    checks = new[]
+                    {
+                        new { name = "settings-store", status = "ok", detail = "SQLite app settings accessible" },
+                        new { name = "api-port", status = "ok", detail = string.IsNullOrWhiteSpace(configuredPort) ? "default(5160)" : configuredPort }
+                    },
+                    timestampUtc = DateTimeOffset.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem(
+                    title: "Readiness check failed",
+                    detail: $"settings-store unavailable: {ex.Message}",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        })
+        .WithName("GetReadyHealth")
+        .WithTags("Health")
+        .WithOpenApi();
+
+        api.MapGet("/health/degradation", () =>
+        {
+            var snapshot = RuntimeObservability.GetSnapshot();
+            var reasons = BuildDegradationReasons(snapshot);
+            return Results.Ok(new
+            {
+                status = reasons.Count == 0 ? "ok" : "degraded",
+                reasons,
+                snapshot,
+                timestampUtc = DateTimeOffset.UtcNow
+            });
+        })
+        .WithName("GetDegradationHealth")
+        .WithTags("Health")
+        .WithOpenApi();
+
+        api.MapGet("/observability/runtime", () =>
+        {
+            var snapshot = RuntimeObservability.GetSnapshot();
+            return Results.Ok(new
+            {
+                snapshot.StartedAtUtc,
+                snapshot.Uptime,
+                snapshot.ApiStartupLatencyMs,
+                snapshot.ApiFirstReadyLatencyMs,
+                backup = new
+                {
+                    succeeded = snapshot.BackupSucceeded,
+                    failed = snapshot.BackupFailed,
+                    total = snapshot.BackupTotal,
+                    successRatio = snapshot.BackupSuccessRatio
+                },
+                smartRefresh = new
+                {
+                    succeeded = snapshot.SmartRefreshSucceeded,
+                    failed = snapshot.SmartRefreshFailed,
+                    total = snapshot.SmartRefreshTotal,
+                    successRatio = snapshot.SmartRefreshSuccessRatio
+                },
+                outboundSync = new
+                {
+                    succeeded = snapshot.OutboundSyncSucceeded,
+                    failed = snapshot.OutboundSyncFailed,
+                    total = snapshot.OutboundSyncTotal,
+                    successRatio = snapshot.OutboundSyncSuccessRatio
+                },
+                snapshot.DbBusyRetries
+            });
+        })
+        .WithName("GetRuntimeObservability")
+        .WithTags("Observability")
         .WithOpenApi();
 
         api.MapGet("/settings", async (IAppSettingsService settings, IConfiguration configuration, CancellationToken cancellationToken) =>
@@ -669,5 +781,41 @@ public static class AriaApiExtensions
             RetentionCount = request.RetentionCount,
             IsEnabled = request.IsEnabled
         };
+    }
+
+    private static List<string> BuildDegradationReasons(RuntimeObservabilitySnapshot snapshot)
+    {
+        var reasons = new List<string>();
+        if (snapshot.ApiStartupLatencyMs > 0 && snapshot.ApiStartupLatencyMs > 90_000)
+        {
+            reasons.Add($"api-startup-latency-high:{snapshot.ApiStartupLatencyMs}ms");
+        }
+
+        if (snapshot.ApiFirstReadyLatencyMs > 0 && snapshot.ApiFirstReadyLatencyMs > 120_000)
+        {
+            reasons.Add($"api-first-ready-latency-high:{snapshot.ApiFirstReadyLatencyMs}ms");
+        }
+
+        if (snapshot.BackupTotal >= 10 && snapshot.BackupSuccessRatio < 0.8d)
+        {
+            reasons.Add($"backup-success-ratio-low:{snapshot.BackupSuccessRatio:F2}");
+        }
+
+        if (snapshot.SmartRefreshTotal >= 10 && snapshot.SmartRefreshSuccessRatio < 0.8d)
+        {
+            reasons.Add($"smart-refresh-success-ratio-low:{snapshot.SmartRefreshSuccessRatio:F2}");
+        }
+
+        if (snapshot.OutboundSyncTotal >= 10 && snapshot.OutboundSyncSuccessRatio < 0.8d)
+        {
+            reasons.Add($"outbound-sync-success-ratio-low:{snapshot.OutboundSyncSuccessRatio:F2}");
+        }
+
+        if (snapshot.DbBusyRetries > 100)
+        {
+            reasons.Add($"db-busy-retries-high:{snapshot.DbBusyRetries}");
+        }
+
+        return reasons;
     }
 }

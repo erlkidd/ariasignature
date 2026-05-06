@@ -5,6 +5,7 @@ using AriaSignature.Application;
 using AriaSignature.Application.Abstractions;
 using AriaSignature.Application.SystemInfo;
 using AriaSignature.Application.Telemetry;
+using AriaSignature.Application.Runtime;
 using AriaSignature.Domain.Entities;
 using Quartz;
 
@@ -103,6 +104,7 @@ public sealed class OutboundSyncJob : IJob
             if (!response.IsSuccessStatusCode)
             {
                 var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                RuntimeObservability.RecordOutboundSync(success: false);
                 _logger.LogWarning(
                     "Исходящая синхронизация: {StatusCode} {Reason}. Тело ответа: {Body}",
                     (int)response.StatusCode,
@@ -111,11 +113,13 @@ public sealed class OutboundSyncJob : IJob
             }
             else
             {
+                RuntimeObservability.RecordOutboundSync(success: true);
                 _logger.LogInformation("Исходящая синхронизация успешна: POST {Url}", url);
             }
         }
         catch (Exception ex)
         {
+            RuntimeObservability.RecordOutboundSync(success: false);
             _logger.LogWarning(ex, "Исходящая синхронизация: сбой HTTP-запроса к {Url}", url);
         }
     }
