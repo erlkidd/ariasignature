@@ -24,7 +24,7 @@
 - Installer и UI recovery: деградационные состояния стандартизованы (`install-health:*`, `reliability-state=degraded`, `setup-category=*`) для предсказуемой классификации startup отказов.
 - Release gate: добавлен условный regression smoke для уже установленной службы (`service-startup-smoke.ps1`) и проверка observability endpoints/correlation header.
 - UI single-instance: повторный запуск по ярлыку теперь тихо активирует существующее окно без информационных popup.
-- UI tray menu: добавлены действия управления службой `Остановить службу` и `Перезагрузить службу` с auto-UAC elevation.
+- UI tray menu: добавлены действия управления службой `Перезапустить службу` и `Остановить службу` с auto-UAC elevation.
 
 ### Fixed
 

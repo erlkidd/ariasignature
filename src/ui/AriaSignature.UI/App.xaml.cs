@@ -166,8 +166,8 @@ public partial class App : System.Windows.Application
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Открыть", null, (_, _) => RestoreMainWindow());
+        menu.Items.Add("Перезапустить службу", null, (_, _) => _ = HandleRestartServiceFromTrayAsync());
         menu.Items.Add("Остановить службу", null, (_, _) => _ = HandleStopServiceFromTrayAsync());
-        menu.Items.Add("Перезагрузить службу", null, (_, _) => _ = HandleRestartServiceFromTrayAsync());
         menu.Items.Add("Выход", null, (_, _) => ExitApplication());
 
         _trayIcon = new Forms.NotifyIcon
