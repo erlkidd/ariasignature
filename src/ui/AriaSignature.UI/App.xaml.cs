@@ -3,6 +3,7 @@ using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
 using System.Threading.Tasks;
+using AriaSignature.UI.Services;
 using Forms = System.Windows.Forms;
 using Drawing = System.Drawing;
 
@@ -34,18 +35,6 @@ public partial class App : System.Windows.Application
             }
             else
             {
-                // Prevent "nothing happened" UX: explicit message when process is already running.
-                if (!e.Args.Any(arg => string.Equals(arg, "--tray", StringComparison.OrdinalIgnoreCase)))
-                {
-                    System.Windows.MessageBox.Show(
-                        activatedExisting
-                            ? "AriaSignature уже запущен. Окно существующего экземпляра должно быть поднято на передний план."
-                            : "AriaSignature уже запущен, но не удалось активировать существующее окно. Проверьте значок в системном трее и завершите зависший процесс при необходимости.",
-                        "AriaSignature",
-                        System.Windows.MessageBoxButton.OK,
-                        System.Windows.MessageBoxImage.Information);
-                }
-
                 _singleInstanceMutex.Dispose();
                 _singleInstanceMutex = null;
                 Shutdown();
@@ -177,6 +166,8 @@ public partial class App : System.Windows.Application
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Открыть", null, (_, _) => RestoreMainWindow());
+        menu.Items.Add("Остановить службу", null, (_, _) => _ = HandleStopServiceFromTrayAsync());
+        menu.Items.Add("Перезагрузить службу", null, (_, _) => _ = HandleRestartServiceFromTrayAsync());
         menu.Items.Add("Выход", null, (_, _) => ExitApplication());
 
         _trayIcon = new Forms.NotifyIcon
@@ -258,6 +249,50 @@ public partial class App : System.Windows.Application
         _isExitRequested = true;
         MainWindow?.Close();
         Shutdown();
+    }
+
+    private async Task HandleStopServiceFromTrayAsync()
+    {
+        var ok = await Task.Run(() =>
+            WindowsServiceEnsure.TryStopServiceWithElevation(TimeSpan.FromSeconds(45), out var warning)
+                ? (Success: true, Warning: (string?)null)
+                : (Success: false, Warning: warning));
+
+        if (!ok.Success && !string.IsNullOrWhiteSpace(ok.Warning))
+        {
+            AppendTrayActionLog("stop-service", ok.Warning!);
+        }
+    }
+
+    private async Task HandleRestartServiceFromTrayAsync()
+    {
+        var result = await Task.Run(() =>
+            WindowsServiceEnsure.TryRestartServiceWithElevation(TimeSpan.FromSeconds(45), TimeSpan.FromSeconds(60), out var warning)
+                ? (Success: true, Warning: (string?)null)
+                : (Success: false, Warning: warning));
+
+        if (!result.Success && !string.IsNullOrWhiteSpace(result.Warning))
+        {
+            AppendTrayActionLog("restart-service", result.Warning!);
+        }
+    }
+
+    private static void AppendTrayActionLog(string action, string detail)
+    {
+        try
+        {
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "AriaSignature",
+                "logs");
+            Directory.CreateDirectory(dir);
+            var line = $"{DateTimeOffset.Now:O}\taction={action}\tdetail={detail}{Environment.NewLine}";
+            File.AppendAllText(Path.Combine(dir, "ui-tray-actions.log"), line);
+        }
+        catch
+        {
+            // ignore
+        }
     }
 
     private void StartExternalActivationPump()

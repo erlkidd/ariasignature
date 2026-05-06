@@ -21,9 +21,11 @@ public static class WindowsServiceEnsure
 
     /// <summary>Win32 ERROR_ACCESS_DENIED.</summary>
     private const int ErrorAccessDenied = 5;
+    private const int ErrorServiceAlreadyRunning = 1056;
 
     /// <summary>Пользователь отменил повышение прав (UAC).</summary>
     private const int ErrorCancelled = 1223;
+    private const int ErrorServiceDoesNotExist = 1060;
 
     private static int _elevatedBootstrapLaunched;
 
@@ -36,6 +38,95 @@ public static class WindowsServiceEnsure
     public static void TryStartOrFallback(string serviceExePath, TimeSpan wait, string? bootstrapExePath, out string? warningMessage)
     {
         TryStartOrFallbackCore(serviceExePath, wait, bootstrapExePath, allowElevatedRecovery: true, out warningMessage);
+    }
+
+    public static bool TryStopServiceWithElevation(TimeSpan wait, out string? warningMessage)
+    {
+        warningMessage = null;
+        try
+        {
+            using var sc = new ServiceController(ServiceName);
+            sc.Refresh();
+            if (sc.Status == ServiceControllerStatus.Stopped)
+            {
+                return true;
+            }
+
+            try
+            {
+                sc.Stop();
+                sc.WaitForStatus(ServiceControllerStatus.Stopped, wait);
+                return true;
+            }
+            catch (InvalidOperationException ex) when (TryFindNativeError(ex, out var code) && code == ErrorAccessDenied)
+            {
+                if (!TryRunElevatedScCommand($"stop {ServiceName}", out var elevatedErr))
+                {
+                    warningMessage = elevatedErr;
+                    return false;
+                }
+
+                using var check = new ServiceController(ServiceName);
+                check.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(60));
+                return true;
+            }
+        }
+        catch (InvalidOperationException ex) when (TryFindNativeError(ex, out var code) && code == ErrorServiceDoesNotExist)
+        {
+            // Service already absent => treat as stopped for tray action.
+            return true;
+        }
+        catch (Exception ex)
+        {
+            warningMessage = ex.Message;
+            return false;
+        }
+    }
+
+    public static bool TryRestartServiceWithElevation(TimeSpan stopWait, TimeSpan startWait, out string? warningMessage)
+    {
+        warningMessage = null;
+        try
+        {
+            using var sc = new ServiceController(ServiceName);
+            sc.Refresh();
+            if (sc.Status != ServiceControllerStatus.Stopped)
+            {
+                if (!TryStopServiceWithElevation(stopWait, out warningMessage))
+                {
+                    return false;
+                }
+            }
+
+            using var startSc = new ServiceController(ServiceName);
+            try
+            {
+                StartServiceAllowingScmTimeout1053(startSc, startWait);
+                return true;
+            }
+            catch (InvalidOperationException ex) when (TryFindNativeError(ex, out var code) && code == ErrorAccessDenied)
+            {
+                if (!TryRunElevatedScCommand($"start {ServiceName}", out var elevatedErr))
+                {
+                    warningMessage = elevatedErr;
+                    return false;
+                }
+
+                using var check = new ServiceController(ServiceName);
+                check.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(120));
+                return true;
+            }
+        }
+        catch (InvalidOperationException ex) when (TryFindNativeError(ex, out var code) && code == ErrorServiceDoesNotExist)
+        {
+            warningMessage = "Служба AriaSignatureService не найдена в SCM.";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            warningMessage = ex.Message;
+            return false;
+        }
     }
 
     private static void TryStartOrFallbackCore(
@@ -276,6 +367,69 @@ public static class WindowsServiceEnsure
         {
             errorToUser =
                 "Запрос прав администратора отменён. Запустите AriaSignature от имени администратора один раз или включите службу вручную в services.msc.";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            errorToUser = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryRunElevatedScCommand(string args, out string? errorToUser)
+    {
+        errorToUser = null;
+        var scPath = GetScExePath();
+        if (string.IsNullOrWhiteSpace(scPath) || !File.Exists(scPath))
+        {
+            errorToUser = "Не найден sc.exe для elevated операции.";
+            return false;
+        }
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = scPath,
+                Arguments = args,
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc is null)
+            {
+                errorToUser = "Не удалось запустить elevated команду управления службой.";
+                return false;
+            }
+
+            if (!proc.WaitForExit(120_000))
+            {
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // ignore
+                }
+
+                errorToUser = "Истекло время ожидания elevated команды управления службой.";
+                return false;
+            }
+
+            if (proc.ExitCode != 0 && proc.ExitCode != ErrorServiceAlreadyRunning)
+            {
+                errorToUser = $"Команда sc завершилась с кодом {proc.ExitCode}.";
+                return false;
+            }
+
+            return true;
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == ErrorCancelled)
+        {
+            errorToUser = "Запрос прав администратора отменён пользователем.";
             return false;
         }
         catch (Exception ex)
