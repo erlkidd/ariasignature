@@ -1,6 +1,7 @@
 using AriaSignature.Api;
 using AriaSignature.Application;
 using AriaSignature.Application.Abstractions;
+using AriaSignature.Application.Runtime;
 using AriaSignature.Infrastructure;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -91,6 +92,7 @@ public sealed class LocalApiHostedService : BackgroundService
             }
 
             _logger.LogInformation("marker=api-started API bind/start completed in {ElapsedMs} ms", startupSw.ElapsedMilliseconds);
+            RuntimeObservability.RecordApiStartupLatency(startupSw.Elapsed);
             await LogFirstReadyAsync(port, stoppingToken).ConfigureAwait(false);
 
             try
@@ -232,6 +234,7 @@ public sealed class LocalApiHostedService : BackgroundService
         {
             using var status = await http.GetAsync($"{baseUrl}/api/v1/status", cancellationToken).ConfigureAwait(false);
             using var root = await http.GetAsync($"{baseUrl}/", cancellationToken).ConfigureAwait(false);
+            RuntimeObservability.RecordApiFirstReadyLatency(readySw.Elapsed);
             _logger.LogInformation(
                 "API first-ready probe in {ElapsedMs} ms: status={StatusCode}, root={RootCode}",
                 readySw.ElapsedMilliseconds,

@@ -32,4 +32,19 @@ if (-not $ok) {
     exit 1
 }
 
-Write-Host "[service-smoke][ok] service=$ServiceName api_port=$ApiPort"
+$corr = [Guid]::NewGuid().ToString("N")
+$healthReady = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$ApiPort/api/v1/health/ready" -Headers @{ "X-Correlation-Id" = $corr } -TimeoutSec 5
+$healthDegradation = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$ApiPort/api/v1/health/degradation" -Headers @{ "X-Correlation-Id" = $corr } -TimeoutSec 5
+$runtimeObs = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$ApiPort/api/v1/observability/runtime" -Headers @{ "X-Correlation-Id" = $corr } -TimeoutSec 5
+
+if ($healthReady.StatusCode -ne 200 -or $healthDegradation.StatusCode -ne 200 -or $runtimeObs.StatusCode -ne 200) {
+    Write-Host "[service-smoke][fail] observability_endpoints_unreachable service=$ServiceName api_port=$ApiPort"
+    exit 1
+}
+
+if (-not $healthReady.Headers["X-Correlation-Id"]) {
+    Write-Host "[service-smoke][fail] missing_correlation_header service=$ServiceName api_port=$ApiPort"
+    exit 1
+}
+
+Write-Host "[service-smoke][ok] service=$ServiceName api_port=$ApiPort correlation_id=$($healthReady.Headers["X-Correlation-Id"])"

@@ -34,6 +34,62 @@ public sealed class ApiEndpointsTests : IClassFixture<TestWebApplicationFactory>
         using var doc = await JsonDocument.ParseAsync(stream);
         Assert.True(doc.RootElement.TryGetProperty("status", out var st));
         Assert.Equal("Running", st.GetString());
+        Assert.True(response.Headers.Contains("X-Correlation-Id"));
+    }
+
+    [Fact]
+    public async Task CorrelationHeader_IsPropagated_WhenProvidedByClient()
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/v1/status");
+        req.Headers.Add("X-Correlation-Id", "test-correlation-id");
+
+        using var response = await _client.SendAsync(req);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(response.Headers.TryGetValues("X-Correlation-Id", out var values));
+        Assert.Contains("test-correlation-id", values);
+    }
+
+    [Fact]
+    public async Task HealthEndpoints_ReturnExpectedShapes()
+    {
+        var live = await _client.GetAsync("/api/v1/health/live");
+        var ready = await _client.GetAsync("/api/v1/health/ready");
+        var degraded = await _client.GetAsync("/api/v1/health/degradation");
+
+        Assert.Equal(HttpStatusCode.OK, live.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, degraded.StatusCode);
+
+        await using var liveStream = await live.Content.ReadAsStreamAsync();
+        using var liveDoc = await JsonDocument.ParseAsync(liveStream);
+        Assert.Equal("live", liveDoc.RootElement.GetProperty("status").GetString());
+
+        await using var readyStream = await ready.Content.ReadAsStreamAsync();
+        using var readyDoc = await JsonDocument.ParseAsync(readyStream);
+        Assert.Equal("ready", readyDoc.RootElement.GetProperty("status").GetString());
+
+        await using var degradedStream = await degraded.Content.ReadAsStreamAsync();
+        using var degradedDoc = await JsonDocument.ParseAsync(degradedStream);
+        Assert.True(degradedDoc.RootElement.TryGetProperty("status", out _));
+        Assert.True(degradedDoc.RootElement.TryGetProperty("reasons", out var reasons) && reasons.ValueKind == JsonValueKind.Array);
+    }
+
+    [Fact]
+    public async Task RuntimeObservabilityEndpoint_ReturnsMetricsShape()
+    {
+        var response = await _client.GetAsync("/api/v1/observability/runtime");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var doc = await JsonDocument.ParseAsync(stream);
+        var root = doc.RootElement;
+        Assert.True(root.TryGetProperty("apiStartupLatencyMs", out _));
+        Assert.True(root.TryGetProperty("apiFirstReadyLatencyMs", out _));
+        Assert.True(root.TryGetProperty("backup", out var backup) && backup.ValueKind == JsonValueKind.Object);
+        Assert.True(root.TryGetProperty("smartRefresh", out var smartRefresh) && smartRefresh.ValueKind == JsonValueKind.Object);
+        Assert.True(root.TryGetProperty("outboundSync", out var outboundSync) && outboundSync.ValueKind == JsonValueKind.Object);
+        Assert.True(root.TryGetProperty("dbBusyRetries", out _));
     }
 
     [Fact]

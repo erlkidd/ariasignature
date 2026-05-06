@@ -58,7 +58,7 @@ Filename: "{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Parameters: "/si
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""AriaSignature API (TCP 5160)"" dir=in action=allow protocol=TCP localport=5160"; StatusMsg: "Разрешение входящих подключений к API (порт 5160)..."; Flags: runhidden waituntilterminated
 
 [UninstallRun]
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""AriaSignature API (TCP 5160)"""; Flags: runhidden waituntilterminated
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""AriaSignature API (TCP 5160)"""; Flags: runhidden waituntilterminated; RunOnceId: "DeleteFirewallRule-AriaApi5160"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
@@ -143,6 +143,7 @@ begin
     PostInstallTimedOut := True;
     InstallHealthStatus := 'install-health:timeout';
     Log('Post-install timeout reached at stage: ' + StageName);
+    Log('marker=install-health status=' + InstallHealthStatus + ' stage=' + StageName);
     PumpWizardUi('Установка завершает настройку. Служба догревается в фоне...');
   end;
 end;
@@ -440,6 +441,7 @@ var
   PortAttempt: Integer;
 begin
   InstallHealthStatus := 'install-health:starting';
+  Log('marker=install-health status=' + InstallHealthStatus + ' stage=enter');
   PumpWizardUi('Настройка службы AriaSignature...');
 
   if not IsAdminInstallMode then
@@ -469,6 +471,7 @@ begin
     if IsPostInstallTimedOut('create-service') then
     begin
       InstallHealthStatus := 'install-health:degraded-timeout-create';
+      Log('marker=install-health status=' + InstallHealthStatus + ' stage=create-service');
       Exit;
     end;
 
@@ -523,6 +526,7 @@ begin
   if not Created then
   begin
     InstallHealthStatus := 'install-health:degraded-service-create-failed';
+    Log('marker=install-health status=' + InstallHealthStatus + ' stage=create-service');
     Log('Warning: service create did not succeed; installer continues in degraded mode.');
     SuppressibleMsgBox(
       'Служба AriaSignature не зарегистрировалась автоматически (sc create код ' +
@@ -538,6 +542,7 @@ begin
   if not ServiceIsRegistered then
   begin
     InstallHealthStatus := 'install-health:degraded-service-not-registered';
+    Log('marker=install-health status=' + InstallHealthStatus + ' stage=service-registered-check');
     Log('Warning: service registration did not appear in SCM immediately; installer continues in degraded mode.');
     Exit;
   end;
@@ -553,6 +558,7 @@ begin
     if IsPostInstallTimedOut('start-service') then
     begin
       InstallHealthStatus := 'install-health:degraded-timeout-start';
+      Log('marker=install-health status=' + InstallHealthStatus + ' stage=start-service');
       Exit;
     end;
 
@@ -585,6 +591,7 @@ begin
     if not Started then
     begin
       InstallHealthStatus := 'install-health:degraded-service-not-running';
+      Log('marker=install-health status=' + InstallHealthStatus + ' stage=start-service');
       Log('Warning: service did not start after auto-repair; installer will continue with degraded startup path.');
       SuppressibleMsgBox(
         'Служба AriaSignature не была запущена автоматически после установки.'#13#10 +
@@ -604,6 +611,7 @@ begin
     if IsPostInstallTimedOut('api-health') then
     begin
       InstallHealthStatus := 'install-health:degraded-timeout-api';
+      Log('marker=install-health status=' + InstallHealthStatus + ' stage=api-health');
       Exit;
     end;
 
@@ -623,6 +631,7 @@ begin
     if not RunBootstrapRepair(BinPath) then
     begin
       InstallHealthStatus := 'install-health:degraded-api-not-ready';
+      Log('marker=install-health status=' + InstallHealthStatus + ' stage=api-health');
       Log('Warning: API health check failed and bootstrap repair also failed; installer will continue with degraded startup path.');
       SuppressibleMsgBox(
         BuildBootstrapFailureHint() + #13#10 +
@@ -639,6 +648,7 @@ begin
     if not Healthy then
     begin
       InstallHealthStatus := 'install-health:degraded-api-warmup';
+      Log('marker=install-health status=' + InstallHealthStatus + ' stage=api-health');
       Log('Warning: API still not ready after auto-repair; installer continues and delegates warmup/retry to UI.');
       SuppressibleMsgBox(
         'API ещё не отвечает после автоматического восстановления, но установка завершена.'#13#10 +
@@ -652,7 +662,7 @@ begin
   end;
 
   InstallHealthStatus := 'install-health:ok';
-  Log(InstallHealthStatus);
+  Log('marker=install-health status=' + InstallHealthStatus + ' stage=done');
 end;
 
 procedure RunPreInstallCleanup();

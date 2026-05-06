@@ -10,6 +10,8 @@
 
 - Утилита **`AriaSignature.ServiceBootstrap`** и библиотека **`AriaSignature.WindowsServiceSetup`**: общая регистрация/запуск службы через `sc`, классификация отказов (в т.ч. **ACCESS_DENIED**), лог bootstrap в `%ProgramData%\AriaSignature\logs\`; UI один раз запускает helper с **UAC** при отказе прав SCM.
 - Документация `docs/AI_CONTEXT.md` для AI-first onboarding: карта компонентов, инварианты, startup sequence, диагностика и тестовые ориентиры.
+- Runtime observability baseline: счётчики latencies/success-ratio/retries в `AriaSignature.Application.Runtime.RuntimeObservability` и API endpoints `GET /api/v1/health/live`, `GET /api/v1/health/ready`, `GET /api/v1/health/degradation`, `GET /api/v1/observability/runtime`.
+- Операционный runbook `docs/OPERATIONS_RUNBOOK.md`: triage/recovery, SLI/SLO baseline, alarm policy и post-incident loop.
 
 ### Changed
 
@@ -19,6 +21,8 @@
 - Service startup (`LocalApiHostedService`): bind URL для режима `all` упрощён до IPv4 wildcard, добавлены более подробные диагностические логи по режиму bind/URL/root path.
 - Installer (`AriaSignature.iss`): после `sc start` добавлен локальный health probe `GET /api/v1/status` с уведомлением при нездоровом старте; при неуспешном старте службы в лог установщика пишется полный вывод **`sc query`** и **`sc qc`** (сброс в временный файл через `cmd.exe`).
 - `release-gate.ps1`: шаги и ошибки логируются в стабильном machine-friendly формате (`[release-gate][step-*]`).
+- Installer и UI recovery: деградационные состояния стандартизованы (`install-health:*`, `reliability-state=degraded`, `setup-category=*`) для предсказуемой классификации startup отказов.
+- Release gate: добавлен условный regression smoke для уже установленной службы (`service-startup-smoke.ps1`) и проверка observability endpoints/correlation header.
 
 ### Fixed
 
@@ -32,12 +36,14 @@
 - UI (`WindowsServiceEnsure`, `MainWindow`): при **1053** от SCM дополнительное ожидание **Running** до 120 с; вывод **`sc.exe`** читается в OEM-кодировке консоли (читаемые русские сообщения).
 - UI (`MainWindow`): меньше ложных жёстких ошибок при старте — временные сбои WebView2 к локальному API обрабатываются через восстановление; `EnsureDefaultAutostartApplied` после инициализации WebView, даже если SPA не прислала `appReady`; часть обновлений UI на `DispatcherPriority.Background`.
 - Телеметрия дисков: расширен парсинг smartctl ATA-атрибутов наработки (`ID 9`, `ID 12`), улучшена нормализация ресурса SSD (`ID 231/233`), снижена вероятность ложного определения носителя как SSD.
+- API: на каждый ответ добавляется `X-Correlation-Id` (эхо клиентского или сгенерированного), что устраняет «немые» цепочки запросов в логах при triage инцидентов.
 
 ### Docs
 
 - `AI_CONTEXT.md`, `DEVELOPMENT_NOTES.md`: цепочка установщик → SCM → UI и **UAC** через **ServiceBootstrap**; матрица ручных проверок службы на Win10/11.
 - `DEVELOPER_GUIDE.md`: политика Git — выкат в `production` с рабочих веток; ветка `test/agent-work-legacy-pre-opt` архивная (не сливается в прод, не удаляется).
 - В документации и пользовательских формулировках API везде используется термин **токен** (удалённого API) вместо «секрет».
+- `RELEASE_GATE.md` и `INCIDENT_STARTUP_W10_W11.md`: добавлены observability acceptance criteria, post-incident protection loop и ссылки на operations runbook.
 
 ## [1.0.1] - 2026-05-05
 

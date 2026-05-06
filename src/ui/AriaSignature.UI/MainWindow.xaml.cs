@@ -523,6 +523,23 @@ public partial class MainWindow : Window
             marker = " · этап: scm-timeout-1053";
         }
 
+        if (warning.Contains("setup-category=AccessDenied", StringComparison.OrdinalIgnoreCase))
+        {
+            marker += " · категория: access-denied";
+        }
+        else if (warning.Contains("setup-category=ServiceCrashedOnStart", StringComparison.OrdinalIgnoreCase))
+        {
+            marker += " · категория: service-crashed";
+        }
+        else if (warning.Contains("setup-category=ServiceStartTimeout", StringComparison.OrdinalIgnoreCase))
+        {
+            marker += " · категория: service-timeout";
+        }
+        else if (warning.Contains("setup-category=MissingServiceBinary", StringComparison.OrdinalIgnoreCase))
+        {
+            marker += " · категория: missing-binary";
+        }
+
         return baseStage + marker;
     }
 

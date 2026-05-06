@@ -1,4 +1,5 @@
 using AriaSignature.Application.Abstractions;
+using AriaSignature.Application.Runtime;
 using AriaSignature.Domain.Entities;
 using AriaSignature.Domain.Enums;
 using Quartz;
@@ -89,6 +90,7 @@ public sealed class BackupService : IBackupService
             Message = result.Message
         };
 
+        RuntimeObservability.RecordBackupExecution(result.IsSuccess);
         await _repository.AddLogAsync(log, cancellationToken);
         return log;
     }
