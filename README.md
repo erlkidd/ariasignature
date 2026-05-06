@@ -1,9 +1,4 @@
-<div align="center">
-
 [![OpenYellow](https://openyellow.openintegrations.dev/data/badges/1225819392.svg)](https://openyellow.org/grid?filter=top&repo=1225819392)
-[![OpenYellow](https://openyellow.openintegrations.dev/data/badges/1225819392.png)](https://openyellow.org/grid?filter=top&repo=1225819392)
-
-</div>
 
 <div align="center">
 
@@ -24,22 +19,15 @@
 - OpenYellow (каталог проекта): [openyellow.org/grid?filter=top&repo=1225819392](https://openyellow.org/grid?filter=top&repo=1225819392)
 - Telegram-канал проекта: [t.me/ariasignature](https://t.me/ariasignature)
 
-## Скриншоты
-
-<p align="center">
-  <img src="assets/screenshots/overview-disks.png" alt="AriaSignature — вкладка Диски" width="49%" />
-  <img src="assets/screenshots/overview-backups.png" alt="AriaSignature — вкладка Архивация" width="49%" />
-</p>
-<p align="center">
-  <img src="assets/screenshots/settings-service.png" alt="AriaSignature — вкладка Настройки" width="49%" />
-  <img src="assets/screenshots/about.png" alt="AriaSignature — вкладка О программе" width="49%" />
-</p>
-
 ## Зачем это вам
 
 - **Массовый мониторинг:** с вашей станции или скрипта: `http://<IP_клиента_в_VPN>:5160/api/v1/system`, `/disks`, `/backups`, `/backups/logs` — те же данные, что видит локальная панель (вкладка «О системе» соответствует `GET /system`).
 - **Гибкая сеть:** Radmin VPN, корпоративная LAN или другой туннель; на агенте по умолчанию API слушает все интерфейсы, установщик добавляет правило брандмауэра для порта **5160**.
 - **Опциональная защита:** общий токен в настройках — для запросов **не с localhost** требуется `Authorization: Bearer` или `X-Aria-Api-Key`; локальная панель на том же ПК заголовки не задаёт.
+
+<p align="center">
+  <img src="assets/screenshots/overview-disks.png" alt="AriaSignature — вкладка Диски" width="88%" />
+</p>
 
 Подробный контракт и примеры запросов: [`docs/API.md`](docs/API.md).
 
@@ -55,6 +43,10 @@
 | `AriaSignature.Service` | Служба Windows: телеметрия, планировщик архивации, SQLite, хост API (в т.ч. доступ по LAN/VPN). |
 | `AriaSignature.UI` | Панель управления (WPF + WebView2 + React). |
 | `src/web` | Исходники SPA (Vite/React), собираются в `wwwroot` сервиса. |
+
+<p align="center">
+  <img src="assets/screenshots/overview-backups.png" alt="AriaSignature — вкладка Архивация" width="88%" />
+</p>
 
 Подробнее об архитектуре — [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md).
 
@@ -117,11 +109,19 @@ SPA перед публикацией сервиса обязательно до
 
 **Права установки.** Инсталлятор и регистрация службы требуют прав администратора Windows.
 
+<p align="center">
+  <img src="assets/screenshots/settings-service.png" alt="AriaSignature — настройки службы Windows" width="88%" />
+</p>
+
 **Где хранится состояние?** Локальная база SQLite в профиле установки сервиса (см. документацию по эксплуатации).
 
 ## Участие в разработке
 
 Изменения по контракту API и поведению сопровождайте обновлением `docs/API.md`, `docs/USER_GUIDE.md` и записью в `docs/CHANGELOG.md`. Список файлов для синхронизации версии продукта — в [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) (раздел «Версионирование»).
+
+<p align="center">
+  <img src="assets/screenshots/about.png" alt="AriaSignature — вкладка О программе" width="88%" />
+</p>
 
 ## Лицензия
 
