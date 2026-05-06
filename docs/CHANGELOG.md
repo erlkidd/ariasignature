@@ -23,6 +23,8 @@
 - `release-gate.ps1`: шаги и ошибки логируются в стабильном machine-friendly формате (`[release-gate][step-*]`).
 - Installer и UI recovery: деградационные состояния стандартизованы (`install-health:*`, `reliability-state=degraded`, `setup-category=*`) для предсказуемой классификации startup отказов.
 - Release gate: добавлен условный regression smoke для уже установленной службы (`service-startup-smoke.ps1`) и проверка observability endpoints/correlation header.
+- UI single-instance: повторный запуск по ярлыку теперь тихо активирует существующее окно без информационных popup.
+- UI tray menu: добавлены действия управления службой `Перезапустить службу` и `Остановить службу` с auto-UAC elevation.
 
 ### Fixed
 
@@ -37,6 +39,7 @@
 - UI (`MainWindow`): меньше ложных жёстких ошибок при старте — временные сбои WebView2 к локальному API обрабатываются через восстановление; `EnsureDefaultAutostartApplied` после инициализации WebView, даже если SPA не прислала `appReady`; часть обновлений UI на `DispatcherPriority.Background`.
 - Телеметрия дисков: расширен парсинг smartctl ATA-атрибутов наработки (`ID 9`, `ID 12`), улучшена нормализация ресурса SSD (`ID 231/233`), снижена вероятность ложного определения носителя как SSD.
 - API: на каждый ответ добавляется `X-Correlation-Id` (эхо клиентского или сгенерированного), что устраняет «немые» цепочки запросов в логах при triage инцидентов.
+- Installer pre-install cleanup: `sc stop` больше не вызывается, если служба не находится в `RUNNING/START_PENDING`; uninstall path фиксирует post-condition удаления службы отдельным marker.
 
 ### Docs
 

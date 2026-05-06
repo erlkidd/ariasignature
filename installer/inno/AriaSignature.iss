@@ -98,9 +98,29 @@ end;
 
 procedure PumpWizardUi(const StatusText: string);
 begin
-  if StatusText <> '' then
-    WizardForm.StatusLabel.Caption := StatusText;
-  WizardForm.Update;
+  { В uninstall-контексте WizardForm недоступен; используем best-effort и не падаем. }
+  try
+    if Assigned(WizardForm) then
+    begin
+      if StatusText <> '' then
+        WizardForm.StatusLabel.Caption := StatusText;
+      WizardForm.Update;
+      Exit;
+    end;
+  except
+    { ignore: fallback to uninstall form }
+  end;
+
+  try
+    if Assigned(UninstallProgressForm) then
+    begin
+      if StatusText <> '' then
+        UninstallProgressForm.StatusLabel.Caption := StatusText;
+      UninstallProgressForm.Update;
+    end;
+  except
+    { ignore }
+  end;
 end;
 
 procedure SleepWithWizardUi(const DelayMs: Integer; const StatusText: string);
@@ -294,6 +314,42 @@ begin
   end;
 end;
 
+function ServiceIsRunningOrStartPendingViaSc(): Boolean;
+var
+  TempFile: string;
+  ExitCode: Integer;
+  Lines: TArrayOfString;
+  I: Integer;
+  UpperLine: string;
+begin
+  Result := False;
+  TempFile := ExpandConstant('{tmp}\aria-sc-running-or-pending.txt');
+  DeleteFile(TempFile);
+  if not Exec(
+       ExpandConstant('{sys}\cmd.exe'),
+       '/c "' + ScExePath + '" query ' + ServiceName + ' > "' + TempFile + '" 2>&1',
+       '',
+       SW_HIDE,
+       ewWaitUntilTerminated,
+       ExitCode) then
+  begin
+    Exit;
+  end;
+
+  if not LoadStringsFromFile(TempFile, Lines) then
+    Exit;
+
+  for I := 0 to GetArrayLength(Lines) - 1 do
+  begin
+    UpperLine := UpperCase(Lines[I]);
+    if (Pos('RUNNING', UpperLine) > 0) or (Pos('START_PENDING', UpperLine) > 0) then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+end;
+
 procedure AssertFileExistsOrAbort(const PathValue: string; const LabelText: string);
 begin
   if not FileExists(PathValue) then
@@ -368,7 +424,15 @@ end;
 
 procedure StopAndDeleteServiceBestEffort();
 begin
-  ExecSc(Format('stop %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
+  if ServiceIsRegistered and ServiceIsRunningOrStartPendingViaSc then
+  begin
+    Log('Service is running/start-pending; sending stop before delete.');
+    ExecSc(Format('stop %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
+  end
+  else
+  begin
+    Log('Service is not running; skip sc stop before delete.');
+  end;
   ExecSc(Format('delete %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_FOUND);
 end;
 
@@ -747,5 +811,9 @@ begin
     DeleteTrayLogonTaskBestEffort();
     StopAndDeleteServiceBestEffort();
     KillServiceProcessBestEffort();
+    if WaitServiceAbsent(20) then
+      Log('marker=uninstall-service-removal status=ok')
+    else
+      Log('marker=uninstall-service-removal status=degraded reason=service-still-present-or-pending');
   end;
 end;
