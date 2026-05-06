@@ -98,9 +98,29 @@ end;
 
 procedure PumpWizardUi(const StatusText: string);
 begin
-  if StatusText <> '' then
-    WizardForm.StatusLabel.Caption := StatusText;
-  WizardForm.Update;
+  { В uninstall-контексте WizardForm недоступен; используем best-effort и не падаем. }
+  try
+    if Assigned(WizardForm) then
+    begin
+      if StatusText <> '' then
+        WizardForm.StatusLabel.Caption := StatusText;
+      WizardForm.Update;
+      Exit;
+    end;
+  except
+    { ignore: fallback to uninstall form }
+  end;
+
+  try
+    if Assigned(UninstallProgressForm) then
+    begin
+      if StatusText <> '' then
+        UninstallProgressForm.StatusLabel.Caption := StatusText;
+      UninstallProgressForm.Update;
+    end;
+  except
+    { ignore }
+  end;
 end;
 
 procedure SleepWithWizardUi(const DelayMs: Integer; const StatusText: string);
