@@ -1,5 +1,12 @@
 <div align="center">
 
+[![OpenYellow](https://openyellow.openintegrations.dev/data/badges/1225819392.svg)](https://openyellow.org/grid?filter=top&repo=1225819392)
+[![OpenYellow](https://openyellow.openintegrations.dev/data/badges/1225819392.png)](https://openyellow.org/grid?filter=top&repo=1225819392)
+
+</div>
+
+<div align="center">
+
 <img src="assets/branding/logo.png" alt="Aria Signature — Diagnostics & Archiving" width="420" />
 
 </div>
@@ -11,6 +18,22 @@
 Дополнительно, по желанию, агент может **периодически отправлять JSON на ваш сервер** (исходящий `POST` на коллектор) — это второй канал рядом с прямым `GET` по IP агента.
 
 Проект распространяется под лицензией **MIT** — см. файл [`LICENSE`](LICENSE).
+
+## Сообщество и репозиторий
+
+- OpenYellow (каталог проекта): [openyellow.org/grid?filter=top&repo=1225819392](https://openyellow.org/grid?filter=top&repo=1225819392)
+- Telegram-канал проекта: [t.me/ariasignature](https://t.me/ariasignature)
+
+## Скриншоты
+
+<p align="center">
+  <img src="assets/screenshots/overview-disks.png" alt="AriaSignature — вкладка Диски" width="49%" />
+  <img src="assets/screenshots/overview-backups.png" alt="AriaSignature — вкладка Архивация" width="49%" />
+</p>
+<p align="center">
+  <img src="assets/screenshots/settings-service.png" alt="AriaSignature — вкладка Настройки" width="49%" />
+  <img src="assets/screenshots/about.png" alt="AriaSignature — вкладка О программе" width="49%" />
+</p>
 
 ## Зачем это вам
 
