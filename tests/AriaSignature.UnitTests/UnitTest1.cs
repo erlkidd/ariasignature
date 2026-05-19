@@ -1,10 +1,42 @@
 using System.Reflection;
 using System.Text.Json;
+using AriaSignature.Application.Services;
 using AriaSignature.Infrastructure.Backup;
 using AriaSignature.Infrastructure.Monitoring;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AriaSignature.UnitTests;
+
+public class BackupScheduleEvaluatorTests
+{
+    [Fact]
+    public void IsCronDue_MatchesDailyAtTwoAm_WhenLocalMinuteIsTwoEvenWithNonZeroSeconds()
+    {
+        var localTwoAm = new DateTime(2026, 5, 19, 2, 0, 0, DateTimeKind.Unspecified);
+        Assert.True(BackupScheduleEvaluator.IsCronDue("0 0 2 * * ?", localTwoAm));
+    }
+
+    [Fact]
+    public void IsCronDue_RejectsDailyAtTwoAm_WhenLocalMinuteIsThree()
+    {
+        var localThreeAm = new DateTime(2026, 5, 19, 3, 0, 0, DateTimeKind.Unspecified);
+        Assert.False(BackupScheduleEvaluator.IsCronDue("0 0 2 * * ?", localThreeAm));
+    }
+
+    [Fact]
+    public void CreateContext_UsesLocalMinuteWindow_ForDedupUtcBoundary()
+    {
+        var localTz = TimeZoneInfo.Local;
+        var localMinute = new DateTime(2026, 5, 19, 2, 0, 0, DateTimeKind.Unspecified);
+        var nowUtc = new DateTimeOffset(localMinute, localTz.GetUtcOffset(localMinute)).ToUniversalTime().AddSeconds(17);
+        var context = BackupScheduleEvaluator.CreateContext(nowUtc);
+
+        Assert.Equal(localMinute, context.LocalMinuteStart);
+        Assert.Equal(
+            new DateTimeOffset(localMinute, localTz.GetUtcOffset(localMinute)).ToUniversalTime(),
+            context.MinuteWindowStartUtc);
+    }
+}
 
 public class SmartCtlLowLevelReaderTests
 {
@@ -46,6 +78,42 @@ public class SmartCtlLowLevelReaderTests
 
         Assert.NotNull(snapshot);
         Assert.Equal(80, snapshot!.SsdLifeRemainingPercent);
+    }
+
+    [Fact]
+    public void ParseSnapshot_UsesNormalizedValue_WhenRawIsLarge()
+    {
+        var json = """
+                   {
+                     "ata_smart_attributes": {
+                       "table": [
+                         { "id": 231, "name": "SSD_Life_Left", "value": 95, "raw": { "value": 1234567890 } }
+                       ]
+                     }
+                   }
+                   """;
+        using var doc = JsonDocument.Parse(json);
+        var snapshot = InvokeParseSnapshot(doc.RootElement);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(95, snapshot!.SsdLifeRemainingPercent);
+    }
+
+    [Fact]
+    public void ParseSnapshot_UsesNvmePercentageUsed_ForRemainingLife()
+    {
+        var json = """
+                   {
+                     "nvme_smart_health_information_log": {
+                       "percentage_used": 12
+                     }
+                   }
+                   """;
+        using var doc = JsonDocument.Parse(json);
+        var snapshot = InvokeParseSnapshot(doc.RootElement);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(88, snapshot!.SsdLifeRemainingPercent);
     }
 
     private static SmartCtlLowLevelReader.Snapshot? InvokeParseSnapshot(JsonElement element)

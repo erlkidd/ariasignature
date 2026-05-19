@@ -1,6 +1,6 @@
 # AriaSignature — руководство разработчика
 
-Версия документа: 1.0.1.
+Версия документа: 1.1.0.
 
 ## 1. Цель и принцип работы
 
@@ -82,13 +82,15 @@ Startup-пайплайн оптимизирован под быстрый отк
 При изменении версии обновлять одним коммитом:
 - `Directory.Build.props`;
 - `installer/inno/AriaSignature.iss` (`MyAppVersion`);
-- `src/web/package.json` и lockfile;
+- `src/web/package.json` и `package-lock.json`;
 - `src/web/src/App.tsx` (константа `UI_BUILD_VERSION`);
-- `docs/API.md`, `docs/USER_GUIDE.md` и при необходимости прочие документы с номером версии в шапке (`INSTALLER.md`, `RELEASE_GATE.md`, `INSTRUCTIONS.md`).
+- `docs/API.md`, `docs/USER_GUIDE.md`, `docs/MELEZH.md` и прочие документы с номером версии в шапке (`INSTALLER.md`, `RELEASE_GATE.md`, `DEVELOPER_GUIDE.md`, `DEVELOPMENT_NOTES.md`, `AI_CONTEXT.md`, `OPERATIONS_RUNBOOK.md`, `README.md`).
+
+Release-gate публикует также `AriaSignature.MelezhHost` в `publish/melezh-host`; bundle Melezh — `installer/melezh/` (см. `scripts/prepare-melezh.ps1`).
 
 Единственный источник графики брендинга: **`assets/branding/logo.png`**. При `npm run build` создаётся **`assets/branding/icon.ico`** (exe, трей, Inno Setup). Подключение: `src/ui/AriaSignature.UI/AriaSignature.UI.csproj`, `installer/inno/AriaSignature.iss` (`SetupIconFile`).
 
-Изменения релиза фиксировать в `docs/DEVELOPMENT_NOTES.md`.
+Изменения релиза фиксировать в `docs/CHANGELOG.md`; в `DEVELOPMENT_NOTES.md` — краткий указатель и матрицы проверок.
 
 ## 8. Стандарты документации
 

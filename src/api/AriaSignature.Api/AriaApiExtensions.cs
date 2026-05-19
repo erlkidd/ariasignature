@@ -204,7 +204,11 @@ public static class AriaApiExtensions
         .WithTags("Observability")
         .WithOpenApi();
 
-        api.MapGet("/settings", async (IAppSettingsService settings, IConfiguration configuration, CancellationToken cancellationToken) =>
+        api.MapGet("/settings", async (
+            IAppSettingsService settings,
+            IMelezhStatusService melezhStatus,
+            IConfiguration configuration,
+            CancellationToken cancellationToken) =>
         {
             var dict = await settings.GetAllAsync(cancellationToken);
             var portStr = dict.GetValueOrDefault("Api:Port");
@@ -217,6 +221,7 @@ public static class AriaApiExtensions
                 ?? "0 0/30 * * * ?";
             var apiBind = NormalizeApiBind(dict.GetValueOrDefault(AppSettingsApiKeys.Bind));
             var apiSharedSecret = dict.GetValueOrDefault(AppSettingsApiKeys.SharedSecret) ?? string.Empty;
+            var melezh = await melezhStatus.GetSnapshotAsync(cancellationToken);
             return Results.Ok(new
             {
                 apiPort = port,
@@ -228,6 +233,12 @@ public static class AriaApiExtensions
                 outboundSyncEnabled = outboundEnabled,
                 outboundSyncUrl = outboundUrl,
                 outboundSyncCron = outboundCron,
+                melezhEnabled = melezh.Enabled,
+                melezhPort = melezh.Port,
+                melezhUiUrl = melezh.UiUrl,
+                melezhServiceName = melezh.ServiceName,
+                melezhServiceStatus = melezh.ServiceStatus,
+                melezhRunning = melezh.UiReachable,
             });
         })
         .WithName("GetSettings")

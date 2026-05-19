@@ -2,10 +2,11 @@
 ; Build binaries first, then run this script in Inno Setup Compiler.
 
 #define MyAppName "AriaSignature"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "AriaSignature"
 #define MyAppExeName "AriaSignature.UI.exe"
 #define MyServiceExeName "AriaSignature.Service.exe"
+#define MyMelezhHostExeName "AriaSignature.MelezhHost.exe"
 
 [Setup]
 AppId={{0A0F93B5-6107-4F58-B9CF-6B90D1EA6C95}
@@ -46,19 +47,27 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 [Files]
 Source: "..\..\publish\ui\*"; DestDir: "{app}\ui"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "..\..\publish\melezh-host\*"; DestDir: "{app}\melezh-host"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "..\melezh\*"; DestDir: "{app}\melezh"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\smartctl\*"; DestDir: "{app}\service\smartctl"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\webview2\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall ignoreversion
 
 [Icons]
 Name: "{group}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; WorkingDir: "{app}\ui"; IconFilename: "{app}\ui\Assets\icon.ico"
 Name: "{autodesktop}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; WorkingDir: "{app}\ui"; Tasks: desktopicon; IconFilename: "{app}\ui\Assets\icon.ico"
+Name: "{userstartup}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; WorkingDir: "{app}\ui"; Parameters: "--tray"; IconFilename: "{app}\ui\Assets\icon.ico"
+
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "AriaSignature"; ValueData: """{app}\ui\{#MyAppExeName}"" --tray"; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Parameters: "/silent /install"; StatusMsg: "Установка Microsoft Edge WebView2 Runtime..."; Flags: waituntilterminated skipifsilent; Check: NeedsWebView2Runtime()
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""AriaSignature API (TCP 5160)"" dir=in action=allow protocol=TCP localport=5160"; StatusMsg: "Разрешение входящих подключений к API (порт 5160)..."; Flags: runhidden waituntilterminated
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""AriaSignature Melezh (TCP 7788)"" dir=in action=allow protocol=TCP localport=7788"; StatusMsg: "Разрешение входящих подключений к Melezh (порт 7788)..."; Flags: runhidden waituntilterminated
 
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""AriaSignature API (TCP 5160)"""; Flags: runhidden waituntilterminated; RunOnceId: "DeleteFirewallRule-AriaApi5160"
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""AriaSignature Melezh (TCP 7788)"""; Flags: runhidden waituntilterminated; RunOnceId: "DeleteFirewallRule-AriaMelezh7788"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
@@ -67,6 +76,7 @@ Type: filesandordirs; Name: "{app}"
 const
   TrayTaskName = 'AriaSignatureTrayLogon';
   ServiceName = 'AriaSignatureService';
+  MelezhServiceName = 'AriaSignatureMelezhService';
   PostInstallTimeoutSeconds = 90;
   SC_ACCEPTABLE_NOT_FOUND = 1060;
   SC_ACCEPTABLE_NOT_ACTIVE = 1062;
@@ -422,8 +432,12 @@ begin
     'Bootstrap detail: ' + LastBootstrapFailureDetail;
 end;
 
+function MelezhServiceIsRegistered: Boolean; forward;
+procedure StopAndDeleteMelezhServiceBestEffort(); forward;
+
 procedure StopAndDeleteServiceBestEffort();
 begin
+  StopAndDeleteMelezhServiceBestEffort();
   if ServiceIsRegistered and ServiceIsRunningOrStartPendingViaSc then
   begin
     Log('Service is running/start-pending; sending stop before delete.');
@@ -443,6 +457,8 @@ begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyServiceExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM AriaSignature.Api.exe', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyAppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM melezh.exe', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyMelezhHostExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
 end;
 
 function ProbeLocalApiHealth(const Port: Integer): Boolean;
@@ -756,6 +772,99 @@ begin
   Exec(SchTasks, Format('/Delete /TN %s /F', [TrayTaskName]), '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
 end;
 
+procedure RegisterTrayLogonTaskBestEffort();
+var
+  SchTasks: string;
+  UiExe: string;
+  TaskRun: string;
+  DomainUser: string;
+  ExitCode: Integer;
+begin
+  SchTasks := SchTasksExePath;
+  UiExe := ExpandConstant('{app}\ui\{#MyAppExeName}');
+  if (not FileExists(SchTasks)) or (not FileExists(UiExe)) then
+  begin
+    Log('Tray logon task skipped: schtasks or UI exe missing');
+    Exit;
+  end;
+
+  DeleteTrayLogonTaskBestEffort();
+  TaskRun := AddQuotes(UiExe) + ' --tray';
+  DomainUser := ExpandConstant('{userdomain}') + '\' + ExpandConstant('{username}');
+  if Exec(SchTasks,
+    Format('/Create /TN %s /TR %s /SC ONLOGON /RL LIMITED /DELAY 0000:45 /F /RU %s /IT',
+      [TrayTaskName, TaskRun, DomainUser]),
+    '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+  begin
+    if ExitCode <> 0 then
+      Log('Tray logon task create failed with code ' + IntToStr(ExitCode))
+    else
+      Log('Tray logon task registered: ' + TrayTaskName);
+  end;
+end;
+
+function MelezhServiceIsRegistered: Boolean;
+var
+  ExitCode: Integer;
+begin
+  Result := Exec(ScExePath, 'query ' + MelezhServiceName, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0);
+end;
+
+procedure StopAndDeleteMelezhServiceBestEffort();
+var
+  ExitCode: Integer;
+begin
+  if MelezhServiceIsRegistered then
+  begin
+    ExecSc(Format('stop %s', [MelezhServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
+    ExecSc(Format('delete %s', [MelezhServiceName]), 0, SC_ACCEPTABLE_NOT_FOUND);
+  end;
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM melezh.exe', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyMelezhHostExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+end;
+
+procedure InstallMelezhServiceBestEffort();
+var
+  BinPath: string;
+  CreateParams: string;
+  Attempt: Integer;
+  Created: Boolean;
+  Started: Boolean;
+begin
+  BinPath := ExpandConstant('{app}\melezh-host\{#MyMelezhHostExeName}');
+  if not FileExists(BinPath) then
+  begin
+    Log('Melezh service skipped: host exe missing at ' + BinPath);
+    Exit;
+  end;
+
+  StopAndDeleteMelezhServiceBestEffort();
+  CreateParams := 'create ' + MelezhServiceName + ' binPath= ' + AddQuotes(BinPath) + ' start= auto DisplayName= "AriaSignature Melezh" obj= LocalSystem';
+  Created := False;
+  for Attempt := 1 to 10 do
+  begin
+    if ExecSc(CreateParams, 0, SC_ALREADY_EXISTS) then
+    begin
+      Created := True;
+      Break;
+    end;
+    if LastScExitCode = SC_MARKED_FOR_DELETE then
+      SleepWithWizardUi(1500, 'Ожидание удаления предыдущей службы Melezh...');
+  end;
+
+  if not Created then
+  begin
+    Log('Warning: Melezh service create failed with code ' + IntToStr(LastScExitCode));
+    Exit;
+  end;
+
+  ExecSc(Format('description %s %s', [MelezhServiceName, 'OpenIntegrations Melezh HTTP gateway for AriaSignature']), 0, 0);
+  ExecSc(Format('failure %s reset= 86400 actions= restart/60000/restart/60000/restart/60000', [MelezhServiceName]), 0, 0);
+  Started := ExecSc(Format('start %s', [MelezhServiceName]), 0, SC_ACCEPTABLE_ALREADY_RUNNING);
+  if not Started then
+    Log('Warning: Melezh service start failed with code ' + IntToStr(LastScExitCode));
+end;
+
 procedure RemoveLegacyCommonStartupShortcutBestEffort();
 begin
   if DeleteFile(ExpandConstant('{commonstartup}\AriaSignature.lnk')) then
@@ -773,6 +882,8 @@ begin
   begin
     StartPostInstallBudget();
     InstallServiceOrAbort();
+    RegisterTrayLogonTaskBestEffort();
+    InstallMelezhServiceBestEffort();
     RemoveLegacyCommonStartupShortcutBestEffort();
     if Pos('install-health:degraded', InstallHealthStatus) = 1 then
     begin

@@ -268,7 +268,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                     }
 
                     var wear = TryGetUInt16(row["Wear"]);
-                    if (wear is ushort wWear && wWear is > 0 and <= 100)
+                    if (wear is ushort wWear && wWear <= 100)
                     {
                         var remaining = (int)Math.Clamp(100 - wWear, 0, 100);
                         agg.SsdLifeRemainingPercent = agg.SsdLifeRemainingPercent is int prev

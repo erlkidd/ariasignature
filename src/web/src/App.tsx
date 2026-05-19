@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
-const UI_BUILD_VERSION = "1.0.1";
+const UI_BUILD_VERSION = "1.1.0";
 
 const logoSrc = `./logo.png?v=${encodeURIComponent(__LOGO_CACHE_BUST__)}`;
 
@@ -75,6 +75,12 @@ interface SettingsDto {
   outboundSyncEnabled: boolean;
   outboundSyncUrl: string;
   outboundSyncCron: string;
+  melezhEnabled: boolean;
+  melezhPort: number;
+  melezhUiUrl: string;
+  melezhServiceName: string;
+  melezhServiceStatus?: string | null;
+  melezhRunning: boolean;
 }
 
 interface NetworkAddressInfoDto {
@@ -131,6 +137,22 @@ const quartzDays = [
   { v: "FRI", label: "Пятница" },
   { v: "SAT", label: "Суббота" },
 ];
+
+function formatSsdLifePercent(d: Pick<DiskRow, "ssdLifeRemainingPercent" | "healthPercent" | "mediaType" | "interface">): string {
+  const media = (d.mediaType ?? "").toUpperCase();
+  const iface = (d["interface"] ?? "").toUpperCase();
+  if (media.includes("HDD") || media.includes("ЖЕСТК")) {
+    return "—";
+  }
+  if (d.ssdLifeRemainingPercent != null) {
+    return `${d.ssdLifeRemainingPercent}%`;
+  }
+  const isFlash = media.includes("SSD") || media.includes("NVME") || media.includes("FLASH") || iface.includes("NVME");
+  if (isFlash && d.healthPercent != null) {
+    return `${d.healthPercent}%`;
+  }
+  return "н/д";
+}
 
 function formatHealthPercent(p: number | null | undefined): string {
   if (p == null) {
@@ -798,6 +820,12 @@ export default function App() {
         outboundSyncEnabled: Boolean(s.outboundSyncEnabled),
         outboundSyncUrl: s.outboundSyncUrl ?? "",
         outboundSyncCron: s.outboundSyncCron ?? "0 0/30 * * * ?",
+        melezhEnabled: s.melezhEnabled ?? true,
+        melezhPort: s.melezhPort ?? 7788,
+        melezhUiUrl: s.melezhUiUrl ?? "http://127.0.0.1:7788/ui",
+        melezhServiceName: s.melezhServiceName ?? "AriaSignatureMelezhService",
+        melezhServiceStatus: s.melezhServiceStatus ?? null,
+        melezhRunning: Boolean(s.melezhRunning),
       });
     } catch (e) {
       showErr(e);
@@ -1598,9 +1626,7 @@ export default function App() {
                     <dt>Температура</dt>
                     <dd>{formatTempC(selectedDisk.temperatureCelsius)}</dd>
                     <dt>Ресурс SSD</dt>
-                    <dd>
-                      {selectedDisk.ssdLifeRemainingPercent == null ? "н/д" : `${selectedDisk.ssdLifeRemainingPercent}%`}
-                    </dd>
+                    <dd>{formatSsdLifePercent(selectedDisk)}</dd>
                     <dt>Наработка</dt>
                     <dd>
                       {formatPowerOnHours(selectedDisk.powerOnHours)}, включений {selectedDisk.powerCycleCount || "—"}
@@ -1879,6 +1905,7 @@ export default function App() {
                     />
                   </label>
                   <h4 style={{ margin: "12px 0 8px" }}>Расписание</h4>
+                  <p className="hint">Время задаётся в локальном часовом поясе Windows на этом ПК.</p>
                   <label className="check">
                     <input
                       type="checkbox"
@@ -2219,6 +2246,7 @@ export default function App() {
                 </label>
 
                 <h3>Расписание</h3>
+                <p className="hint">Время задаётся в локальном часовом поясе Windows на этом ПК.</p>
                 <label className="check">
                   <input type="checkbox" checked={useAdvancedCron} onChange={(e) => setUseAdvancedCron(e.target.checked)} />
                   Расширенный режим (cron Quartz)
@@ -2624,6 +2652,49 @@ export default function App() {
               </>
             )}
             </p>
+            </div>
+          </details>
+
+          <details className="settings-collapsible" open>
+            <summary className="settings-collapsible-summary">Melezh / OpenIntegrations</summary>
+            <div className="settings-collapsible-body">
+              <p className="hint">
+                HTTP-шлюз для интеграций OpenIntegrations (Telegram, HTTP, БД и др.). Сбор телеметрии AriaSignature для 1С
+                выполняется напрямую через API на порту {settings.apiPort}, без Melezh.
+              </p>
+              <p>
+                <strong>Служба:</strong>{" "}
+                {settings.melezhServiceStatus === "Running" ? (
+                  <span className="pill ok">запущена</span>
+                ) : settings.melezhServiceStatus ? (
+                  <span className="pill warn">{settings.melezhServiceStatus}</span>
+                ) : (
+                  <span className="muted">—</span>
+                )}
+                {settings.melezhRunning ? (
+                  <>
+                    {" "}
+                    · <span className="pill ok">Web UI доступен</span>
+                  </>
+                ) : (
+                  <>
+                    {" "}
+                    · <span className="pill bad">Web UI недоступен</span>
+                  </>
+                )}
+              </p>
+              <p className="hint">
+                Порт: <span className="mono">{settings.melezhPort}</span> · служба{" "}
+                <span className="mono">{settings.melezhServiceName}</span>
+              </p>
+              <div className="row">
+                <a href={settings.melezhUiUrl} target="_blank" rel="noreferrer">
+                  Открыть Web UI Melezh
+                </a>
+                <button type="button" className="secondary" onClick={() => void refreshSettings()}>
+                  Обновить статус
+                </button>
+              </div>
             </div>
           </details>
 

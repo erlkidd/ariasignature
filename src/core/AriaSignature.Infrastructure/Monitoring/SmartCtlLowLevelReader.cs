@@ -294,16 +294,10 @@ public sealed class SmartCtlLowLevelReader
                     case 198:
                         snap.UncorrectableErrors = (int)Math.Clamp(raw, 0, int.MaxValue);
                         break;
+                    case 177:
                     case 231:
                     case 233:
-                        if (raw is > 0 and <= 100)
-                        {
-                            var normalized = NormalizeLifePercent((int)raw, attrName);
-                            snap.SsdLifeRemainingPercent = snap.SsdLifeRemainingPercent is int prev
-                                ? Math.Min(prev, normalized)
-                                : normalized;
-                        }
-
+                        TryApplySsdLifeFromAtaAttribute(snap, row, raw, attrName);
                         break;
                 }
             }
@@ -500,6 +494,44 @@ public sealed class SmartCtlLowLevelReader
             JsonValueKind.String when int.TryParse(p.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) => i,
             _ => null
         };
+    }
+
+    private static void TryApplySsdLifeFromAtaAttribute(Snapshot snap, JsonElement row, long raw, string attrName)
+    {
+        int? candidate = null;
+        var normalizedValue = GetInt(row, "value");
+        if (normalizedValue is >= 0 and <= 100)
+        {
+            candidate = NormalizeLifePercent(normalizedValue.Value, attrName);
+        }
+        else if (raw is >= 0 and <= 100)
+        {
+            candidate = NormalizeLifePercent((int)raw, attrName);
+        }
+        else if (raw > 0)
+        {
+            var lowByte = (int)(raw & 0xFF);
+            if (lowByte is >= 0 and <= 100)
+            {
+                candidate = NormalizeLifePercent(lowByte, attrName);
+            }
+
+            var highByte = (int)((raw >> 16) & 0xFF);
+            if (highByte is >= 0 and <= 100)
+            {
+                var fromHigh = NormalizeLifePercent(highByte, attrName);
+                candidate = candidate is int prev ? Math.Min(prev, fromHigh) : fromHigh;
+            }
+        }
+
+        if (candidate is not int life)
+        {
+            return;
+        }
+
+        snap.SsdLifeRemainingPercent = snap.SsdLifeRemainingPercent is int existing
+            ? Math.Min(existing, life)
+            : life;
     }
 
     private static int NormalizeLifePercent(int rawPercent, string attrName)

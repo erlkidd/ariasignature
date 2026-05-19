@@ -1,0 +1,31 @@
+# API Groups Overview
+
+## RU
+
+### Основные группы
+
+- Messaging/CRM: Telegram, VK, VKTeams, Viber, Bitrix24, GreenAPI, GreenMax
+- Productivity: Google Calendar/Drive/Sheets, Yandex Disk/Metrika, Notion, Airtable
+- Content/Collab: Slack, Dropbox, Neocities
+- Logistics: CDEK
+
+### Рекомендуемый подход
+
+1. Начинай с раздела `Instructions/<Service>`.
+2. Отдельно проработай авторизацию.
+3. Проверь 1-2 read-операции до write-операций.
+
+## EN
+
+### Core groups
+
+- Messaging/CRM: Telegram, VK, VKTeams, Viber, Bitrix24, GreenAPI, GreenMax
+- Productivity: Google Calendar/Drive/Sheets, Yandex Disk/Metrika, Notion, Airtable
+- Content/Collab: Slack, Dropbox, Neocities
+- Logistics: CDEK
+
+### Recommended flow
+
+1. Start from `Instructions/<Service>`.
+2. Isolate auth setup first.
+3. Validate read operations before write operations.

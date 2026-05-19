@@ -100,7 +100,7 @@ function Stop-RepoLockedProcess {
     }
 }
 
-Write-Step -Index 1 -Total 9 -Name "build-web-ui"
+Write-Step -Index 1 -Total 11 -Name "build-web-ui"
 Push-Location .\src\web
 npm ci
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "[release-gate][step-fail] operation=""npm-ci"" exit_code=$LASTEXITCODE" }
@@ -108,15 +108,15 @@ npm run build
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "[release-gate][step-fail] operation=""npm-build"" exit_code=$LASTEXITCODE" }
 Pop-Location
 
-Write-Step -Index 2 -Total 9 -Name "build-solution"
+Write-Step -Index 2 -Total 11 -Name "build-solution"
 dotnet build .\AriaSignature.slnx -c $Configuration
 Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-build"
 
-Write-Step -Index 3 -Total 9 -Name "run-tests"
+Write-Step -Index 3 -Total 11 -Name "run-tests"
 dotnet test .\AriaSignature.slnx -c $Configuration
 Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-test"
 
-Write-Step -Index 4 -Total 9 -Name "publish-ui"
+Write-Step -Index 4 -Total 11 -Name "publish-ui"
 Stop-RepoLockedProcess -ProcessName "AriaSignature.UI.exe" -LockedRoot (Join-Path (Get-Location) "publish\ui")
 Remove-Item -Path .\publish\ui -Recurse -Force -ErrorAction SilentlyContinue
 dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c $Configuration -r $RuntimeIdentifier --self-contained true -o .\publish\ui
@@ -144,7 +144,7 @@ $bootstrapHostPolicy = ".\publish\ui\bootstrap\hostpolicy.dll"
 if (-not (Test-Path $bootstrapHostFxr)) { throw "[release-gate][step-fail] operation=""verify-bootstrap-self-contained"" reason=""hostfxr-missing""" }
 if (-not (Test-Path $bootstrapHostPolicy)) { throw "[release-gate][step-fail] operation=""verify-bootstrap-self-contained"" reason=""hostpolicy-missing""" }
 
-Write-Step -Index 5 -Total 9 -Name "publish-service"
+Write-Step -Index 5 -Total 11 -Name "publish-service"
 Stop-RepoLockedProcess -ProcessName "AriaSignature.Service.exe" -LockedRoot (Join-Path (Get-Location) "publish\service")
 Stop-RepoLockedProcess -ProcessName "AriaSignature.Api.exe" -LockedRoot (Join-Path (Get-Location) "publish\service")
 Remove-Item -Path .\publish\service -Recurse -Force -ErrorAction SilentlyContinue
@@ -171,7 +171,15 @@ if ($depsRaw -notmatch '"Microsoft\.Extensions\.Hosting\.WindowsServices"\s*:\s*
     throw "[release-gate][step-fail] operation=""verify-service-runtime-target"" reason=""windowsservices-version-not-net8-compatible"""
 }
 
-Write-Step -Index 6 -Total 9 -Name "prepare-webview2"
+Write-Step -Index 6 -Total 11 -Name "publish-melezh-host"
+Stop-RepoLockedProcess -ProcessName "AriaSignature.MelezhHost.exe" -LockedRoot (Join-Path (Get-Location) "publish\melezh-host")
+Remove-Item -Path .\publish\melezh-host -Recurse -Force -ErrorAction SilentlyContinue
+dotnet publish .\src\service\AriaSignature.MelezhHost\AriaSignature.MelezhHost.csproj -c $Configuration -r $RuntimeIdentifier --self-contained true -o .\publish\melezh-host
+Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-publish-melezh-host"
+$melezhHostExe = ".\publish\melezh-host\AriaSignature.MelezhHost.exe"
+if (-not (Test-Path $melezhHostExe)) { throw "[release-gate][step-fail] operation=""verify-publish-melezh-host"" reason=""melezh-host-exe-missing""" }
+
+Write-Step -Index 7 -Total 11 -Name "prepare-webview2"
 $webView2Dir = ".\installer\webview2"
 $webView2Exe = Join-Path $webView2Dir "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
 $webView2OfflineUrl = "https://go.microsoft.com/fwlink/?linkid=2124703"
@@ -195,7 +203,7 @@ if ($webView2Signature.SignerCertificate.Subject -notmatch "Microsoft") {
     throw "[release-gate][step-fail] operation=""prepare-webview2"" reason=""webview2-signer-unexpected"" subject=""$($webView2Signature.SignerCertificate.Subject)"""
 }
 
-Write-Step -Index 7 -Total 9 -Name "prepare-smartctl"
+Write-Step -Index 8 -Total 11 -Name "prepare-smartctl"
 $smartCtlDir = ".\installer\smartctl"
 $smartCtlExe = Join-Path $smartCtlDir "smartctl.exe"
 $driveDbPath = Join-Path $smartCtlDir "drivedb.h"
@@ -255,6 +263,15 @@ if ((Get-Item $driveDbPath).Length -le 0) {
     throw "drivedb.h is empty after prepare step."
 }
 
+Write-Step -Index 9 -Total 11 -Name "prepare-melezh"
+powershell -ExecutionPolicy Bypass -File ".\scripts\prepare-melezh.ps1"
+if ($LASTEXITCODE -eq 2) {
+    Write-Host "[release-gate][check] prepare-melezh reported missing melezh.exe; installer build may be degraded until bundle is provided"
+}
+elseif ($LASTEXITCODE -ne 0) {
+    Assert-ExitCode -Code $LASTEXITCODE -Operation "prepare-melezh"
+}
+
 Write-Host "[release-gate][check] validating host dependencies"
 $requiredCommands = @("powershell.exe", "sc.exe", "taskkill.exe")
 foreach ($cmd in $requiredCommands) {
@@ -270,10 +287,10 @@ $probeLog = Join-Path $logsRoot "release-gate-write-test.log"
 "ok" | Out-File -FilePath $probeLog -Encoding utf8 -Force
 Remove-Item -Path $probeLog -Force -ErrorAction SilentlyContinue
 
-Write-Step -Index 8 -Total 9 -Name "installed-service-smoke"
+Write-Step -Index 10 -Total 11 -Name "installed-service-smoke"
 Invoke-InstalledServiceSmokeIfPresent -ServiceName "AriaSignatureService" -ApiPort 5160 -FailOnError:$RequireInstalledServiceSmoke
 
-Write-Step -Index 9 -Total 9 -Name "build-installer"
+Write-Step -Index 11 -Total 11 -Name "build-installer"
 Stop-RepoLockedProcess -ProcessName "AriaSignature-Setup.exe" -LockedRoot (Join-Path (Get-Location) "artifacts\installer")
 $isccPath = Get-Command iscc -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue
 if (-not $isccPath) {

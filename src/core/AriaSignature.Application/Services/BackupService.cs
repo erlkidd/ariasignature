@@ -98,28 +98,18 @@ public sealed class BackupService : IBackupService
     public async Task<IReadOnlyCollection<BackupLog>> RunDueJobsAsync(DateTimeOffset nowUtc, CancellationToken cancellationToken)
     {
         var jobs = await _repository.GetJobsAsync(cancellationToken);
-        var minuteWindowStart = new DateTimeOffset(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, nowUtc.Minute, 0, TimeSpan.Zero);
+        var scheduleContext = BackupScheduleEvaluator.CreateContext(nowUtc);
         var dueIds = new List<Guid>();
 
         foreach (var job in jobs.Where(j => j.IsEnabled))
         {
-            if (string.IsNullOrWhiteSpace(job.ScheduleCron) || !CronExpression.IsValidExpression(job.ScheduleCron))
-            {
-                continue;
-            }
-
-            var cron = new CronExpression(job.ScheduleCron)
-            {
-                TimeZone = TimeZoneInfo.Utc
-            };
-
-            if (!cron.IsSatisfiedBy(nowUtc.UtcDateTime))
+            if (!BackupScheduleEvaluator.IsCronDue(job.ScheduleCron, scheduleContext.LocalMinuteStart))
             {
                 continue;
             }
 
             var jobLogs = await _repository.GetLogsByJobAsync(job.Id, cancellationToken);
-            if (jobLogs.Any(log => log.StartTimeUtc >= minuteWindowStart))
+            if (jobLogs.Any(log => log.StartTimeUtc >= scheduleContext.MinuteWindowStartUtc))
             {
                 continue;
             }

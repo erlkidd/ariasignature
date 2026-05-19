@@ -1,6 +1,6 @@
 # AriaSignature — регламент release-gate
 
-Версия документа: 1.0.1.
+Версия документа: 1.1.0.
 
 ## 1. Цель
 
@@ -21,9 +21,10 @@ Pipeline выполняет:
 1. `npm ci` + `npm run build` (`src/web`)
 2. `dotnet build .\AriaSignature.slnx -c Release`
 3. `dotnet test .\AriaSignature.slnx -c Release`
-4. `dotnet publish` UI и Service в `win-x64 --self-contained true`; bootstrap публикуется отдельным шагом в `publish/bootstrap` и затем копируется в `publish/ui` (единственный разрешённый источник bootstrap для installer)
-5. подготовку runtime-зависимостей (`WebView2`, `smartctl`, `drivedb.h`) с проверкой целостности и host-dependency-check (`powershell/sc/taskkill`, запись в `%ProgramData%\AriaSignature\logs\`)
+4. `dotnet publish` UI, Service и **MelezhHost** в `win-x64 --self-contained true`; bootstrap публикуется отдельным шагом в `publish/bootstrap` и затем копируется в `publish/ui` (единственный разрешённый источник bootstrap для installer)
+5. подготовку runtime-зависимостей (`WebView2`, `smartctl`, `drivedb.h`, **Melezh/oint** bundle) с проверкой целостности и host-dependency-check (`powershell/sc/taskkill`, запись в `%ProgramData%\AriaSignature\logs\`)
    - `WebView2` принимается только как standalone offline installer: проверяется минимальный размер файла и валидная Microsoft-подпись (bootstrap online-пакет блокирует gate)
+   - `prepare-melezh.ps1`: при отсутствии `melezh.exe` gate предупреждает (degraded installer), см. `installer/melezh/README.md`
 6. regression smoke для уже установленной службы (`scripts/service-startup-smoke.ps1`) — если служба присутствует на build-host
 7. `ISCC` сборку `installer/inno/AriaSignature.iss`
 
@@ -41,8 +42,9 @@ Pipeline выполняет:
 
 После установки инсталлятора:
 
-- служба `AriaSignatureService` зарегистрирована и в состоянии `Running`;
-- UI запускается без ошибок и доступен в трее;
+- службы `AriaSignatureService` и `AriaSignatureMelezhService` зарегистрированы и в состоянии `Running` (Melezh — при наличии bundle);
+- UI запускается без ошибок и доступен в трее (после reboot — автозапуск Startup + `AriaSignatureTrayLogon`);
+- `http://127.0.0.1:7788/ui` открывается при работающем Melezh;
 - API отвечает на `GET /api/v1/status` (локально и, при сценарии с VPN, опционально с другой машины по `http://<IP_агента>:5160/api/v1/status`);
 - в `{app}\service\smartctl` присутствуют `smartctl.exe` и `drivedb.h`, размер файлов > 0;
 - `POST /api/v1/disks/refresh` возвращает срез;

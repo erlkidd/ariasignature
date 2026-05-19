@@ -6,47 +6,29 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-05-19
+
 ### Added
 
-- Утилита **`AriaSignature.ServiceBootstrap`** и библиотека **`AriaSignature.WindowsServiceSetup`**: общая регистрация/запуск службы через `sc`, классификация отказов (в т.ч. **ACCESS_DENIED**), лог bootstrap в `%ProgramData%\AriaSignature\logs\`; UI один раз запускает helper с **UAC** при отказе прав SCM.
-- Документация `docs/AI_CONTEXT.md` для AI-first onboarding: карта компонентов, инварианты, startup sequence, диагностика и тестовые ориентиры.
-- Runtime observability baseline: счётчики latencies/success-ratio/retries в `AriaSignature.Application.Runtime.RuntimeObservability` и API endpoints `GET /api/v1/health/live`, `GET /api/v1/health/ready`, `GET /api/v1/health/degradation`, `GET /api/v1/observability/runtime`.
-- Операционный runbook `docs/OPERATIONS_RUNBOOK.md`: triage/recovery, SLI/SLO baseline, alarm policy и post-incident loop.
+- **Melezh / OpenIntegrations**: служба `AriaSignatureMelezhService`, host `AriaSignature.MelezhHost`, bundle `installer/melezh`, шаг `prepare-melezh`, firewall TCP 7788, блок **Настройки → Melezh / OpenIntegrations** со ссылкой на Web UI.
+- Документ `docs/MELEZH.md`: порты, служба, связка 1С ↔ AriaSignature ↔ Melezh.
+- Unit-тесты `BackupScheduleEvaluatorTests` для локального Quartz-cron архиваций.
 
 ### Changed
 
-- Release gate/publish: UI и Service публикуются как `win-x64` **self-contained**; после publish обязательно проверяется наличие `AriaSignature.UI.exe`, `AriaSignature.Service.exe`, `AriaSignature.ServiceBootstrap.exe`.
-- Релизные заметки унифицированы: `docs/CHANGELOG.md` остаётся каноничным источником истории; `docs/DEVELOPMENT_NOTES.md` превращён в короткий указатель без дублирования.
-- UI (`src/web/src/App.tsx`): стартовая вкладка по умолчанию сменена на `О системе`; отображение наработки диска переведено на формат в днях (с остатком часов).
-- Service startup (`LocalApiHostedService`): bind URL для режима `all` упрощён до IPv4 wildcard, добавлены более подробные диагностические логи по режиму bind/URL/root path.
-- Installer (`AriaSignature.iss`): после `sc start` добавлен локальный health probe `GET /api/v1/status` с уведомлением при нездоровом старте; при неуспешном старте службы в лог установщика пишется полный вывод **`sc query`** и **`sc qc`** (сброс в временный файл через `cmd.exe`).
-- `release-gate.ps1`: шаги и ошибки логируются в стабильном machine-friendly формате (`[release-gate][step-*]`).
-- Installer и UI recovery: деградационные состояния стандартизованы (`install-health:*`, `reliability-state=degraded`, `setup-category=*`) для предсказуемой классификации startup отказов.
-- Release gate: добавлен условный regression smoke для уже установленной службы (`service-startup-smoke.ps1`) и проверка observability endpoints/correlation header.
-- UI single-instance: повторный запуск по ярлыку теперь тихо активирует существующее окно без информационных popup.
-- UI tray menu: добавлены действия управления службой `Перезапустить службу` и `Остановить службу` с auto-UAC elevation.
+- Версия продукта **1.1.0**.
+- Release gate: publish `AriaSignature.MelezhHost`, шаг `prepare-melezh`, 11 шагов вместо 9.
+- `GET /api/v1/settings`: поля `melezhPort`, `melezhUiUrl`, `melezhServiceStatus`, `melezhRunning`.
 
 ### Fixed
 
-- Bootstrap rescue: при `bootstrap exit=1` setup теперь подхватывает structured detail из `%ProgramData%\AriaSignature\logs\bootstrap-last-result.txt` и показывает конкретную причину; bootstrap пишет stage/category/message в stderr и marker-файл.
-- Bootstrap/API verification: критерий готовности после восстановления упрощён до успешного `/api/v1/status` (без обязательного `GET /`), чтобы убрать ложные fail-hard при рабочей службе.
-- Installer/bootstrap packaging: источник `AriaSignature.ServiceBootstrap` для installer переключён на dedicated self-contained publish (`publish/bootstrap -> publish/ui`), чтобы исключить host/runtime сбой `-2147450726` на чистых Win10/11.
-- Installer (`AriaSignature.iss`): добавлены preflight-проверки обязательных файлов/инструментов, auto-repair через `AriaSignature.ServiceBootstrap` при неуспешном старте службы/API и fail-hard при недостижимом `service running + /api/v1/status`.
-- Win11 startup (1053): `WindowsServiceInstaller` и UI (`WindowsServiceEnsure`/`MainWindow`) получили расширенную post-1053 верификацию (service status timeline + API probe) перед финальным отказом; fallback теперь показывает stage (`scm-timeout-1053` / `post-1053-check`) и более конкретную диагностику.
-- UI (`MainWindow`): стартовая панель не показывает преждевременное «локальный сервис не отвечает» при **Stopped**, пока не завершился фоновый **TryStartOrFallback** (или не истёк верхний предел ~210 с); в цикле восстановления при **Stopped** периодически повторяется попытка запуска службы с ограничением частоты; на fallback-странице добавлены подсказки по журналам, правам администратора и **services.msc**.
-- Служба Windows: **`LocalApiHostedService`** переведён на **`BackgroundService`**, чтобы подъём Kestrel не блокировал переход службы в Running у SCM и не провоцировал **ошибку 1053** на медленном холодном старте (Win11 / антивирус).
-- UI (`WindowsServiceEnsure`, `MainWindow`): при **1053** от SCM дополнительное ожидание **Running** до 120 с; вывод **`sc.exe`** читается в OEM-кодировке консоли (читаемые русские сообщения).
-- UI (`MainWindow`): меньше ложных жёстких ошибок при старте — временные сбои WebView2 к локальному API обрабатываются через восстановление; `EnsureDefaultAutostartApplied` после инициализации WebView, даже если SPA не прислала `appReady`; часть обновлений UI на `DispatcherPriority.Background`.
-- Телеметрия дисков: расширен парсинг smartctl ATA-атрибутов наработки (`ID 9`, `ID 12`), улучшена нормализация ресурса SSD (`ID 231/233`), снижена вероятность ложного определения носителя как SSD.
-- API: на каждый ответ добавляется `X-Correlation-Id` (эхо клиентского или сгенерированного), что устраняет «немые» цепочки запросов в логах при triage инцидентов.
-- Installer pre-install cleanup: `sc stop` больше не вызывается, если служба не находится в `RUNNING/START_PENDING`; uninstall path фиксирует post-condition удаления службы отдельным marker.
+- **Расписание архиваций**: cron оценивается в **локальном** времени Windows с усечением до начала минуты (исправлены сдвиг UTC и пропуск из-за секунд poll-loop).
+- **Ресурс SSD**: парсинг smartctl `value` при большом `raw`, Wear=0 → 100%, fallback отображения в UI.
+- **Автозапуск UI**: установщик снова регистрирует ярлык Startup (`--tray`), HKCU Run и задачу `AriaSignatureTrayLogon` (fallback 45 с).
 
 ### Docs
 
-- `AI_CONTEXT.md`, `DEVELOPMENT_NOTES.md`: цепочка установщик → SCM → UI и **UAC** через **ServiceBootstrap**; матрица ручных проверок службы на Win10/11.
-- `DEVELOPER_GUIDE.md`: политика Git — выкат в `production` с рабочих веток; ветка `test/agent-work-legacy-pre-opt` архивная (не сливается в прод, не удаляется).
-- В документации и пользовательских формулировках API везде используется термин **токен** (удалённого API) вместо «секрет».
-- `RELEASE_GATE.md` и `INCIDENT_STARTUP_W10_W11.md`: добавлены observability acceptance criteria, post-incident protection loop и ссылки на operations runbook.
+- Синхронизация версии **1.1.0** во всех документах проекта.
 
 ## [1.0.1] - 2026-05-05
 

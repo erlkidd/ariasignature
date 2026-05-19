@@ -21,10 +21,15 @@ public sealed class BackupSchedulerHostedService : BackgroundService
         {
             try
             {
-                var dueRuns = await _backupService.RunDueJobsAsync(DateTimeOffset.UtcNow, stoppingToken);
+                var nowUtc = DateTimeOffset.UtcNow;
+                var dueRuns = await _backupService.RunDueJobsAsync(nowUtc, stoppingToken);
                 if (dueRuns.Count > 0)
                 {
-                    _logger.LogInformation("Executed {Count} scheduled backup job(s)", dueRuns.Count);
+                    _logger.LogInformation(
+                        "Executed {Count} scheduled backup job(s) at UTC {NowUtc:o} (local {LocalNow:o})",
+                        dueRuns.Count,
+                        nowUtc,
+                        TimeZoneInfo.ConvertTime(nowUtc, TimeZoneInfo.Local));
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

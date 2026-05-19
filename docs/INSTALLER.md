@@ -1,6 +1,6 @@
 # AriaSignature — руководство по installer
 
-Версия документа: 1.0.1.
+Версия документа: 1.1.0.
 
 ## 1. Назначение
 
@@ -26,6 +26,7 @@
 ```powershell
 dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c Release -r win-x64 --self-contained true -o .\publish\ui
 dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c Release -r win-x64 --self-contained true -o .\publish\service
+dotnet publish .\src\service\AriaSignature.MelezhHost\AriaSignature.MelezhHost.csproj -c Release -r win-x64 --self-contained true -o .\publish\melezh-host
 ```
 
 ## 4. Сборка installer

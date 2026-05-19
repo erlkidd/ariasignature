@@ -1,6 +1,6 @@
 # AriaSignature — спецификация API (v1)
 
-Версия документа: 1.0.1.
+Версия документа: 1.1.0.
 
 ## 1. Общие параметры
 
@@ -72,6 +72,7 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
     - `outboundSyncEnabled` (`boolean`);
     - `outboundSyncUrl` (`string`, полный URL коллектора `http`/`https`);
     - `outboundSyncCron` (Quartz cron для исходящего `POST`).
+    - `melezhEnabled`, `melezhPort`, `melezhUiUrl`, `melezhServiceName`, `melezhServiceStatus`, `melezhRunning` (диагностика службы Melezh; см. `docs/MELEZH.md`).
   - Поле `note`: смена **порта** и **apiBind** вступает в силу после перезапуска службы `AriaSignatureService`; токен удалённого API и cron-поля применяются сразу после `PUT /settings`.
 
 - `PUT /settings`
