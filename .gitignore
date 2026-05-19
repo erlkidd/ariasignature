@@ -78,3 +78,7 @@ skills/
 installer/webview2/*.exe
 installer/smartctl/smartctl.exe
 installer/smartctl/drivedb.h
+installer/melezh/bundle/
+installer/melezh/oint_*_installer*.exe
+installer/melezh/_staging*/
+installer/melezh/_7z_test/

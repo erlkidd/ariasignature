@@ -48,7 +48,7 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 Source: "..\..\publish\ui\*"; DestDir: "{app}\ui"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\..\publish\melezh-host\*"; DestDir: "{app}\melezh-host"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "..\melezh\*"; DestDir: "{app}\melezh"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "..\melezh\bundle\*"; DestDir: "{app}\melezh"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\smartctl\*"; DestDir: "{app}\service\smartctl"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\webview2\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall ignoreversion
 
@@ -457,7 +457,7 @@ begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyServiceExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM AriaSignature.Api.exe', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyAppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM melezh.exe', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM oscript.exe', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyMelezhHostExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
 end;
 
@@ -778,6 +778,7 @@ var
   UiExe: string;
   TaskRun: string;
   DomainUser: string;
+  TaskParams: string;
   ExitCode: Integer;
 begin
   SchTasks := SchTasksExePath;
@@ -791,10 +792,8 @@ begin
   DeleteTrayLogonTaskBestEffort();
   TaskRun := AddQuotes(UiExe) + ' --tray';
   DomainUser := ExpandConstant('{userdomain}') + '\' + ExpandConstant('{username}');
-  if Exec(SchTasks,
-    Format('/Create /TN %s /TR %s /SC ONLOGON /RL LIMITED /DELAY 0000:45 /F /RU %s /IT',
-      [TrayTaskName, TaskRun, DomainUser]),
-    '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+  TaskParams := Format('/Create /TN %s /TR %s /SC ONLOGON /RL LIMITED /DELAY 0000:45 /F /RU %s /IT', [TrayTaskName, TaskRun, DomainUser]);
+  if Exec(SchTasks, TaskParams, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
   begin
     if ExitCode <> 0 then
       Log('Tray logon task create failed with code ' + IntToStr(ExitCode))
@@ -819,7 +818,7 @@ begin
     ExecSc(Format('stop %s', [MelezhServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
     ExecSc(Format('delete %s', [MelezhServiceName]), 0, SC_ACCEPTABLE_NOT_FOUND);
   end;
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM melezh.exe', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM oscript.exe', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyMelezhHostExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
 end;
 

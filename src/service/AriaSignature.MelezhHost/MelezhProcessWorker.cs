@@ -26,7 +26,7 @@ public sealed class MelezhProcessWorker : BackgroundService
         {
             if (!File.Exists(_options.MelezhExePath))
             {
-                _logger.LogError("melezh.exe not found at {Path}", _options.MelezhExePath);
+                _logger.LogError("Melezh launcher not found at {Path}", _options.MelezhExePath);
                 await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
                 continue;
             }
@@ -90,10 +90,11 @@ public sealed class MelezhProcessWorker : BackgroundService
         _logger.LogInformation("Starting melezh: {Exe} {Args}", _options.MelezhExePath, args);
         try
         {
+            var (fileName, arguments) = ResolveLauncher(_options.MelezhExePath, args);
             var startInfo = new ProcessStartInfo
             {
-                FileName = _options.MelezhExePath,
-                Arguments = args,
+                FileName = fileName,
+                Arguments = arguments,
                 WorkingDirectory = Path.GetDirectoryName(_options.MelezhExePath) ?? AppContext.BaseDirectory,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -137,12 +138,13 @@ public sealed class MelezhProcessWorker : BackgroundService
 
     private async Task<int> RunMelezhCliAsync(string arguments, CancellationToken cancellationToken)
     {
+        var (fileName, mergedArgs) = ResolveLauncher(_options.MelezhExePath, arguments);
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = _options.MelezhExePath,
-                Arguments = arguments,
+                FileName = fileName,
+                Arguments = mergedArgs,
                 WorkingDirectory = Path.GetDirectoryName(_options.MelezhExePath) ?? AppContext.BaseDirectory,
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -205,4 +207,15 @@ public sealed class MelezhProcessWorker : BackgroundService
         value.Contains('"') || value.Contains(' ')
             ? $"\"{value.Replace("\"", "\\\"")}\""
             : value;
+
+    private static (string FileName, string Arguments) ResolveLauncher(string launcherPath, string cliArguments)
+    {
+        if (launcherPath.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) ||
+            launcherPath.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase))
+        {
+            return ("cmd.exe", $"/c \"\"{launcherPath}\"\" {cliArguments}");
+        }
+
+        return (launcherPath, cliArguments);
+    }
 }

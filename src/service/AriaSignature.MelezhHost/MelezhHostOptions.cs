@@ -16,7 +16,9 @@ public sealed class MelezhHostOptions
         var baseDir = AppContext.BaseDirectory.TrimEnd('\\', '/');
         var installRoot = Path.GetFullPath(Path.Combine(baseDir, ".."));
         var melezhDir = Path.Combine(installRoot, "melezh");
+        var melezhBat = Path.Combine(melezhDir, "bin", "melezh.bat");
         var melezhExe = Path.Combine(melezhDir, "melezh.exe");
+        var melezhLauncher = File.Exists(melezhBat) ? melezhBat : melezhExe;
         var projectDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "AriaSignature",
@@ -32,7 +34,7 @@ public sealed class MelezhHostOptions
 
         return new MelezhHostOptions
         {
-            MelezhExePath = melezhExe,
+            MelezhExePath = melezhLauncher,
             ProjectPath = Path.Combine(projectDir, "AriaSignature.melezh"),
             Port = port
         };

@@ -21,7 +21,7 @@
 
 При установке AriaSignature:
 
-1. Копируются бинарники Melezh в `{app}\melezh\`.
+1. Копируется runtime **OInt** (включая Melezh) в `{app}\melezh\` из `installer/melezh/bundle/` (см. `oint_*_installer_ru.exe` + `scripts/prepare-melezh.ps1`).
 2. Регистрируется служба **`AriaSignatureMelezhService`** (`start= auto`).
 3. При первом старте создаётся проект `%ProgramData%\AriaSignature\melezh\AriaSignature.melezh`.
 4. Открывается firewall для TCP **7788**.
@@ -49,7 +49,7 @@
 |---------|----------|
 | Web UI недоступен | `services.msc` → `AriaSignatureMelezhService` → перезапуск |
 | Служба не стартует | `%ProgramData%\AriaSignature\logs\melezh-host-*.log` |
-| Нет melezh.exe | Переустановить сборку с полным installer bundle |
+| Нет `bin\melezh.bat` | Переустановить сборку с полным OInt bundle (`prepare-melezh`) |
 
 ## Дополнительная документация
 

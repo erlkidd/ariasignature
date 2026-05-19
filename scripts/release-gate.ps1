@@ -265,11 +265,14 @@ if ((Get-Item $driveDbPath).Length -le 0) {
 
 Write-Step -Index 9 -Total 11 -Name "prepare-melezh"
 powershell -ExecutionPolicy Bypass -File ".\scripts\prepare-melezh.ps1"
-if ($LASTEXITCODE -eq 2) {
-    Write-Host "[release-gate][check] prepare-melezh reported missing melezh.exe; installer build may be degraded until bundle is provided"
+Assert-ExitCode -Code $LASTEXITCODE -Operation "prepare-melezh"
+$melezhBat = ".\installer\melezh\bundle\bin\melezh.bat"
+$oscriptExe = ".\installer\melezh\bundle\lib\oint\bin\oscript.exe"
+if (-not (Test-Path $melezhBat)) {
+    throw "[release-gate][step-fail] operation=""prepare-melezh"" reason=""melezh-bat-missing"""
 }
-elseif ($LASTEXITCODE -ne 0) {
-    Assert-ExitCode -Code $LASTEXITCODE -Operation "prepare-melezh"
+if (-not (Test-Path $oscriptExe)) {
+    throw "[release-gate][step-fail] operation=""prepare-melezh"" reason=""oscript-exe-missing"""
 }
 
 Write-Host "[release-gate][check] validating host dependencies"
