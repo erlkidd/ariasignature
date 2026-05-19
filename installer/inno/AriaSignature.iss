@@ -30,7 +30,7 @@ ArchitecturesAllowed=x64compatible
 UninstallDisplayIcon={app}\ui\{#MyAppExeName}
 SetupIconFile=..\..\assets\branding\icon.ico
 CloseApplications=yes
-CloseApplicationsFilter=AriaSignature.UI.exe,AriaSignature.Service.exe,AriaSignature.Api.exe
+CloseApplicationsFilter=AriaSignature.UI.exe,AriaSignature.Service.exe,AriaSignature.Api.exe,AriaSignature.MelezhHost.exe
 RestartApplications=no
 
 [Languages]
@@ -46,9 +46,9 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 
 [Files]
 Source: "..\..\publish\ui\*"; DestDir: "{app}\ui"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "..\..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "..\..\publish\melezh-host\*"; DestDir: "{app}\melezh-host"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "..\melezh\bundle\*"; DestDir: "{app}\melezh"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "..\..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs createallsubdirs ignoreversion restartreplace
+Source: "..\..\publish\melezh-host\*"; DestDir: "{app}\melezh-host"; Flags: recursesubdirs createallsubdirs ignoreversion restartreplace
+Source: "..\melezh\bundle\*"; DestDir: "{app}\melezh"; Flags: recursesubdirs createallsubdirs ignoreversion restartreplace
 Source: "..\smartctl\*"; DestDir: "{app}\service\smartctl"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\webview2\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall ignoreversion
 
@@ -201,7 +201,7 @@ begin
   Result := True;
 end;
 
-function WaitServiceAbsent(const TimeoutSeconds: Integer): Boolean;
+function WaitServiceAbsent(const AServiceName: string; const TimeoutSeconds: Integer): Boolean;
 var
   TempFile: string;
   ExitCode: Integer;
@@ -210,16 +210,18 @@ var
   LineUpper: string;
   LineIndex: Integer;
   HasPendingDeleteMarker: Boolean;
+  WaitCaption: string;
 begin
   Result := False;
   TempFile := ExpandConstant('{tmp}\aria-sc-wait-absent.txt');
+  WaitCaption := 'Ожидание освобождения службы ' + AServiceName + '...';
 
   for I := 1 to TimeoutSeconds do
   begin
     DeleteFile(TempFile);
     if not Exec(
          ExpandConstant('{sys}\cmd.exe'),
-         '/c "' + ScExePath + '" query ' + ServiceName + ' > "' + TempFile + '" 2>&1',
+         '/c "' + ScExePath + '" query ' + AServiceName + ' > "' + TempFile + '" 2>&1',
          '',
          SW_HIDE,
          ewWaitUntilTerminated,
@@ -262,7 +264,7 @@ begin
       end;
     end;
 
-    SleepWithWizardUi(1000, 'Ожидание освобождения службы AriaSignature...');
+    SleepWithWizardUi(1000, WaitCaption);
   end;
 end;
 
@@ -434,6 +436,9 @@ end;
 
 function MelezhServiceIsRegistered: Boolean; forward;
 procedure StopAndDeleteMelezhServiceBestEffort(); forward;
+procedure InstallMelezhServiceOrAbort(); forward;
+function ProbeMelezhUiHealth(const Port: Integer): Boolean; forward;
+function VerifyInstalledApiVersionOrAbort(): Boolean; forward;
 
 procedure StopAndDeleteServiceBestEffort();
 begin
@@ -453,12 +458,15 @@ end;
 procedure KillServiceProcessBestEffort();
 var
   ExitCode: Integer;
+  OscriptPath: string;
 begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyMelezhHostExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyServiceExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM AriaSignature.Api.exe', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyAppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM oscript.exe', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyMelezhHostExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  OscriptPath := ExpandConstant('{app}\melezh\lib\oint\bin\oscript.exe');
+  if FileExists(OscriptPath) then
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM oscript.exe', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
 end;
 
 function ProbeLocalApiHealth(const Port: Integer): Boolean;
@@ -476,6 +484,60 @@ begin
     Exit;
   end;
   Result := ExitCode = 0;
+end;
+
+function ProbeMelezhUiHealth(const Port: Integer): Boolean;
+var
+  ExitCode: Integer;
+  Cmd: string;
+begin
+  Cmd := '-NoProfile -ExecutionPolicy Bypass -Command ' +
+    '"try { $r = Invoke-WebRequest -UseBasicParsing -Uri ''http://127.0.0.1:' + IntToStr(Port) + '/ui'' -TimeoutSec 5; if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400) { exit 0 } else { exit 2 } } catch { exit 1 }"';
+  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Cmd, '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  LastProbeExitCode := ExitCode;
+  if not Result then
+  begin
+    Log('Failed to execute Melezh UI health probe via powershell.exe');
+    Exit;
+  end;
+  Result := ExitCode = 0;
+end;
+
+function GetApiReportedVersion(): string;
+var
+  TempFile: string;
+  ExitCode: Integer;
+  Lines: TArrayOfString;
+  Cmd: string;
+begin
+  Result := '';
+  TempFile := ExpandConstant('{tmp}\aria-api-version.txt');
+  DeleteFile(TempFile);
+  Cmd := '-NoProfile -ExecutionPolicy Bypass -Command ' +
+    '"try { (Invoke-RestMethod -Uri ''http://127.0.0.1:5160/api/v1/status'' -TimeoutSec 5).version | Out-File -FilePath ''' +
+    TempFile + ''' -Encoding ascii -NoNewline; exit 0 } catch { exit 1 }"';
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Cmd, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+    Exit;
+  if ExitCode <> 0 then
+    Exit;
+  if LoadStringsFromFile(TempFile, Lines) and (GetArrayLength(Lines) > 0) then
+    Result := Trim(Lines[0]);
+end;
+
+function VerifyInstalledApiVersionOrAbort(): Boolean;
+var
+  ExpectedVersion: string;
+  ActualVersion: string;
+begin
+  ExpectedVersion := '{#MyAppVersion}';
+  ActualVersion := GetApiReportedVersion();
+  Log(Format('API version probe: expected=%s actual=%s', [ExpectedVersion, ActualVersion]));
+  if ActualVersion = '' then
+  begin
+    Result := False;
+    Exit;
+  end;
+  Result := CompareText(ActualVersion, ExpectedVersion) = 0;
 end;
 
 procedure LogScCommandCapture(const ArgsTail: string; const Banner: string);
@@ -593,7 +655,7 @@ begin
     if LastScExitCode = SC_MARKED_FOR_DELETE then
     begin
       Log('Service is marked for delete; waiting for SCM to finalize deletion before next create.');
-      if not WaitServiceAbsent(15) then
+      if not WaitServiceAbsent(ServiceName, 15) then
         Log('WaitServiceAbsent after SC_MARKED_FOR_DELETE timed out; will still retry create.');
       SleepWithWizardUi(2500, 'Ожидание обновления состояния службы в Windows...');
     end
@@ -741,6 +803,19 @@ begin
     end;
   end;
 
+  if not VerifyInstalledApiVersionOrAbort() then
+  begin
+    InstallHealthStatus := 'install-health:fail-hard-version';
+    Log('marker=install-health status=' + InstallHealthStatus + ' stage=api-version');
+    MsgBox(
+      'Файлы службы AriaSignature не обновились до версии {#MyAppVersion} (API сообщает другую версию).'#13#10 +
+      'Закройте все процессы AriaSignature и переустановите от имени администратора.'#13#10 +
+      'Логи: %ProgramData%\AriaSignature\logs\.',
+      mbError,
+      MB_OK);
+    RaiseException('API version mismatch after install; expected {#MyAppVersion}.');
+  end;
+
   InstallHealthStatus := 'install-health:ok';
   Log('marker=install-health status=' + InstallHealthStatus + ' stage=done');
 end;
@@ -750,8 +825,10 @@ begin
   PumpWizardUi('Подготовка к установке...');
   StopAndDeleteServiceBestEffort();
   KillServiceProcessBestEffort();
-  if not WaitServiceAbsent(8) then
-    Log('Service still exists before file copy; installer continues and will retry create later.');
+  if not WaitServiceAbsent(ServiceName, 12) then
+    Log('AriaSignatureService still exists before file copy; installer will retry create later.');
+  if not WaitServiceAbsent(MelezhServiceName, 12) then
+    Log('AriaSignatureMelezhService still exists before file copy; installer will retry create later.');
 end;
 
 function SchTasksExePath: string;
@@ -818,50 +895,133 @@ begin
     ExecSc(Format('stop %s', [MelezhServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
     ExecSc(Format('delete %s', [MelezhServiceName]), 0, SC_ACCEPTABLE_NOT_FOUND);
   end;
-  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM oscript.exe', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyMelezhHostExeName}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  if FileExists(ExpandConstant('{app}\melezh\lib\oint\bin\oscript.exe')) then
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM oscript.exe', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
 end;
 
-procedure InstallMelezhServiceBestEffort();
+procedure InstallMelezhServiceOrAbort();
 var
   BinPath: string;
   CreateParams: string;
   Attempt: Integer;
   Created: Boolean;
   Started: Boolean;
+  Healthy: Boolean;
+  PortAttempt: Integer;
+  MelezhPort: Integer;
 begin
+  PumpWizardUi('Настройка службы Melezh / OpenIntegrations...');
   BinPath := ExpandConstant('{app}\melezh-host\{#MyMelezhHostExeName}');
-  if not FileExists(BinPath) then
-  begin
-    Log('Melezh service skipped: host exe missing at ' + BinPath);
-    Exit;
-  end;
+  AssertFileExistsOrAbort(BinPath, 'Melezh host exe');
+  AssertFileExistsOrAbort(ExpandConstant('{app}\melezh\bin\melezh.bat'), 'melezh.bat');
+  AssertFileExistsOrAbort(ExpandConstant('{app}\melezh\lib\oint\bin\oscript.exe'), 'oscript.exe');
 
   StopAndDeleteMelezhServiceBestEffort();
+  if not WaitServiceAbsent(MelezhServiceName, 12) then
+    Log('Melezh service still pending in SCM before create; continuing with retries.');
+
   CreateParams := 'create ' + MelezhServiceName + ' binPath= ' + AddQuotes(BinPath) + ' start= auto DisplayName= "AriaSignature Melezh" obj= LocalSystem';
   Created := False;
-  for Attempt := 1 to 10 do
+  for Attempt := 1 to 12 do
   begin
+    if IsPostInstallTimedOut('create-melezh-service') then
+      RaiseException('Таймаут регистрации службы Melezh.');
+
+    PumpWizardUi(Format('Регистрация службы Melezh (%d/12)...', [Attempt]));
     if ExecSc(CreateParams, 0, SC_ALREADY_EXISTS) then
     begin
       Created := True;
       Break;
     end;
+
     if LastScExitCode = SC_MARKED_FOR_DELETE then
+    begin
+      if not WaitServiceAbsent(MelezhServiceName, 10) then
+        Log('WaitServiceAbsent(Melezh) after SC_MARKED_FOR_DELETE timed out.');
       SleepWithWizardUi(1500, 'Ожидание удаления предыдущей службы Melezh...');
+    end
+    else
+      SleepWithWizardUi(1500, 'Повторная попытка регистрации службы Melezh...');
   end;
 
   if not Created then
   begin
-    Log('Warning: Melezh service create failed with code ' + IntToStr(LastScExitCode));
-    Exit;
+    InstallHealthStatus := 'install-health:fail-hard-melezh';
+    Log('marker=install-health status=' + InstallHealthStatus + ' stage=create-melezh-service');
+    MsgBox(
+      'Служба AriaSignatureMelezhService не зарегистрирована (sc create код ' + IntToStr(LastScExitCode) + ').'#13#10 +
+      'Проверьте, что установщик собран с bundle OInt (prepare-melezh.ps1) и запущен от администратора.',
+      mbError,
+      MB_OK);
+    RaiseException('Melezh service create failed.');
+  end;
+
+  if not MelezhServiceIsRegistered then
+  begin
+    InstallHealthStatus := 'install-health:fail-hard-melezh';
+    MsgBox('Служба Melezh не появилась в SCM после sc create.', mbError, MB_OK);
+    RaiseException('Melezh service not registered after create.');
   end;
 
   ExecSc(Format('description %s %s', [MelezhServiceName, 'OpenIntegrations Melezh HTTP gateway for AriaSignature']), 0, 0);
   ExecSc(Format('failure %s reset= 86400 actions= restart/60000/restart/60000/restart/60000', [MelezhServiceName]), 0, 0);
-  Started := ExecSc(Format('start %s', [MelezhServiceName]), 0, SC_ACCEPTABLE_ALREADY_RUNNING);
+
+  Started := False;
+  for Attempt := 1 to 10 do
+  begin
+    if IsPostInstallTimedOut('start-melezh-service') then
+      RaiseException('Таймаут запуска службы Melezh.');
+
+    PumpWizardUi(Format('Запуск службы Melezh (%d/10)...', [Attempt]));
+    if ExecSc(Format('start %s', [MelezhServiceName]), 0, SC_ACCEPTABLE_ALREADY_RUNNING) then
+    begin
+      Started := True;
+      Break;
+    end;
+    SleepWithWizardUi(1500, 'Повторный запуск службы Melezh...');
+  end;
+
   if not Started then
-    Log('Warning: Melezh service start failed with code ' + IntToStr(LastScExitCode));
+  begin
+    InstallHealthStatus := 'install-health:fail-hard-melezh';
+    LogScCommandCapture('query ' + MelezhServiceName, 'Melezh sc query after failed start');
+    MsgBox(
+      'Служба AriaSignatureMelezhService не запустилась (sc start код ' + IntToStr(LastScExitCode) + ').'#13#10 +
+      'Проверьте %ProgramData%\AriaSignature\logs\ и наличие {app}\melezh\bin\melezh.bat.',
+      mbError,
+      MB_OK);
+    RaiseException('Melezh service start failed.');
+  end;
+
+  MelezhPort := 7788;
+  Healthy := False;
+  for PortAttempt := 1 to 10 do
+  begin
+    if IsPostInstallTimedOut('melezh-ui-health') then
+      RaiseException('Таймаут проверки Web UI Melezh.');
+
+    PumpWizardUi(Format('Проверка Web UI Melezh (%d/10)...', [PortAttempt]));
+    if ProbeMelezhUiHealth(MelezhPort) then
+    begin
+      Healthy := True;
+      Break;
+    end;
+    SleepWithWizardUi(2000, 'Ожидание готовности Melezh Web UI...');
+  end;
+
+  if not Healthy then
+  begin
+    InstallHealthStatus := 'install-health:fail-hard-melezh';
+    MsgBox(
+      'Melezh запущен, но Web UI не отвечает на http://127.0.0.1:7788/ui.'#13#10 +
+      'Проверьте брандмауэр и логи Melezh в %ProgramData%\AriaSignature\logs\.',
+      mbError,
+      MB_OK);
+    RaiseException('Melezh UI health probe failed.');
+  end;
+
+  Log('marker=install-health stage=melezh-ready status=ok');
 end;
 
 procedure RemoveLegacyCommonStartupShortcutBestEffort();
@@ -881,8 +1041,19 @@ begin
   begin
     StartPostInstallBudget();
     InstallServiceOrAbort();
+    if InstallHealthStatus <> 'install-health:ok' then
+    begin
+      MsgBox(
+        'Служба AriaSignature не прошла полную проверку после установки.'#13#10 +
+        'Статус: ' + InstallHealthStatus + #13#10 +
+        'Установка прервана. Закройте приложение и повторите установку от администратора.',
+        mbError,
+        MB_OK);
+      RaiseException('AriaSignature service install verification failed: ' + InstallHealthStatus);
+    end;
+
+    InstallMelezhServiceOrAbort();
     RegisterTrayLogonTaskBestEffort();
-    InstallMelezhServiceBestEffort();
     RemoveLegacyCommonStartupShortcutBestEffort();
     if Pos('install-health:degraded', InstallHealthStatus) = 1 then
     begin
@@ -921,9 +1092,17 @@ begin
     DeleteTrayLogonTaskBestEffort();
     StopAndDeleteServiceBestEffort();
     KillServiceProcessBestEffort();
-    if WaitServiceAbsent(20) then
+    if WaitServiceAbsent(MelezhServiceName, 20) and WaitServiceAbsent(ServiceName, 20) then
       Log('marker=uninstall-service-removal status=ok')
     else
       Log('marker=uninstall-service-removal status=degraded reason=service-still-present-or-pending');
+
+    if DirExists(ExpandConstant('{commonappdata}\AriaSignature\melezh')) then
+    begin
+      if DelTree(ExpandConstant('{commonappdata}\AriaSignature\melezh'), True, True, True) then
+        Log('Removed Melezh project data: %ProgramData%\AriaSignature\melezh')
+      else
+        Log('Warning: failed to remove Melezh project data directory');
+    end;
   end;
 end;

@@ -764,6 +764,20 @@ public partial class MainWindow : Window
                 var statusPayload = JsonSerializer.Serialize(TryGetWindowsServiceStatus());
                 Browser.CoreWebView2?.PostWebMessageAsString(statusPayload);
             }
+            else if (action == "repairMelezh")
+            {
+                var (ok, error) = MelezhServiceRepair.TryRepairWithElevation();
+                var payload = JsonSerializer.Serialize(new { action = "repairMelezh", ok, error });
+                Browser.CoreWebView2?.PostWebMessageAsString(payload);
+                if (ok)
+                {
+                    _ = Dispatcher.InvokeAsync(async () =>
+                    {
+                        await Task.Delay(500);
+                        Browser.CoreWebView2?.Reload();
+                    });
+                }
+            }
             else if (action == "pickFile")
             {
                 var dlg = new Microsoft.Win32.OpenFileDialog

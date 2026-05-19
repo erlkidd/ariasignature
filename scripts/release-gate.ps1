@@ -106,6 +106,16 @@ npm ci
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "[release-gate][step-fail] operation=""npm-ci"" exit_code=$LASTEXITCODE" }
 npm run build
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "[release-gate][step-fail] operation=""npm-build"" exit_code=$LASTEXITCODE" }
+$uiAssetJs = Get-ChildItem -Path "..\service\AriaSignature.Service\wwwroot\assets\*.js" -ErrorAction SilentlyContinue
+if (-not $uiAssetJs) {
+    Pop-Location
+    throw "[release-gate][step-fail] operation=""verify-ui-wwwroot"" reason=""spa-js-missing"""
+}
+$melezhUiMarker = Select-String -Path $uiAssetJs.FullName -Pattern "Melezh" -SimpleMatch -Quiet
+if (-not $melezhUiMarker) {
+    Pop-Location
+    throw "[release-gate][step-fail] operation=""verify-ui-wwwroot"" reason=""melezh-marker-missing-in-spa"""
+}
 Pop-Location
 
 Write-Step -Index 2 -Total 11 -Name "build-solution"
@@ -169,6 +179,22 @@ if ($depsRaw -notmatch '"Microsoft\.Extensions\.Hosting\.WindowsServices"\s*:\s*
 }
 if ($depsRaw -notmatch '"Microsoft\.Extensions\.Hosting\.WindowsServices"\s*:\s*"8\.') {
     throw "[release-gate][step-fail] operation=""verify-service-runtime-target"" reason=""windowsservices-version-not-net8-compatible"""
+}
+$expectedProductVersion = ([xml](Get-Content -Path ".\Directory.Build.props")).Project.PropertyGroup.Version
+$apiExe = ".\publish\service\AriaSignature.Api.exe"
+if (-not (Test-Path $apiExe)) {
+    throw "[release-gate][step-fail] operation=""verify-publish-service-version"" reason=""api-exe-missing"""
+}
+$publishedVersion = (Get-Item $apiExe).VersionInfo.ProductVersion
+if ([string]::IsNullOrWhiteSpace($publishedVersion) -or ($publishedVersion -notmatch [regex]::Escape($expectedProductVersion))) {
+    throw "[release-gate][step-fail] operation=""verify-publish-service-version"" reason=""version-mismatch"" expected=""$expectedProductVersion"" actual=""$publishedVersion"""
+}
+$publishedUiJs = Get-ChildItem -Path ".\publish\service\wwwroot\assets\*.js" -ErrorAction SilentlyContinue
+if (-not $publishedUiJs) {
+    throw "[release-gate][step-fail] operation=""verify-publish-service-wwwroot"" reason=""spa-js-missing"""
+}
+if (-not (Select-String -Path $publishedUiJs.FullName -Pattern "Melezh" -SimpleMatch -Quiet)) {
+    throw "[release-gate][step-fail] operation=""verify-publish-service-wwwroot"" reason=""melezh-marker-missing"""
 }
 
 Write-Step -Index 6 -Total 11 -Name "publish-melezh-host"

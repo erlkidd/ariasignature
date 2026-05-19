@@ -50,6 +50,17 @@
 | Web UI недоступен | `services.msc` → `AriaSignatureMelezhService` → перезапуск |
 | Служба не стартует | `%ProgramData%\AriaSignature\logs\melezh-host-*.log` |
 | Нет `bin\melezh.bat` | Переустановить сборку с полным OInt bundle (`prepare-melezh`) |
+| После установки нет блока Melezh в UI | API отдаёт старую версию — переустановите 1.1.0 от администратора; проверьте `/api/v1/status` |
+| Служба не зарегистрирована | PowerShell (admin): `.\scripts\repair-melezh.ps1` или **Настройки → Восстановить службу Melezh** |
+
+## Восстановление (repair)
+
+```powershell
+# от имени администратора, из корня репозитория или с указанием пути установки
+.\scripts\repair-melezh.ps1
+# при «залипшем» API 1.0.1 после upgrade:
+.\scripts\repair-melezh.ps1 -RestartMainService
+```
 
 ## Дополнительная документация
 

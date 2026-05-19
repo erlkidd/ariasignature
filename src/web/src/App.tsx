@@ -2694,6 +2694,18 @@ export default function App() {
                 <button type="button" className="secondary" onClick={() => void refreshSettings()}>
                   Обновить статус
                 </button>
+                {(settings.melezhServiceStatus !== "Running" || !settings.melezhRunning) && (
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => {
+                      postToHost({ action: "repairMelezh" });
+                      window.setTimeout(() => void refreshSettings(), 3000);
+                    }}
+                  >
+                    Восстановить службу Melezh
+                  </button>
+                )}
               </div>
             </div>
           </details>

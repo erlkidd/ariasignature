@@ -67,10 +67,20 @@ dotnet publish .\src\service\AriaSignature.MelezhHost\AriaSignature.MelezhHost.c
 
 ## 7. Поведение удаления
 
-- best-effort stop/delete `AriaSignatureService`;
-- допустимые состояния: служба отсутствует / уже остановлена;
-- дополнительно выполняется завершение процессов `AriaSignature.*`;
-- удаляется каталог установки целиком (`{app}`), чтобы reinstall не наследовал старые бинарники.
+- best-effort stop/delete `AriaSignatureService` и `AriaSignatureMelezhService`;
+- ожидание исчезновения обеих записей в SCM (`WaitServiceAbsent`);
+- завершение процессов `AriaSignature.*`, `AriaSignature.MelezhHost.exe`, `oscript.exe` (bundle);
+- удаление `%ProgramData%\AriaSignature\melezh\` (проект Melezh);
+- удаление каталога установки целиком (`{app}`), чтобы reinstall не наследовал старые бинарники.
+
+## 7.1. Melezh при установке (1.1.0+)
+
+- Preflight: `{app}\melezh\bin\melezh.bat`, `{app}\melezh-host\AriaSignature.MelezhHost.exe`.
+- Регистрация и запуск `AriaSignatureMelezhService` — **обязательны** (fail-hard при ошибке).
+- Проверка `http://127.0.0.1:7788/ui` после `sc start`.
+- Проверка версии API `/api/v1/status` == `MyAppVersion` (ловит «залипший» upgrade 1.0.1).
+- `[Files]` для `service`, `melezh-host`, `melezh`: флаг `restartreplace` при upgrade.
+- Полевое восстановление: `scripts/repair-melezh.ps1` или кнопка **«Восстановить службу Melezh»** в «Настройки».
 
 ## 8. Автозапуск UI и трей
 
@@ -82,6 +92,9 @@ dotnet publish .\src\service\AriaSignature.MelezhHost\AriaSignature.MelezhHost.c
 
 Минимальные проверки:
 - служба `AriaSignatureService` существует и запущена;
+- служба `AriaSignatureMelezhService` запущена, `http://127.0.0.1:7788/ui` отвечает;
+- `/api/v1/status` → `version` совпадает с версией installer;
+- в «Настройки» виден блок **Melezh / OpenIntegrations**;
 - UI открывается без ошибки WebView2;
 - API доступен на `http://127.0.0.1:{port}/api/v1/status`;
 - при необходимости с другой машины в VPN: `http://<IP_агента>:{port}/api/v1/status` (и с заголовком авторизации, если задан токен в настройках);
