@@ -201,6 +201,8 @@ begin
   Result := True;
 end;
 
+procedure KillServiceProcessBestEffort(); forward;
+
 function WaitServiceAbsent(const AServiceName: string; const TimeoutSeconds: Integer): Boolean;
 var
   TempFile: string;
@@ -254,14 +256,16 @@ begin
       end;
 
       if HasPendingDeleteMarker then
-      begin
-        { Служба ещё помечена на удаление: ждём дальше. }
-      end
+        Log('WaitServiceAbsent: service is pending delete, keep waiting.')
       else
-      begin
-        { Если нет pending-delete, дальше ждать бессмысленно: либо служба всё ещё существует, либо другая ошибка. }
-        Break;
-      end;
+        Log('WaitServiceAbsent: service still present in SCM, keep waiting and retry stop/delete.');
+    end;
+
+    if (I mod 5) = 0 then
+    begin
+      ExecSc(Format('stop %s', [AServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
+      ExecSc(Format('delete %s', [AServiceName]), 0, SC_ACCEPTABLE_NOT_FOUND);
+      KillServiceProcessBestEffort();
     end;
 
     SleepWithWizardUi(1000, WaitCaption);
@@ -444,6 +448,8 @@ procedure AssertOnDiskServiceVersionOrAbort(const ApiExePath: string); forward;
 procedure ForceStopAndReleaseServiceProcesses(); forward;
 function TryScCreateServiceOnly(const CreateParams: string): Boolean; forward;
 procedure AssertMelezhBundleOrAbort(); forward;
+function BuildTrayLogonDomainUser(): string; forward;
+procedure RemoveAppDirectoryBestEffort(); forward;
 
 procedure StopAndDeleteServiceBestEffort();
 begin
@@ -715,13 +721,12 @@ begin
   ForceStopAndReleaseServiceProcesses();
   if not WaitServiceAbsent(ServiceName, 20) then
   begin
-    InstallHealthStatus := 'install-health:fail-hard-service-stuck';
-    MsgBox(
-      'Служба AriaSignatureService не удалена из Windows (SCM) перед регистрацией новой версии.'#13#10 +
-      'Закройте все процессы AriaSignature, перезагрузите ПК и повторите установку от администратора.',
-      mbError,
-      MB_OK);
-    RaiseException('AriaSignatureService still present in SCM before create.');
+    InstallHealthStatus := 'install-health:degraded-service-stuck-precreate';
+    Log('Warning: AriaSignatureService still present in SCM before create; continuing with create retries.');
+    ExecSc(Format('stop %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
+    ExecSc(Format('delete %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_FOUND);
+    KillServiceProcessBestEffort();
+    SleepWithWizardUi(2000, 'Повторная подготовка SCM перед регистрацией службы...');
   end;
 
   { binPath в кавычках (AddQuotes): иначе "Program Files" ломает sc create и служба не регистрируется }
@@ -987,6 +992,21 @@ begin
   Exec(SchTasks, Format('/Delete /TN %s /F', [TrayTaskName]), '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
 end;
 
+function BuildTrayLogonDomainUser(): string;
+var
+  DomainName: string;
+  UserName: string;
+begin
+  DomainName := Trim(ExpandConstant('{%USERDOMAIN%}'));
+  UserName := Trim(ExpandConstant('{%USERNAME%}'));
+  if UserName = '' then
+    UserName := Trim(ExpandConstant('{username}'));
+  if DomainName <> '' then
+    Result := DomainName + '\' + UserName
+  else
+    Result := '.\' + UserName;
+end;
+
 procedure RegisterTrayLogonTaskBestEffort();
 var
   SchTasks: string;
@@ -996,24 +1016,30 @@ var
   TaskParams: string;
   ExitCode: Integer;
 begin
-  SchTasks := SchTasksExePath;
-  UiExe := ExpandConstant('{app}\ui\{#MyAppExeName}');
-  if (not FileExists(SchTasks)) or (not FileExists(UiExe)) then
-  begin
-    Log('Tray logon task skipped: schtasks or UI exe missing');
-    Exit;
-  end;
+  try
+    SchTasks := SchTasksExePath;
+    UiExe := ExpandConstant('{app}\ui\{#MyAppExeName}');
+    if (not FileExists(SchTasks)) or (not FileExists(UiExe)) then
+    begin
+      Log('marker=tray-logon-task status=skipped reason=missing-schtasks-or-ui');
+      Exit;
+    end;
 
-  DeleteTrayLogonTaskBestEffort();
-  TaskRun := AddQuotes(UiExe) + ' --tray';
-  DomainUser := ExpandConstant('{userdomain}') + '\' + ExpandConstant('{username}');
-  TaskParams := Format('/Create /TN %s /TR %s /SC ONLOGON /RL LIMITED /DELAY 0000:45 /F /RU %s /IT', [TrayTaskName, TaskRun, DomainUser]);
-  if Exec(SchTasks, TaskParams, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
-  begin
-    if ExitCode <> 0 then
-      Log('Tray logon task create failed with code ' + IntToStr(ExitCode))
+    DeleteTrayLogonTaskBestEffort();
+    TaskRun := AddQuotes(UiExe) + ' --tray';
+    DomainUser := BuildTrayLogonDomainUser();
+    TaskParams := Format('/Create /TN %s /TR %s /SC ONLOGON /RL LIMITED /DELAY 0000:45 /F /RU %s /IT', [TrayTaskName, TaskRun, DomainUser]);
+    if Exec(SchTasks, TaskParams, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+    begin
+      if ExitCode <> 0 then
+        Log('marker=tray-logon-task status=failed exit_code=' + IntToStr(ExitCode) + ' user=' + DomainUser)
+      else
+        Log('marker=tray-logon-task status=ok user=' + DomainUser);
+    end
     else
-      Log('Tray logon task registered: ' + TrayTaskName);
+      Log('marker=tray-logon-task status=failed reason=schtasks-exec-failed user=' + DomainUser);
+  except
+    Log('marker=tray-logon-task status=failed reason=exception');
   end;
 end;
 
@@ -1158,22 +1184,61 @@ begin
 
   if not Healthy then
   begin
-    InstallHealthStatus := 'install-health:fail-hard-melezh';
-    MsgBox(
-      'Melezh запущен, но Web UI не отвечает на http://127.0.0.1:7788/ui.'#13#10 +
-      'Проверьте брандмауэр и логи Melezh в %ProgramData%\AriaSignature\logs\.',
-      mbError,
-      MB_OK);
-    RaiseException('Melezh UI health probe failed.');
-  end;
-
-  Log('marker=install-health stage=melezh-ready status=ok');
+    if InstallHealthStatus = 'install-health:ok' then
+      InstallHealthStatus := 'install-health:degraded-melezh-ui';
+    Log('marker=install-health status=' + InstallHealthStatus + ' stage=melezh-ui-health');
+    Log('Melezh Web UI health probe failed; service may still be warming up after wizard closes.');
+  end
+  else
+    Log('marker=install-health stage=melezh-ready status=ok');
 end;
 
 procedure RemoveLegacyCommonStartupShortcutBestEffort();
 begin
   if DeleteFile(ExpandConstant('{commonstartup}\AriaSignature.lnk')) then
     Log('Removed legacy common Startup shortcut AriaSignature.lnk');
+end;
+
+procedure RemoveAppDirectoryBestEffort();
+var
+  AppDir: string;
+  Attempt: Integer;
+begin
+  AppDir := ExpandConstant('{app}');
+  if AppDir = '' then
+    Exit;
+
+  if not DirExists(AppDir) then
+  begin
+    Log('marker=uninstall-app-directory status=ok reason=already-absent path=' + AppDir);
+    Exit;
+  end;
+
+  ForceStopAndReleaseServiceProcesses();
+  KillServiceProcessBestEffort();
+
+  for Attempt := 1 to 3 do
+  begin
+    if DelTree(AppDir, True, True, True) then
+    begin
+      Log('marker=uninstall-app-directory status=ok path=' + AppDir + ' attempt=' + IntToStr(Attempt));
+      Exit;
+    end;
+    Log('marker=uninstall-app-directory status=retry path=' + AppDir + ' attempt=' + IntToStr(Attempt));
+    Sleep(1000);
+    KillServiceProcessBestEffort();
+  end;
+
+  if DirExists(AppDir) then
+  begin
+    Log('marker=uninstall-app-directory status=degraded path=' + AppDir);
+    MsgBox(
+      'Папка программы не удалена полностью:'#13#10 + AppDir + #13#10#13#10 +
+      'Закройте все процессы AriaSignature и oscript.exe, перезагрузите ПК при необходимости.'#13#10 +
+      'Затем удалите папку вручную или запустите scripts\repair-upgrade.ps1 от администратора.',
+      mbInformation,
+      MB_OK);
+  end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -1189,10 +1254,10 @@ begin
     AssertOnDiskServiceVersionOrAbort(ExpandConstant('{app}\service\AriaSignature.Api.exe'));
     AssertMelezhBundleOrAbort();
     InstallServiceOrAbort();
-    if InstallHealthStatus <> 'install-health:ok' then
+    if Pos('install-health:fail-hard', InstallHealthStatus) > 0 then
     begin
       MsgBox(
-        'Служба AriaSignature не прошла полную проверку после установки.'#13#10 +
+        'Служба AriaSignature не прошла обязательную проверку после установки.'#13#10 +
         'Статус: ' + InstallHealthStatus + #13#10 +
         'Установка прервана. Закройте приложение и повторите установку от администратора.',
         mbError,
@@ -1245,12 +1310,22 @@ begin
       Log('marker=uninstall-service-removal status=ok')
     else
     begin
-      Log('marker=uninstall-service-removal status=degraded reason=service-still-present-or-pending');
-      MsgBox(
-        'Службы AriaSignature или Melezh могли остаться в Windows после удаления.'#13#10 +
-        'Удалите AriaSignatureService и AriaSignatureMelezhService в services.msc.',
-        mbInformation,
-        MB_OK);
+      Log('Uninstall first-pass service removal timed out; running second-pass stop/delete.');
+      StopAndDeleteServiceBestEffort();
+      KillServiceProcessBestEffort();
+      if WaitServiceAbsent(MelezhServiceName, 60) and WaitServiceAbsent(ServiceName, 60) then
+      begin
+        Log('marker=uninstall-service-removal status=ok mode=second-pass');
+      end
+      else
+      begin
+        Log('marker=uninstall-service-removal status=degraded reason=service-still-present-or-pending');
+        MsgBox(
+          'Службы AriaSignature или Melezh могли остаться в Windows после удаления.'#13#10 +
+          'Удалите AriaSignatureService и AriaSignatureMelezhService в services.msc.',
+          mbInformation,
+          MB_OK);
+      end;
     end;
 
     if DirExists(ExpandConstant('{commonappdata}\AriaSignature\melezh')) then
@@ -1261,4 +1336,7 @@ begin
         Log('Warning: failed to remove Melezh project data directory');
     end;
   end;
+
+  if CurUninstallStep = usPostUninstall then
+    RemoveAppDirectoryBestEffort();
 end;

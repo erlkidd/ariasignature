@@ -26,12 +26,14 @@ public partial class MainWindow : Window
     private static readonly HttpClient StartupProbeHttp = new() { Timeout = TimeSpan.FromSeconds(2.5) };
     private CancellationTokenSource? _startupRetryCts;
     private DateTime _recoveryServiceEnsureNotBeforeUtc = DateTime.MinValue;
+    private DateTime _recoveryMelezhEnsureNotBeforeUtc = DateTime.MinValue;
     private CancellationTokenSource? _appReadyFallbackCts;
     private bool _expectStartupLoadingHtml;
     private string? _deferredServiceStartWarning;
     private string? _startupBaseUrl;
     private string? _serviceExePath;
     private string? _serviceBootstrapExePath;
+    private const string MelezhServiceName = "AriaSignatureMelezhService";
     private Stopwatch? _startupSw;
     private bool _startupFlowStarted;
     private bool _startupWarmupPrepared;
@@ -325,6 +327,7 @@ public partial class MainWindow : Window
         _startupRetryCts = new CancellationTokenSource();
         var token = _startupRetryCts.Token;
         _recoveryServiceEnsureNotBeforeUtc = DateTime.UtcNow.AddSeconds(38);
+        _recoveryMelezhEnsureNotBeforeUtc = DateTime.UtcNow.AddSeconds(10);
         _ = Task.Run(async () =>
         {
             while (!token.IsCancellationRequested)
@@ -353,6 +356,12 @@ public partial class MainWindow : Window
                     }
                 }
 
+                if (DateTime.UtcNow >= _recoveryMelezhEnsureNotBeforeUtc)
+                {
+                    _recoveryMelezhEnsureNotBeforeUtc = DateTime.UtcNow.AddSeconds(25);
+                    await Task.Run(TryEnsureMelezhServiceStartedBestEffort, token).ConfigureAwait(false);
+                }
+
                 await Task.Delay(800, token).ConfigureAwait(false);
             }
         }, token);
@@ -376,6 +385,7 @@ public partial class MainWindow : Window
             var (ready, detail) = await TryProbeApiOnceAsync(baseUrl).ConfigureAwait(false);
             if (ready)
             {
+                _ = Task.Run(TryEnsureMelezhServiceStartedBestEffort);
                 await Dispatcher.InvokeAsync(() =>
                 {
                     _expectStartupLoadingHtml = false;
@@ -433,6 +443,24 @@ public partial class MainWindow : Window
 
     private static string FormatServiceStatus(ServiceControllerStatus? status) =>
         status?.ToString() ?? "не удалось опросить";
+
+    private static void TryEnsureMelezhServiceStartedBestEffort()
+    {
+        try
+        {
+            using var sc = new ServiceController(MelezhServiceName);
+            sc.Refresh();
+            if (sc.Status == ServiceControllerStatus.Stopped)
+            {
+                sc.Start();
+                sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(25));
+            }
+        }
+        catch
+        {
+            // best-effort only: do not block UI startup path
+        }
+    }
 
     private static ServiceControllerStatus? TryGetServiceControllerStatus()
     {

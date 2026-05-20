@@ -68,9 +68,16 @@ function Wait-AriaServiceAbsent {
         [int]$TimeoutSeconds = 30
     )
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $tick = 0
     while ((Get-Date) -lt $deadline) {
+        $tick++
         & sc.exe query $ServiceName 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) { return $true }
+        if (($tick % 5) -eq 0) {
+            Invoke-AriaSc "stop $ServiceName" -AcceptExitCodes @(0, 1062, 1060) | Out-Null
+            Invoke-AriaSc "delete $ServiceName" -AcceptExitCodes @(0, 1060, 1072) | Out-Null
+            Stop-AriaProcesses
+        }
         Start-Sleep -Seconds 1
     }
     return $false
@@ -106,7 +113,9 @@ function Test-MelezhBundleComplete {
         $args.InstallRoot = $InstallRoot
     }
     & $testScript @args
-    if ($LASTEXITCODE -ne 0) { throw "Melezh bundle validation failed" }
+    if (-not $?) {
+        throw "Melezh bundle validation failed"
+    }
 }
 
 function Get-FileProductVersionSafe {

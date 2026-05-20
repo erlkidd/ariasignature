@@ -1,21 +1,21 @@
-BeforeAll {
-    $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-    Set-Location $repoRoot
-    Import-Module (Join-Path $repoRoot "installer\lib\AriaSignature.Install.psm1") -Force
-}
-
 Describe "AriaSignature.Install module" {
+    BeforeAll {
+        $script:RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+        Set-Location $script:RepoRoot
+        Import-Module (Join-Path $script:RepoRoot "installer\lib\AriaSignature.Install.psm1") -Force
+    }
+
     It "loads config with service names" {
         $cfg = Get-AriaInstallConfig
-        $cfg.mainServiceName | Should -Be "AriaSignatureService"
-        $cfg.melezhServiceName | Should -Be "AriaSignatureMelezhService"
+        $cfg.mainServiceName | Should Be "AriaSignatureService"
+        $cfg.melezhServiceName | Should Be "AriaSignatureMelezhService"
     }
 
     It "validates melezh bundle when present" {
-        $bundle = Join-Path $repoRoot "installer\melezh\bundle"
+        $bundle = Join-Path $script:RepoRoot "installer\melezh\bundle"
         if (-not (Test-Path (Join-Path $bundle "bin\melezh.bat"))) {
-            Set-ItResult -Inconclusive -Because "OInt bundle not prepared; run prepare-melezh.ps1"
+            Set-TestInconclusive "OInt bundle not prepared; run prepare-melezh.ps1"
         }
-        { Test-MelezhBundleComplete -MelezhRoot $bundle } | Should -Not -Throw
+        { Test-MelezhBundleComplete -MelezhRoot $bundle } | Should Not Throw
     }
 }

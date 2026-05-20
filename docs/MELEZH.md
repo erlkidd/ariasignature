@@ -43,10 +43,26 @@
   └─ POST http://<agent-ip>:7788/<handler>                 ← интеграции OInt через Melezh
 ```
 
+## CLI (OInt 0.12+ / Melezh 0.12)
+
+Служба `AriaSignature.MelezhHost` запускает Melezh через `oscript.exe` и `app.os` с **русскими** именами методов:
+
+```powershell
+# из {app}\melezh\lib\oint\bin\oscript.exe + share\...\app.os
+СоздатьПроект --path C:\ProgramData\AriaSignature\melezh\AriaSignature.melezh
+ЗапуститьПроект --port 7788 --proj C:\ProgramData\AriaSignature\melezh\AriaSignature.melezh
+```
+
+Английские `CreateProject` / `RunProject` в CLI **не работают** (exit code **99**, «неизвестный параметр --path»). Имена `CreateProject`/`RunProject` в IntegrationProxy — только для programmatic API, не для командной строки.
+
+Проверка bundle при сборке: `scripts\Test-MelezhCli.ps1`.
+
 ## Диагностика
 
 | Симптом | Действие |
 |---------|----------|
+| Web UI недоступен, служба Running | `.\scripts\diagnose-melezh.ps1` (admin); лог `melezh-host-*.log` |
+| В логе `CreateProject` / `code=99` / «неизвестный параметр --path» | Обновить `melezh-host\AriaSignature.MelezhHost.exe` (1.1.0+ с русскими CLI) и перезапустить службу |
 | Web UI недоступен | `services.msc` → `AriaSignatureMelezhService` → перезапуск |
 | Служба не стартует | `%ProgramData%\AriaSignature\logs\melezh-host-*.log` |
 | Нет `bin\melezh.bat` | Переустановить сборку с полным OInt bundle (`prepare-melezh`) |
@@ -69,3 +85,4 @@
 
 - Локальное зеркало: `docs-opi-melezh/melezh/`
 - OpenIntegrations: https://en.openintegrations.dev/docs/Addons/Melezh/Start/Installation/
+- Инцидент SCM/install/uninstall + autostart: `docs/INCIDENT_SCM_INSTALL_UNINSTALL_MELEZH.md`

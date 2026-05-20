@@ -2,12 +2,20 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$RootPath,
-    [string]$ManifestPath = (Join-Path $PSScriptRoot "..\installer\melezh\required-files.json"),
+    [string]$ManifestPath = "",
     [switch]$IncludeInstallRootChecks,
     [string]$InstallRoot
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($ManifestPath)) {
+    $scriptDir = $PSScriptRoot
+    if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+        $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    }
+    $ManifestPath = Join-Path (Resolve-Path (Join-Path $scriptDir "..\installer\melezh")) "required-files.json"
+}
 
 if (-not (Test-Path $ManifestPath)) {
     throw "Melezh manifest not found: $ManifestPath"
@@ -53,3 +61,4 @@ if ($missing.Count -gt 0) {
 }
 
 Write-Host "[Test-MelezhBundle] ok root=$root"
+exit 0

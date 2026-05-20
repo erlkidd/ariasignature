@@ -31,14 +31,36 @@ function Wait-ScmServiceAbsent {
         [int]$TimeoutSeconds = 30
     )
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $tick = 0
     while ((Get-Date) -lt $deadline) {
+        $tick++
         & sc.exe query $ServiceName 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) {
             return $true
         }
+        if (($tick % 5) -eq 0) {
+            & sc.exe stop $ServiceName 2>$null | Out-Null
+            & sc.exe delete $ServiceName 2>$null | Out-Null
+            Stop-AriaProcesses
+        }
         Start-Sleep -Seconds 1
     }
     return $false
+}
+
+function Remove-ScmServiceRobust {
+    param([string]$ServiceName)
+    for ($attempt = 1; $attempt -le 6; $attempt++) {
+        & sc.exe stop $ServiceName 2>$null | Out-Null
+        Start-Sleep -Milliseconds 700
+        & sc.exe delete $ServiceName 2>$null | Out-Null
+        if (Wait-ScmServiceAbsent -ServiceName $ServiceName -TimeoutSeconds 10) {
+            return $true
+        }
+        Stop-AriaProcesses
+        Start-Sleep -Seconds 2
+    }
+    return (Wait-ScmServiceAbsent -ServiceName $ServiceName -TimeoutSeconds 10)
 }
 
 function Get-OnDiskProductVersion {
@@ -70,8 +92,7 @@ foreach ($svc in @("AriaSignatureService", "AriaSignatureMelezhService")) {
             Start-Sleep -Seconds 2
         }
         Write-RepairLog "Deleting SCM entry $svc"
-        & sc.exe delete $svc | Out-Null
-        if (-not (Wait-ScmServiceAbsent -ServiceName $svc -TimeoutSeconds 30)) {
+        if (-not (Remove-ScmServiceRobust -ServiceName $svc)) {
             throw "[repair-upgrade] $svc still present in SCM after delete"
         }
     }
@@ -87,8 +108,21 @@ if ($onDisk -notlike "*$ExpectedVersion*") {
 }
 
 Write-RepairLog "Creating AriaSignatureService"
-& sc.exe create AriaSignatureService "binPath= `"$serviceExe`"" "start= auto" "DisplayName= AriaSignature" "obj= LocalSystem" | Out-Null
-if ($LASTEXITCODE -ne 0) {
+$created = $false
+for ($attempt = 1; $attempt -le 8; $attempt++) {
+    & sc.exe create AriaSignatureService "binPath= `"$serviceExe`"" "start= auto" "DisplayName= AriaSignature" "obj= LocalSystem" | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        $created = $true
+        break
+    }
+    if ($LASTEXITCODE -eq 1073 -or $LASTEXITCODE -eq 1072) {
+        Remove-ScmServiceRobust -ServiceName "AriaSignatureService" | Out-Null
+        Start-Sleep -Seconds 2
+        continue
+    }
+    break
+}
+if (-not $created) {
     throw "[repair-upgrade] sc create AriaSignatureService failed with exit code $LASTEXITCODE"
 }
 

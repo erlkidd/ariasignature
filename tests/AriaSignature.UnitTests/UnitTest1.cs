@@ -3,6 +3,7 @@ using System.Text.Json;
 using AriaSignature.Application.Services;
 using AriaSignature.Infrastructure.Backup;
 using AriaSignature.Infrastructure.Monitoring;
+using AriaSignature.MelezhHost;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AriaSignature.UnitTests;
@@ -141,6 +142,42 @@ public class BackupExecutorIoTests
 
         Assert.NotNull(message);
         Assert.Contains("not enough space", message!, StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+public class MelezhCliCommandsTests
+{
+    [Fact]
+    public void BuildCreateProjectArgs_UsesRussianMethodAndQuotedPath()
+    {
+        var args = MelezhCliCommands.BuildCreateProjectArgs(@"C:\ProgramData\AriaSignature\melezh\AriaSignature.melezh");
+        Assert.StartsWith(MelezhCliCommands.CreateProjectMethod, args, StringComparison.Ordinal);
+        Assert.Contains("--path \"C:\\ProgramData\\AriaSignature\\melezh\\AriaSignature.melezh\"", args, StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateProject", args, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildRunProjectArgs_UsesRussianMethodPortAndProj()
+    {
+        var args = MelezhCliCommands.BuildRunProjectArgs(@"C:\data\proj.melezh", 7788);
+        Assert.StartsWith(MelezhCliCommands.RunProjectMethod, args, StringComparison.Ordinal);
+        Assert.Contains("--port 7788", args, StringComparison.Ordinal);
+        Assert.Contains("--proj \"C:\\data\\proj.melezh\"", args, StringComparison.Ordinal);
+        Assert.DoesNotContain("RunProject", args, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ResolveOscriptInvocation_QuotesAppOsPathWithSpaces()
+    {
+        var oscript = @"C:\Program Files\AriaSignature\melezh\lib\oint\bin\oscript.exe";
+        var appOs = @"C:\Program Files\AriaSignature\melezh\share\oint\lib\melezh\core\Classes\app.os";
+        var cliArgs = MelezhCliCommands.BuildRunProjectArgs(@"C:\ProgramData\p.melezh", 7788);
+
+        var (fileName, arguments, workingDirectory) = MelezhCliCommands.ResolveOscriptInvocation(oscript, appOs, cliArgs);
+
+        Assert.Equal(oscript, fileName);
+        Assert.StartsWith($"\"{appOs}\" {MelezhCliCommands.RunProjectMethod}", arguments, StringComparison.Ordinal);
+        Assert.Equal(@"C:\Program Files\AriaSignature\melezh\lib\oint\bin", workingDirectory);
     }
 }
 

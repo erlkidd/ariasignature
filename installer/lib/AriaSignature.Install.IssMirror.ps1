@@ -150,8 +150,12 @@ function Install-IssMainService {
     Invoke-IssStopAndDeleteBothBestEffort
     Stop-AriaProcesses
     if (-not (Wait-AriaServiceAbsent -ServiceName $name -TimeoutSeconds 20)) {
-        Set-IssHealthStatus 'install-health:fail-hard-service-stuck'
-        throw "ISS: $name still in SCM before create (WaitServiceAbsent 20s)"
+        Set-IssHealthStatus 'install-health:degraded-service-stuck-precreate'
+        Write-AriaInstallLog "WARN: ISS $name still in SCM before create; continuing with create retries"
+        Invoke-IssSc "stop $name" -AcceptExitCodes @(0, 1062, 1060) | Out-Null
+        Invoke-IssSc "delete $name" -AcceptExitCodes @(0, 1060, 1072) | Out-Null
+        Stop-AriaProcesses
+        Start-Sleep -Seconds 2
     }
 
     $quoted = "`"$bin`""
@@ -354,8 +358,18 @@ function Uninstall-IssServices {
         Write-AriaInstallLog 'marker=uninstall-service-removal status=ok'
     }
     else {
-        Write-AriaInstallLog 'marker=uninstall-service-removal status=degraded reason=service-still-present-or-pending'
-        throw "ISS uninstall degraded: services still in SCM (main=$okA melezh=$okM)"
+        Write-AriaInstallLog "WARN: uninstall first-pass timed out; running second-pass"
+        Invoke-IssStopAndDeleteBothBestEffort
+        Stop-AriaProcesses
+        $okM = Wait-AriaServiceAbsent -ServiceName $cfg.melezhServiceName -TimeoutSeconds 60
+        $okA = Wait-AriaServiceAbsent -ServiceName $cfg.mainServiceName -TimeoutSeconds 60
+        if ($okM -and $okA) {
+            Write-AriaInstallLog 'marker=uninstall-service-removal status=ok mode=second-pass'
+        }
+        else {
+            Write-AriaInstallLog 'marker=uninstall-service-removal status=degraded reason=service-still-present-or-pending'
+            throw "ISS uninstall degraded: services still in SCM (main=$okA melezh=$okM)"
+        }
     }
 }
 

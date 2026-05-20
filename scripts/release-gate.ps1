@@ -1,8 +1,14 @@
 param(
     [string]$Configuration = "Release",
     [string]$RuntimeIdentifier = "win-x64",
-    [switch]$RequireInstalledServiceSmoke
+    [switch]$RequireInstalledServiceSmoke,
+    [switch]$RequireCliInstallSmoke
 )
+
+function Test-IsAdministrator {
+    $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
 
 $ErrorActionPreference = "Stop"
 Set-Location (Resolve-Path "$PSScriptRoot\..")
@@ -306,6 +312,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "[release-gate][step-fail] operation=""test-melezh-bundle"" reason=""bundle-incomplete"""
 }
 
+& powershell -ExecutionPolicy Bypass -File ".\scripts\Test-MelezhCli.ps1" -MelezhRoot ".\installer\melezh\bundle"
+if ($LASTEXITCODE -ne 0) {
+    throw "[release-gate][step-fail] operation=""test-melezh-cli"" reason=""russian-cli-createproject-failed"""
+}
+
 Write-Host "[release-gate][check] validating host dependencies"
 $requiredCommands = @("powershell.exe", "sc.exe", "taskkill.exe")
 foreach ($cmd in $requiredCommands) {
@@ -325,6 +336,13 @@ Write-Step -Index 10 -Total 12 -Name "installed-service-smoke"
 Invoke-InstalledServiceSmokeIfPresent -ServiceName "AriaSignatureService" -ApiPort 5160 -FailOnError:$RequireInstalledServiceSmoke
 
 Write-Step -Index 11 -Total 12 -Name "cli-install-smoke"
+if (-not (Test-IsAdministrator)) {
+    if ($RequireCliInstallSmoke) {
+        throw "[release-gate][step-fail] operation=""cli-install-smoke"" reason=""requires-elevated-powershell"""
+    }
+    Write-Host "[release-gate][check] cli-install-smoke skipped: run release-gate in elevated PowerShell, or execute .\scripts\run-cli-smoke.ps1 as Administrator"
+}
+else {
 $cliTestRoot = Join-Path $env:TEMP "AriaSignature-CliTest-$([guid]::NewGuid().ToString('N').Substring(0,8))"
 New-Item -Path $cliTestRoot -ItemType Directory -Force | Out-Null
 try {
@@ -361,6 +379,7 @@ finally {
     powershell -ExecutionPolicy Bypass -File ".\scripts\install-cli.ps1" -Action Uninstall -InstallRoot $cliTestRoot -ErrorAction SilentlyContinue | Out-Null
     Remove-Item -Path $cliTestRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
+}
 
 Write-Step -Index 12 -Total 12 -Name "build-installer"
 Stop-RepoLockedProcess -ProcessName "AriaSignature-Setup.exe" -LockedRoot (Join-Path (Get-Location) "artifacts\installer")
@@ -374,6 +393,14 @@ if (-not $isccPath) {
 
 if (-not $isccPath) {
     throw "ISCC.exe not found. Install Inno Setup 6 or add ISCC to PATH."
+}
+
+$issPath = Join-Path (Get-Location) "installer\inno\AriaSignature.iss"
+$issText = Get-Content -LiteralPath $issPath -Raw -Encoding UTF8
+foreach ($badConstant in @("{userdomain}", "{domainuser}")) {
+    if ($issText.Contains($badConstant)) {
+        throw "[release-gate][step-fail] operation=""verify-inno-constants"" reason=""invalid-constant"" token=""$badConstant"""
+    }
 }
 
 & $isccPath .\installer\inno\AriaSignature.iss

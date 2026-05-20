@@ -17,16 +17,16 @@ public sealed class MelezhProcessWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation(
-            "Melezh host starting. exe={Exe}; project={Project}; port={Port}",
-            _options.MelezhExePath,
+            "Melezh host starting. oscript={Oscript}; app={App}; project={Project}; port={Port}",
+            _options.OscriptExePath,
+            _options.MelezhAppOsPath,
             _options.ProjectPath,
             _options.Port);
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            if (!File.Exists(_options.MelezhExePath))
+            if (!IsRuntimeReady())
             {
-                _logger.LogError("Melezh launcher not found at {Path}", _options.MelezhExePath);
                 await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
                 continue;
             }
@@ -67,6 +67,28 @@ public sealed class MelezhProcessWorker : BackgroundService
         }
     }
 
+    private bool IsRuntimeReady()
+    {
+        if (!File.Exists(_options.OscriptExePath))
+        {
+            _logger.LogError("oscript.exe not found at {Path}", _options.OscriptExePath);
+            return false;
+        }
+
+        if (!File.Exists(_options.MelezhAppOsPath))
+        {
+            _logger.LogError("Melezh app.os not found at {Path}", _options.MelezhAppOsPath);
+            return false;
+        }
+
+        if (!File.Exists(_options.MelezhExePath))
+        {
+            _logger.LogWarning("Melezh launcher not found at {Path} (oscript path will be used)", _options.MelezhExePath);
+        }
+
+        return true;
+    }
+
     private async Task EnsureProjectExistsAsync(CancellationToken cancellationToken)
     {
         if (File.Exists(_options.ProjectPath))
@@ -75,27 +97,30 @@ public sealed class MelezhProcessWorker : BackgroundService
         }
 
         _logger.LogInformation("Creating Melezh project at {Path}", _options.ProjectPath);
-        var exitCode = await RunMelezhCliAsync(
-            $"CreateProject --path {QuoteArg(_options.ProjectPath)}",
-            cancellationToken);
+        var args = MelezhCliCommands.BuildCreateProjectArgs(_options.ProjectPath);
+        var exitCode = await RunMelezhCliAsync(args, cancellationToken);
         if (exitCode != 0)
         {
-            throw new InvalidOperationException($"CreateProject failed with exit code {exitCode}");
+            throw new InvalidOperationException(
+                $"{MelezhCliCommands.CreateProjectMethod} failed with exit code {exitCode}");
         }
     }
 
     private Process? StartMelezhProcess()
     {
-        var args = $"RunProject --proj {QuoteArg(_options.ProjectPath)} --port {_options.Port}";
-        _logger.LogInformation("Starting melezh: {Exe} {Args}", _options.MelezhExePath, args);
+        var args = MelezhCliCommands.BuildRunProjectArgs(_options.ProjectPath, _options.Port);
+        _logger.LogInformation("Starting melezh via oscript: {Args}", args);
         try
         {
-            var (fileName, arguments) = ResolveLauncher(_options.MelezhExePath, args);
+            var (fileName, arguments, workingDirectory) = MelezhCliCommands.ResolveOscriptInvocation(
+                _options.OscriptExePath,
+                _options.MelezhAppOsPath,
+                args);
             var startInfo = new ProcessStartInfo
             {
                 FileName = fileName,
                 Arguments = arguments,
-                WorkingDirectory = Path.GetDirectoryName(_options.MelezhExePath) ?? AppContext.BaseDirectory,
+                WorkingDirectory = workingDirectory,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -136,16 +161,19 @@ public sealed class MelezhProcessWorker : BackgroundService
         }
     }
 
-    private async Task<int> RunMelezhCliAsync(string arguments, CancellationToken cancellationToken)
+    private async Task<int> RunMelezhCliAsync(string cliArguments, CancellationToken cancellationToken)
     {
-        var (fileName, mergedArgs) = ResolveLauncher(_options.MelezhExePath, arguments);
+        var (fileName, arguments, workingDirectory) = MelezhCliCommands.ResolveOscriptInvocation(
+            _options.OscriptExePath,
+            _options.MelezhAppOsPath,
+            cliArguments);
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
                 FileName = fileName,
-                Arguments = mergedArgs,
-                WorkingDirectory = Path.GetDirectoryName(_options.MelezhExePath) ?? AppContext.BaseDirectory,
+                Arguments = arguments,
+                WorkingDirectory = workingDirectory,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -179,7 +207,7 @@ public sealed class MelezhProcessWorker : BackgroundService
         {
             _logger.LogWarning(
                 "melezh CLI failed ({Args}) code={Code} stdout={Stdout} stderr={Stderr}",
-                arguments,
+                cliArguments,
                 process.ExitCode,
                 stdout.ToString().Trim(),
                 stderr.ToString().Trim());
@@ -201,21 +229,5 @@ public sealed class MelezhProcessWorker : BackgroundService
         {
             // ignore shutdown races
         }
-    }
-
-    private static string QuoteArg(string value) =>
-        value.Contains('"') || value.Contains(' ')
-            ? $"\"{value.Replace("\"", "\\\"")}\""
-            : value;
-
-    private static (string FileName, string Arguments) ResolveLauncher(string launcherPath, string cliArguments)
-    {
-        if (launcherPath.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) ||
-            launcherPath.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase))
-        {
-            return ("cmd.exe", $"/c \"\"{launcherPath}\"\" {cliArguments}");
-        }
-
-        return (launcherPath, cliArguments);
     }
 }
