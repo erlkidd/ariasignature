@@ -80,7 +80,8 @@ dotnet publish .\src\service\AriaSignature.MelezhHost\AriaSignature.MelezhHost.c
 - Проверка `http://127.0.0.1:7788/ui` после `sc start`.
 - Проверка версии API `/api/v1/status` == `MyAppVersion` (ловит «залипший» upgrade 1.0.1).
 - `[Files]` для `service`, `melezh-host`, `melezh`: флаг `restartreplace` при upgrade.
-- Полевое восстановление: `scripts/repair-melezh.ps1` или кнопка **«Восстановить службу Melezh»** в «Настройки».
+- Полевое восстановление: `scripts/repair-upgrade.ps1` (служба + версия API), `scripts/repair-melezh.ps1` (только Melezh) или кнопка **«Восстановить службу Melezh»** в «Настройки».
+- Если installer сообщает, что **файлы на диске** или **API** не совпадают с версией — закройте процессы, перезагрузите ПК (для отложенного `restartreplace`) и повторите setup; либо `.\scripts\repair-upgrade.ps1` от администратора.
 
 ## 8. Автозапуск UI и трей
 

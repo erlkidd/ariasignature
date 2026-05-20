@@ -439,6 +439,10 @@ procedure StopAndDeleteMelezhServiceBestEffort(); forward;
 procedure InstallMelezhServiceOrAbort(); forward;
 function ProbeMelezhUiHealth(const Port: Integer): Boolean; forward;
 function VerifyInstalledApiVersionOrAbort(): Boolean; forward;
+function GetFileProductVersion(const FilePath: string): string; forward;
+procedure AssertOnDiskServiceVersionOrAbort(const ApiExePath: string); forward;
+procedure ForceStopAndReleaseServiceProcesses(); forward;
+function TryScCreateServiceOnly(const CreateParams: string): Boolean; forward;
 
 procedure StopAndDeleteServiceBestEffort();
 begin
@@ -524,20 +528,107 @@ begin
     Result := Trim(Lines[0]);
 end;
 
+function GetFileProductVersion(const FilePath: string): string;
+var
+  TempFile: string;
+  ExitCode: Integer;
+  Lines: TArrayOfString;
+  Cmd: string;
+  PsPath: string;
+begin
+  Result := '';
+  if not FileExists(FilePath) then
+    Exit;
+
+  TempFile := ExpandConstant('{tmp}\aria-file-version.txt');
+  DeleteFile(TempFile);
+  PsPath := FilePath;
+  StringChangeEx(PsPath, '''', '''''', True);
+  Cmd := '-NoProfile -ExecutionPolicy Bypass -Command ' +
+    '"try { (Get-Item -LiteralPath ''' + PsPath + ''').VersionInfo.ProductVersion | Out-File -FilePath ''' +
+    TempFile + ''' -Encoding ascii -NoNewline; exit 0 } catch { exit 1 }"';
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Cmd, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+    Exit;
+  if ExitCode <> 0 then
+    Exit;
+  if LoadStringsFromFile(TempFile, Lines) and (GetArrayLength(Lines) > 0) then
+    Result := Trim(Lines[0]);
+end;
+
+function VersionMatchesExpected(const ActualVersion: string): Boolean;
+begin
+  Result := (ActualVersion <> '') and (Pos('{#MyAppVersion}', ActualVersion) > 0);
+end;
+
+procedure AssertOnDiskServiceVersionOrAbort(const ApiExePath: string);
+var
+  ExpectedVersion: string;
+  OnDiskVersion: string;
+begin
+  ExpectedVersion := '{#MyAppVersion}';
+  OnDiskVersion := GetFileProductVersion(ApiExePath);
+  Log(Format('On-disk version probe: path=%s expected=%s actual=%s', [ApiExePath, ExpectedVersion, OnDiskVersion]));
+
+  if VersionMatchesExpected(OnDiskVersion) then
+    Exit;
+
+  InstallHealthStatus := 'install-health:fail-hard-on-disk-version';
+  MsgBox(
+    'Файлы службы на диске не обновились до версии ' + ExpectedVersion + '.'#13#10 +
+    'Ожидалось: ' + ExpectedVersion + #13#10 +
+    'На диске (' + ApiExePath + '): ' + OnDiskVersion + #13#10#13#10 +
+    'Вероятно, exe был занят запущенным процессом (отложенная замена до перезагрузки).'#13#10 +
+    'Закройте все процессы AriaSignature, перезагрузите ПК и запустите установщик снова от администратора.'#13#10 +
+    'Логи: %ProgramData%\AriaSignature\logs\.',
+    mbError,
+    MB_OK);
+  RaiseException('On-disk service binary version mismatch; expected ' + ExpectedVersion + '.');
+end;
+
 function VerifyInstalledApiVersionOrAbort(): Boolean;
 var
   ExpectedVersion: string;
-  ActualVersion: string;
+  ApiVersion: string;
+  OnDiskVersion: string;
+  ApiExePath: string;
 begin
   ExpectedVersion := '{#MyAppVersion}';
-  ActualVersion := GetApiReportedVersion();
-  Log(Format('API version probe: expected=%s actual=%s', [ExpectedVersion, ActualVersion]));
-  if ActualVersion = '' then
+  ApiExePath := ExpandConstant('{app}\service\AriaSignature.Api.exe');
+  ApiVersion := GetApiReportedVersion();
+  OnDiskVersion := GetFileProductVersion(ApiExePath);
+  Log(Format('API version probe: expected=%s api=%s on-disk=%s', [ExpectedVersion, ApiVersion, OnDiskVersion]));
+  if ApiVersion = '' then
   begin
     Result := False;
     Exit;
   end;
-  Result := CompareText(ActualVersion, ExpectedVersion) = 0;
+  Result := VersionMatchesExpected(ApiVersion);
+end;
+
+function TryScCreateServiceOnly(const CreateParams: string): Boolean;
+var
+  ExitCode: Integer;
+begin
+  Result := False;
+  if not Exec(ScExePath, CreateParams, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+    Exit;
+  LastScExitCode := ExitCode;
+  Result := ExitCode = 0;
+end;
+
+procedure ForceStopAndReleaseServiceProcesses();
+var
+  Attempt: Integer;
+begin
+  for Attempt := 1 to 3 do
+  begin
+    if ServiceIsRegistered and ServiceIsRunningOrStartPendingViaSc then
+      ExecSc(Format('stop %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
+    if MelezhServiceIsRegistered then
+      ExecSc(Format('stop %s', [MelezhServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
+    KillServiceProcessBestEffort();
+    Sleep(1000);
+  end;
 end;
 
 procedure LogScCommandCapture(const ArgsTail: string; const Banner: string);
@@ -602,6 +693,20 @@ begin
   if NeedsWebView2Runtime() then
     AssertFileExistsOrAbort(ExpandConstant('{tmp}\MicrosoftEdgeWebView2RuntimeInstallerX64.exe'), 'WebView2 offline installer');
 
+  PumpWizardUi('Остановка предыдущей службы перед регистрацией...');
+  StopAndDeleteServiceBestEffort();
+  ForceStopAndReleaseServiceProcesses();
+  if not WaitServiceAbsent(ServiceName, 20) then
+  begin
+    InstallHealthStatus := 'install-health:fail-hard-service-stuck';
+    MsgBox(
+      'Служба AriaSignatureService не удалена из Windows (SCM) перед регистрацией новой версии.'#13#10 +
+      'Закройте все процессы AriaSignature, перезагрузите ПК и повторите установку от администратора.',
+      mbError,
+      MB_OK);
+    RaiseException('AriaSignatureService still present in SCM before create.');
+  end;
+
   { binPath в кавычках (AddQuotes): иначе "Program Files" ломает sc create и служба не регистрируется }
   CreateParams := 'create ' + ServiceName + ' binPath= ' + AddQuotes(BinPath) + ' start= auto DisplayName= "AriaSignature" obj= LocalSystem';
   CreateParamsAlt := 'create ' + ServiceName + ' binPath= ' + AddQuotes(BinPath) + ' start= auto DisplayName= "AriaSignature Service" obj= LocalSystem';
@@ -618,24 +723,28 @@ begin
     end;
 
     PumpWizardUi(Format('Регистрация службы AriaSignature (%d/20)...', [Attempt]));
-    if ExecSc(CreateParams, 0, SC_ALREADY_EXISTS) then
+    if TryScCreateServiceOnly(CreateParams) then
     begin
       Created := True;
       Break;
     end;
 
     Log(Format('sc create retry %d failed with code %d', [Attempt, LastScExitCode]));
-    if (LastScExitCode <> SC_MARKED_FOR_DELETE) and
-       (LastScExitCode <> SC_ALREADY_EXISTS) and
-       (LastScExitCode <> 1078) then
-    begin
-      Break;
-    end;
 
-    if LastScExitCode = 1078 then
+    if (LastScExitCode = SC_ALREADY_EXISTS) or (LastScExitCode = 1073) then
+    begin
+      Log('Service already exists in SCM; forcing delete before recreate.');
+      ExecSc(Format('stop %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
+      ExecSc(Format('delete %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_FOUND);
+      KillServiceProcessBestEffort();
+      if not WaitServiceAbsent(ServiceName, 15) then
+        Log('WaitServiceAbsent after forced delete timed out; will retry create.');
+      SleepWithWizardUi(2000, 'Ожидание удаления предыдущей записи службы...');
+    end
+    else if LastScExitCode = 1078 then
     begin
       Log('sc create returned 1078 (display name conflict), retry with alternate DisplayName.');
-      if ExecSc(CreateParamsAlt, 0, SC_ALREADY_EXISTS) then
+      if TryScCreateServiceOnly(CreateParamsAlt) then
       begin
         Created := True;
         Break;
@@ -644,20 +753,29 @@ begin
       if LastScExitCode = 1078 then
       begin
         Log('sc create still returned 1078, retry without DisplayName.');
-        if ExecSc(CreateParamsNoDisplay, 0, SC_ALREADY_EXISTS) then
+        if TryScCreateServiceOnly(CreateParamsNoDisplay) then
         begin
           Created := True;
           Break;
         end;
       end;
-    end;
 
-    if LastScExitCode = SC_MARKED_FOR_DELETE then
+      if (LastScExitCode = SC_ALREADY_EXISTS) or (LastScExitCode = 1073) then
+      begin
+        ExecSc(Format('delete %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_FOUND);
+        WaitServiceAbsent(ServiceName, 10);
+      end;
+    end
+    else if LastScExitCode = SC_MARKED_FOR_DELETE then
     begin
       Log('Service is marked for delete; waiting for SCM to finalize deletion before next create.');
       if not WaitServiceAbsent(ServiceName, 15) then
         Log('WaitServiceAbsent after SC_MARKED_FOR_DELETE timed out; will still retry create.');
       SleepWithWizardUi(2500, 'Ожидание обновления состояния службы в Windows...');
+    end
+    else if (LastScExitCode <> SC_MARKED_FOR_DELETE) and (LastScExitCode <> SC_ALREADY_EXISTS) and (LastScExitCode <> 1073) then
+    begin
+      Break;
     end
     else
     begin
@@ -808,8 +926,11 @@ begin
     InstallHealthStatus := 'install-health:fail-hard-version';
     Log('marker=install-health status=' + InstallHealthStatus + ' stage=api-version');
     MsgBox(
-      'Файлы службы AriaSignature не обновились до версии {#MyAppVersion} (API сообщает другую версию).'#13#10 +
-      'Закройте все процессы AriaSignature и переустановите от имени администратора.'#13#10 +
+      'Служба запущена, но версия API не совпадает с установщиком.'#13#10 +
+      'Ожидалось: {#MyAppVersion}'#13#10 +
+      'API /status: ' + GetApiReportedVersion() + #13#10 +
+      'Файл на диске: ' + GetFileProductVersion(ExpandConstant('{app}\service\AriaSignature.Api.exe')) + #13#10#13#10 +
+      'Закройте все процессы AriaSignature, перезагрузите ПК и переустановите от администратора.'#13#10 +
       'Логи: %ProgramData%\AriaSignature\logs\.',
       mbError,
       MB_OK);
@@ -824,11 +945,11 @@ procedure RunPreInstallCleanup();
 begin
   PumpWizardUi('Подготовка к установке...');
   StopAndDeleteServiceBestEffort();
-  KillServiceProcessBestEffort();
-  if not WaitServiceAbsent(ServiceName, 12) then
-    Log('AriaSignatureService still exists before file copy; installer will retry create later.');
-  if not WaitServiceAbsent(MelezhServiceName, 12) then
-    Log('AriaSignatureMelezhService still exists before file copy; installer will retry create later.');
+  ForceStopAndReleaseServiceProcesses();
+  if not WaitServiceAbsent(ServiceName, 15) then
+    Log('Warning: AriaSignatureService still in SCM before file copy; post-install will force recreate.');
+  if not WaitServiceAbsent(MelezhServiceName, 15) then
+    Log('Warning: AriaSignatureMelezhService still in SCM before file copy; post-install will force recreate.');
 end;
 
 function SchTasksExePath: string;
@@ -929,13 +1050,21 @@ begin
       RaiseException('Таймаут регистрации службы Melezh.');
 
     PumpWizardUi(Format('Регистрация службы Melezh (%d/12)...', [Attempt]));
-    if ExecSc(CreateParams, 0, SC_ALREADY_EXISTS) then
+    if TryScCreateServiceOnly(CreateParams) then
     begin
       Created := True;
       Break;
     end;
 
-    if LastScExitCode = SC_MARKED_FOR_DELETE then
+    if (LastScExitCode = SC_ALREADY_EXISTS) or (LastScExitCode = 1073) then
+    begin
+      ExecSc(Format('stop %s', [MelezhServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
+      ExecSc(Format('delete %s', [MelezhServiceName]), 0, SC_ACCEPTABLE_NOT_FOUND);
+      KillServiceProcessBestEffort();
+      WaitServiceAbsent(MelezhServiceName, 10);
+      SleepWithWizardUi(1500, 'Ожидание удаления предыдущей службы Melezh...');
+    end
+    else if LastScExitCode = SC_MARKED_FOR_DELETE then
     begin
       if not WaitServiceAbsent(MelezhServiceName, 10) then
         Log('WaitServiceAbsent(Melezh) after SC_MARKED_FOR_DELETE timed out.');
@@ -1040,6 +1169,7 @@ begin
   if CurStep = ssPostInstall then
   begin
     StartPostInstallBudget();
+    AssertOnDiskServiceVersionOrAbort(ExpandConstant('{app}\service\AriaSignature.Api.exe'));
     InstallServiceOrAbort();
     if InstallHealthStatus <> 'install-health:ok' then
     begin
