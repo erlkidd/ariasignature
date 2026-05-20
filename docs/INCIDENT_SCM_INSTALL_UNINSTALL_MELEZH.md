@@ -1,6 +1,6 @@
-# Incident: SCM install/uninstall + Melezh autostart
+﻿# Incident: SCM install/uninstall + Melezh autostart
 
-Версия документа: 1.1.0.
+Версия документа: 1.1.1
 
 ## Симптомы
 

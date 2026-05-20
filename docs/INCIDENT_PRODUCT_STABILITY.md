@@ -11,6 +11,7 @@
 | HDD отображается как SSD | Сырой Win32 `MediaType` без нормализации | `DiskTelemetryRules.NormalizeMediaType`, приоритет `MSFT_PhysicalDisk` |
 | «Ресурс SSD» 0% без wear | Fallback `healthPercent` в UI | `ssdLife` → `null` без подтверждённого износа; UI не подставляет SMART-оценку |
 | Нет POST в Melezh | Только чтение :5160 для 1С | `MelezhSyncJob`, `POST /api/v1/melezh/push`, handlers `aria_ping` / `aria_sync` |
+| Handler Melezh не дергает :5160 | Нет URL/токена в аргументах, cron только на static GET, API не слушает | Bootstrap `MelezhProjectBootstrap`, каталог `docs/MELEZH_HANDLER_CATALOG.md`; проверить `aria_get_status` и порт `Api:Port` |
 | `%ProgramData%\AriaSignature` удалялся | — | **Не удаляем** при uninstall (логи, SQLite, melezh project) |
 
 ## Проверка после исправления

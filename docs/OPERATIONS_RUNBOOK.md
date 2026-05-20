@@ -1,6 +1,6 @@
-# AriaSignature — operations runbook
+﻿# AriaSignature — operations runbook
 
-Версия документа: 1.1.0.
+Версия документа: 1.1.1
 
 ## 1. Цель
 

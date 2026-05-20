@@ -17,7 +17,10 @@ public sealed class MelezhHostOptions
     {
         var baseDir = AppContext.BaseDirectory.TrimEnd('\\', '/');
         var installRoot = Path.GetFullPath(Path.Combine(baseDir, ".."));
-        var melezhDir = Path.Combine(installRoot, "melezh");
+        var melezhRootOverride = Environment.GetEnvironmentVariable("ARIASIGNATURE_MELEZH_ROOT");
+        var melezhDir = !string.IsNullOrWhiteSpace(melezhRootOverride)
+            ? Path.GetFullPath(melezhRootOverride.Trim())
+            : Path.Combine(installRoot, "melezh");
         var melezhBat = Path.Combine(melezhDir, "bin", "melezh.bat");
         var melezhExe = Path.Combine(melezhDir, "melezh.exe");
         var melezhLauncher = File.Exists(melezhBat) ? melezhBat : melezhExe;
@@ -36,12 +39,23 @@ public sealed class MelezhHostOptions
             port = parsedPort;
         }
 
+        var projectPath = Environment.GetEnvironmentVariable("ARIASIGNATURE_MELEZH_PROJECT");
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            projectPath = Path.Combine(projectDir, "AriaSignature.melezh");
+        }
+        else
+        {
+            projectPath = Path.GetFullPath(projectPath.Trim());
+            Directory.CreateDirectory(Path.GetDirectoryName(projectPath)!);
+        }
+
         return new MelezhHostOptions
         {
             MelezhExePath = melezhLauncher,
             OscriptExePath = oscriptExe,
             MelezhAppOsPath = appOs,
-            ProjectPath = Path.Combine(projectDir, "AriaSignature.melezh"),
+            ProjectPath = projectPath,
             Port = port
         };
     }

@@ -1,6 +1,6 @@
-# AriaSignature — спецификация API (v1)
+﻿# AriaSignature — спецификация API (v1)
 
-Версия документа: 1.1.0.
+Версия документа: 1.1.1
 
 ## 1. Общие параметры
 
@@ -107,6 +107,7 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
 - Управление: `melezhSync*` в разделе 3.2; Quartz job `melezh-sync-job` в `AriaSignatureService`.
 - URL: `http://127.0.0.1:{melezhPort}/{melezhSyncHandler}` (handler по умолчанию `aria_sync`, health `aria_ping`).
 - Схема тела: как в разделе 3.5 (исходящий POST на коллектор).
+- **Опрос API через Melezh (pull):** планировщик Melezh по cron вызывает только outbound GET handlers (`aria_get_*`) без `{id}` в пути — см. [`docs/MELEZH_HANDLER_CATALOG.md`](MELEZH_HANDLER_CATALOG.md). Контракт REST API агента не дублируется: handlers проксируют на `GET http://127.0.0.1:{apiPort}/api/v1/...`. `POST /api/v1/melezh/push` остаётся endpoint агента, не отдельным outbound handler Melezh.
 
 ### 3.5 Исходящая синхронизация (POST на коллектор)
 

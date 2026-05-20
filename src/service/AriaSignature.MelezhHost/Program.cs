@@ -19,6 +19,12 @@ Log.Logger = new LoggerConfiguration()
 
 try
 {
+    if (args.Contains("--bootstrap-only", StringComparer.OrdinalIgnoreCase))
+    {
+        await RunBootstrapOnlyAsync();
+        return;
+    }
+
     var builder = Host.CreateApplicationBuilder(args);
     builder.Services.AddWindowsService(options =>
     {
@@ -37,4 +43,31 @@ catch (Exception ex)
 finally
 {
     Log.CloseAndFlush();
+}
+
+static async Task RunBootstrapOnlyAsync()
+{
+    var options = MelezhHostOptions.FromEnvironment();
+    Directory.CreateDirectory(Path.GetDirectoryName(options.ProjectPath)!);
+
+    if (!File.Exists(options.ProjectPath))
+    {
+        var exit = await MelezhBootstrapCli.RunAsync(
+            options,
+            MelezhCliCommands.BuildCreateProjectArgs(options.ProjectPath),
+            CancellationToken.None);
+        if (exit != 0)
+        {
+            throw new InvalidOperationException($"CreateProject failed exit={exit}");
+        }
+    }
+
+    using var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
+    var logger = loggerFactory.CreateLogger("MelezhBootstrapOnly");
+    await MelezhProjectBootstrap.EnsureAsync(
+        options,
+        (args, ct) => MelezhBootstrapCli.RunAsync(options, args, ct),
+        logger,
+        CancellationToken.None);
+    Console.WriteLine($"marker=melezh-bootstrap-only ok project={options.ProjectPath}");
 }

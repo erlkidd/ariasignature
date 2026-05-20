@@ -113,9 +113,10 @@ public sealed class MelezhProcessWorker : BackgroundService
             }
         }
 
-        await MelezhProjectSeeder.EnsureDefaultHandlersAsync(
+        await MelezhProjectBootstrap.EnsureAsync(
             _options,
             RunMelezhCliAsync,
+            _logger,
             cancellationToken);
     }
 
@@ -182,60 +183,8 @@ public sealed class MelezhProcessWorker : BackgroundService
         }
     }
 
-    private async Task<int> RunMelezhCliAsync(string cliArguments, CancellationToken cancellationToken)
-    {
-        var (fileName, arguments, workingDirectory) = MelezhCliCommands.ResolveOscriptInvocation(
-            _options.OscriptExePath,
-            _options.MelezhAppOsPath,
-            cliArguments);
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = fileName,
-                Arguments = arguments,
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            }
-        };
-
-        var stdout = new StringBuilder();
-        var stderr = new StringBuilder();
-        process.OutputDataReceived += (_, e) =>
-        {
-            if (e.Data is not null)
-            {
-                stdout.AppendLine(e.Data);
-            }
-        };
-        process.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data is not null)
-            {
-                stderr.AppendLine(e.Data);
-            }
-        };
-
-        process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-        await process.WaitForExitAsync(cancellationToken);
-
-        if (process.ExitCode != 0)
-        {
-            _logger.LogWarning(
-                "melezh CLI failed ({Args}) code={Code} stdout={Stdout} stderr={Stderr}",
-                cliArguments,
-                process.ExitCode,
-                stdout.ToString().Trim(),
-                stderr.ToString().Trim());
-        }
-
-        return process.ExitCode;
-    }
+    private Task<int> RunMelezhCliAsync(string cliArguments, CancellationToken cancellationToken) =>
+        MelezhBootstrapCli.RunAsync(_options, cliArguments, cancellationToken);
 
     private static void TryStopProcess(Process process)
     {

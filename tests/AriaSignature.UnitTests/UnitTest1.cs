@@ -220,6 +220,44 @@ public class DiskTelemetryRulesTests
     }
 }
 
+public class MelezhAriaApiHandlerCatalogTests
+{
+    [Fact]
+    public void All_HandlerKeys_AreUnique()
+    {
+        var keys = MelezhAriaApiHandlerCatalog.All.Select(d => d.Key).ToList();
+        Assert.Equal(keys.Count, keys.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [Fact]
+    public void Catalog_ContainsInboundAndOutboundHandlers()
+    {
+        Assert.Contains(MelezhAriaApiHandlerCatalog.All, d => d.Key == "aria_sync");
+        Assert.Contains(MelezhAriaApiHandlerCatalog.All, d => d.Key == "aria_get_disks");
+        Assert.Contains(MelezhAriaApiHandlerCatalog.All, d => d.Key == "aria_put_settings");
+    }
+
+    [Fact]
+    public void ScheduledHandlers_AreOnlyStaticGet()
+    {
+        var scheduled = MelezhAriaApiHandlerCatalog.All.Where(d => d.ScheduleByDefault).ToList();
+        Assert.Equal(10, scheduled.Count);
+        Assert.All(scheduled, d =>
+        {
+            Assert.Equal(MelezhHandlerDirection.OutboundToAria, d.Direction);
+            Assert.Equal("GET", d.AriaHttpMethod);
+            Assert.DoesNotContain("{", d.ApiPathTemplate ?? "", StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
+    public void Catalog_DoesNotMapMelezhPushAsOutbound()
+    {
+        Assert.DoesNotContain(MelezhAriaApiHandlerCatalog.All, d =>
+            d.ApiPathTemplate?.Contains("melezh/push", StringComparison.OrdinalIgnoreCase) == true);
+    }
+}
+
 public class MelezhSyncDispatcherTests
 {
     [Fact]

@@ -8,6 +8,8 @@ public static class MelezhCliCommands
     public const string CreateProjectMethod = "СоздатьПроект";
     public const string RunProjectMethod = "ЗапуститьПроект";
     public const string AddRequestsHandlerMethod = "ДобавитьОбработчикЗапросов";
+    public const string SetHandlerArgumentMethod = "УстановитьАргументОбработчика";
+    public const string AddScheduledTaskMethod = "ДобавитьРегламентноеЗадание";
 
     public static string BuildCreateProjectArgs(string projectPath) =>
         $"{CreateProjectMethod} --path {QuoteArg(projectPath)}";

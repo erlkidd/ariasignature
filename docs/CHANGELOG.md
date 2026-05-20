@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-05-20
+
+### Added
+
+- Melezh API bridge: `MelezhAriaApiHandlerCatalog`, `MelezhProjectBootstrap` (1 handler на endpoint API, inbound `aria_ping`/`aria_sync`, cron только для static GET).
+- `docs/MELEZH_HANDLER_CATALOG.md`; smoke `Test-MelezhHandlerBootstrap.ps1`, `Test-MelezhAriaBridge.ps1` в release-gate.
+- Env `ARIASIGNATURE_MELEZH_ROOT`, `ARIASIGNATURE_MELEZH_PROJECT`, `ARIASIGNATURE_MELEZH_PULL_CRON`; режим `AriaSignature.MelezhHost --bootstrap-only`.
+
+### Changed
+
+- Версия продукта **1.1.1**.
+
+## [1.1.0] - 2026-05-19
+
 ### Added
 
 - Melezh sync: `MelezhSyncJob`, `POST /api/v1/melezh/push`, настройки `melezhSync*`, handlers `aria_ping` / `aria_sync` при создании проекта.
@@ -20,8 +34,6 @@
 ### Fixed
 
 - «Ресурс SSD» в панели не подставляет `healthPercent` для flash-носителей.
-
-## [1.1.0] - 2026-05-19
 
 ### Added
 

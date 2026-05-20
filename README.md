@@ -64,6 +64,7 @@
 | [`docs/INSTALLER.md`](docs/INSTALLER.md), [`docs/RELEASE_GATE.md`](docs/RELEASE_GATE.md) | Сборка установщика и проверки. |
 | [`docs/OPERATIONS_RUNBOOK.md`](docs/OPERATIONS_RUNBOOK.md) | Runbook эксплуатации, triage/recovery, SLO/SLI. |
 | [`docs/MELEZH.md`](docs/MELEZH.md) | Melezh / OpenIntegrations: служба, порты, связка с 1С. |
+| [`docs/MELEZH_HANDLER_CATALOG.md`](docs/MELEZH_HANDLER_CATALOG.md) | Каталог handler keys ↔ API агента (bridge 1.1.1). |
 
 В работающей установке доступен **Swagger**: `http://<хост>:<порт>/swagger`.
 

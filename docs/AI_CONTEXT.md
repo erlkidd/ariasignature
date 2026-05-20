@@ -1,6 +1,6 @@
-# AriaSignature - AI Context
+﻿# AriaSignature - AI Context
 
-Версия документа: 1.1.0.
+Версия документа: 1.1.1
 
 ## 1) Что это за система
 

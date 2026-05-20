@@ -1,6 +1,6 @@
-# Melezh в составе AriaSignature
+﻿# Melezh в составе AriaSignature
 
-Версия документа: 1.1.0.
+Версия документа: 1.1.1
 
 
 ## Назначение
@@ -33,14 +33,17 @@
 - URL: `http://127.0.0.1:7788/ui`
 - Ссылка также доступна в панели AriaSignature: **Настройки → Melezh / OpenIntegrations**
 
-При первом старте `AriaSignature.MelezhHost` создаёт проект и по умолчанию регистрирует handlers:
+При первом старте `AriaSignature.MelezhHost` создаёт проект и выполняет bootstrap (`MelezhProjectBootstrap`): **один handler key на каждый endpoint API** (см. [`docs/MELEZH_HANDLER_CATALOG.md`](MELEZH_HANDLER_CATALOG.md)).
 
-| URL path | OInt | Назначение |
-|----------|------|------------|
-| `http://127.0.0.1:7788/aria_ping` | `http` / `Get` (GET) | Проверка связи (используется диагностикой агента) |
-| `http://127.0.0.1:7788/aria_sync` | `http` / `Post` (JSON) | Приём снимка телеметрии от `AriaSignatureService` |
+| Канал | Примеры handler | Назначение |
+|-------|-----------------|------------|
+| Inbound `:7788` | `aria_ping`, `aria_sync` | Health и приём JSON от агента (`melezhSync*`) |
+| Outbound GET (cron Melezh) | `aria_get_disks`, `aria_get_status`, … | Планировщик Melezh опрашивает `GET http://127.0.0.1:5160/api/v1/...` (только static GET, без `{id}`) |
+| Outbound POST/PUT/DELETE | `aria_post_backups`, `aria_put_settings`, … | Без cron; вызов вручную или из 1С через `:7788/<key>` |
 
-Дополнительные handlers настраиваются в Web UI.
+Push от агента: `MelezhSyncJob` → `POST :7788/aria_sync`. Отдельный outbound handler на `POST /api/v1/melezh/push` **не** создаётся.
+
+Cron pull по умолчанию: `0 */5 * * * * *` — env `ARIASIGNATURE_MELEZH_PULL_CRON`. Это **не** заменяет Quartz `melezh-sync-job` в `AriaSignatureService` (push); оба канала документированы в `docs/API.md`.
 
 ## Связка 1С ↔ AriaSignature ↔ Melezh
 
@@ -90,8 +93,17 @@
 .\scripts\repair-melezh.ps1
 ```
 
+## Проверка моста
+
+1. `GET http://127.0.0.1:7788/aria_get_disks` — после срабатывания планировщика или ручного trigger в Web UI.
+2. `POST http://127.0.0.1:7788/aria_sync` — тело как у `POST /api/v1/melezh/push`.
+3. `GET http://127.0.0.1:7788/aria_ping` — health Melezh.
+
+Автоматизация: `scripts/Test-MelezhHandlerBootstrap.ps1`, `scripts/Test-MelezhAriaBridge.ps1` (release-gate).
+
 ## Дополнительная документация
 
+- Каталог handlers: [`docs/MELEZH_HANDLER_CATALOG.md`](MELEZH_HANDLER_CATALOG.md)
 - Локальное зеркало: `docs-opi-melezh/melezh/`
 - OpenIntegrations: https://en.openintegrations.dev/docs/Addons/Melezh/Start/Installation/
 - Инцидент SCM/install/uninstall + autostart: `docs/INCIDENT_SCM_INSTALL_UNINSTALL_MELEZH.md`
