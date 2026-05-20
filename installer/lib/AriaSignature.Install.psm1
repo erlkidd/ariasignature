@@ -62,6 +62,47 @@ function Stop-AriaProcesses {
     }
 }
 
+function Get-AriaScServiceState {
+    param([string]$ServiceName)
+    $sc = Get-ScExePath
+    $temp = Join-Path $env:TEMP ("aria-sc-state-{0}.txt" -f ($ServiceName -replace '[^\w]', '_'))
+    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+    $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "`"$sc`" query $ServiceName > `"$temp`" 2>&1" -Wait -PassThru -NoNewWindow -WindowStyle Hidden
+    if ($proc.ExitCode -eq 1060) { return 'NotRegistered' }
+    if (-not (Test-Path $temp)) { return 'Unknown' }
+    $text = (Get-Content -LiteralPath $temp -Raw -ErrorAction SilentlyContinue).ToUpperInvariant()
+    if ($text -match 'DELETE_PENDING|MARKED FOR DELETE|MARKED_FOR_DELETE') { return 'DeletePending' }
+    if ($text -match 'RUNNING') { return 'Running' }
+    if ($text -match 'START_PENDING') { return 'StartPending' }
+    if ($text -match 'STOP_PENDING') { return 'StopPending' }
+    if ($text -match 'STOPPED') { return 'Stopped' }
+    return 'Unknown'
+}
+
+function Remove-AriaServiceFast {
+    param([string]$ServiceName)
+    $state = Get-AriaScServiceState -ServiceName $ServiceName
+    Write-AriaInstallLog "marker=fast-remove-service service=$ServiceName state=$state"
+    if ($state -eq 'NotRegistered') {
+        Write-AriaInstallLog 'marker=fast-remove-service status=ok reason=not-registered'
+        return $true
+    }
+    if ($state -in @('Running', 'StartPending', 'StopPending')) {
+        Stop-AriaProcesses
+        Invoke-AriaSc "stop $ServiceName" -AcceptExitCodes @(0, 1062, 1060) | Out-Null
+    }
+    Invoke-AriaSc "delete $ServiceName" -AcceptExitCodes @(0, 1060, 1072) | Out-Null
+    if ($state -eq 'DeletePending') {
+        $deadline = (Get-Date).AddSeconds(8)
+        while ((Get-Date) -lt $deadline) {
+            if ((Get-AriaScServiceState -ServiceName $ServiceName) -eq 'NotRegistered') { return $true }
+            Invoke-AriaSc "delete $ServiceName" -AcceptExitCodes @(0, 1060, 1072) | Out-Null
+            Start-Sleep -Seconds 1
+        }
+    }
+    return (Get-AriaScServiceState -ServiceName $ServiceName) -eq 'NotRegistered'
+}
+
 function Wait-AriaServiceAbsent {
     param(
         [string]$ServiceName,
@@ -85,6 +126,9 @@ function Wait-AriaServiceAbsent {
 
 function Remove-AriaServiceForce {
     param([string]$ServiceName)
+    if (Remove-AriaServiceFast -ServiceName $ServiceName) {
+        return $true
+    }
     for ($i = 1; $i -le 5; $i++) {
         Invoke-AriaSc "stop $ServiceName" -AcceptExitCodes @(0, 1062, 1060) | Out-Null
         Invoke-AriaSc "delete $ServiceName" -AcceptExitCodes @(0, 1060, 1072) | Out-Null

@@ -50,7 +50,7 @@ Source: "..\..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdi
 Source: "..\..\publish\melezh-host\*"; DestDir: "{app}\melezh-host"; Flags: recursesubdirs createallsubdirs ignoreversion restartreplace
 Source: "..\melezh\bundle\*"; DestDir: "{app}\melezh"; Flags: recursesubdirs createallsubdirs ignoreversion restartreplace
 Source: "..\smartctl\*"; DestDir: "{app}\service\smartctl"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "..\webview2\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall ignoreversion
+Source: "..\webview2\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall ignoreversion; Check: NeedsWebView2Runtime
 
 [Icons]
 Name: "{group}\AriaSignature"; Filename: "{app}\ui\{#MyAppExeName}"; WorkingDir: "{app}\ui"; IconFilename: "{app}\ui\Assets\icon.ico"
@@ -85,6 +85,13 @@ const
   SC_ALREADY_EXISTS = 1073;
   SC_ACCESS_DENIED = 5;
   WebView2ClientGuid = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+  ScSvcNotRegistered = 0;
+  ScSvcStopped = 1;
+  ScSvcRunning = 2;
+  ScSvcStartPending = 3;
+  ScSvcStopPending = 4;
+  ScSvcDeletePending = 5;
+  ScSvcUnknown = 6;
 
 var
   LastScExitCode: Integer;
@@ -202,6 +209,110 @@ begin
 end;
 
 procedure KillServiceProcessBestEffort(); forward;
+function ScQueryServiceState(const AServiceName: string): Integer; forward;
+function WaitServiceAbsent(const AServiceName: string; const TimeoutSeconds: Integer): Boolean; forward;
+procedure FastRemoveServiceBestEffort(const AServiceName: string); forward;
+
+function ScQueryServiceState(const AServiceName: string): Integer;
+var
+  TempFile: string;
+  ExitCode: Integer;
+  Lines: TArrayOfString;
+  I: Integer;
+  LineUpper: string;
+begin
+  Result := ScSvcUnknown;
+  TempFile := ExpandConstant('{tmp}\aria-sc-state-' + AServiceName + '.txt');
+  DeleteFile(TempFile);
+  if not Exec(
+       ExpandConstant('{sys}\cmd.exe'),
+       '/c "' + ScExePath + '" query ' + AServiceName + ' > "' + TempFile + '" 2>&1',
+       '',
+       SW_HIDE,
+       ewWaitUntilTerminated,
+       ExitCode) then
+    Exit;
+
+  if ExitCode = SC_ACCEPTABLE_NOT_FOUND then
+  begin
+    Result := ScSvcNotRegistered;
+    Exit;
+  end;
+
+  if LoadStringsFromFile(TempFile, Lines) then
+  begin
+    for I := 0 to GetArrayLength(Lines) - 1 do
+    begin
+      LineUpper := UpperCase(Lines[I]);
+      if (Pos('DELETE_PENDING', LineUpper) > 0) or
+         (Pos('MARKED FOR DELETE', LineUpper) > 0) or
+         (Pos('MARKED_FOR_DELETE', LineUpper) > 0) then
+      begin
+        Result := ScSvcDeletePending;
+        Exit;
+      end;
+      if Pos('RUNNING', LineUpper) > 0 then
+      begin
+        Result := ScSvcRunning;
+        Exit;
+      end;
+      if Pos('START_PENDING', LineUpper) > 0 then
+      begin
+        Result := ScSvcStartPending;
+        Exit;
+      end;
+      if Pos('STOP_PENDING', LineUpper) > 0 then
+      begin
+        Result := ScSvcStopPending;
+        Exit;
+      end;
+      if Pos('STOPPED', LineUpper) > 0 then
+      begin
+        Result := ScSvcStopped;
+        Exit;
+      end;
+    end;
+  end;
+end;
+
+procedure FastRemoveServiceBestEffort(const AServiceName: string);
+var
+  State: Integer;
+  I: Integer;
+begin
+  State := ScQueryServiceState(AServiceName);
+  Log(Format('marker=fast-remove-service service=%s state=%d', [AServiceName, State]));
+
+  if State = ScSvcNotRegistered then
+  begin
+    Log('marker=fast-remove-service status=ok reason=not-registered');
+    Exit;
+  end;
+
+  if (State = ScSvcRunning) or (State = ScSvcStartPending) or (State = ScSvcStopPending) then
+  begin
+    KillServiceProcessBestEffort();
+    ExecSc(Format('stop %s', [AServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
+  end;
+
+  ExecSc(Format('delete %s', [AServiceName]), 0, SC_ACCEPTABLE_NOT_FOUND);
+
+  if State = ScSvcDeletePending then
+  begin
+    for I := 1 to 10 do
+    begin
+      if WaitServiceAbsent(AServiceName, 1) then
+      begin
+        Log('marker=fast-remove-service status=ok mode=wait-delete-pending');
+        Exit;
+      end;
+      KillServiceProcessBestEffort();
+    end;
+    Log('marker=fast-remove-service status=degraded reason=delete-pending');
+  end
+  else
+    Log('marker=fast-remove-service status=ok');
+end;
 
 function WaitServiceAbsent(const AServiceName: string; const TimeoutSeconds: Integer): Boolean;
 var
@@ -453,17 +564,8 @@ procedure RemoveAppDirectoryBestEffort(); forward;
 
 procedure StopAndDeleteServiceBestEffort();
 begin
-  StopAndDeleteMelezhServiceBestEffort();
-  if ServiceIsRegistered and ServiceIsRunningOrStartPendingViaSc then
-  begin
-    Log('Service is running/start-pending; sending stop before delete.');
-    ExecSc(Format('stop %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
-  end
-  else
-  begin
-    Log('Service is not running; skip sc stop before delete.');
-  end;
-  ExecSc(Format('delete %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_FOUND);
+  FastRemoveServiceBestEffort(MelezhServiceName);
+  FastRemoveServiceBestEffort(ServiceName);
 end;
 
 procedure KillServiceProcessBestEffort();
@@ -641,17 +743,26 @@ end;
 
 procedure ForceStopAndReleaseServiceProcesses();
 var
-  Attempt: Integer;
+  MainState: Integer;
+  MelezhState: Integer;
 begin
-  for Attempt := 1 to 3 do
+  MainState := ScQueryServiceState(ServiceName);
+  MelezhState := ScQueryServiceState(MelezhServiceName);
+  if (MainState = ScSvcNotRegistered) and (MelezhState = ScSvcNotRegistered) then
   begin
-    if ServiceIsRegistered and ServiceIsRunningOrStartPendingViaSc then
-      ExecSc(Format('stop %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
-    if MelezhServiceIsRegistered then
-      ExecSc(Format('stop %s', [MelezhServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
-    KillServiceProcessBestEffort();
-    Sleep(1000);
+    Log('ForceStopAndReleaseServiceProcesses: both services not registered; skip.');
+    Exit;
   end;
+  if (MainState = ScSvcStopped) and (MelezhState = ScSvcStopped) then
+  begin
+    Log('ForceStopAndReleaseServiceProcesses: both services stopped; skip sc stop.');
+    Exit;
+  end;
+  if (MainState = ScSvcRunning) or (MainState = ScSvcStartPending) or (MainState = ScSvcStopPending) then
+    ExecSc(Format('stop %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
+  if (MelezhState = ScSvcRunning) or (MelezhState = ScSvcStartPending) or (MelezhState = ScSvcStopPending) then
+    ExecSc(Format('stop %s', [MelezhServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
+  KillServiceProcessBestEffort();
 end;
 
 procedure LogScCommandCapture(const ArgsTail: string; const Banner: string);
@@ -719,14 +830,11 @@ begin
   PumpWizardUi('Остановка предыдущей службы перед регистрацией...');
   StopAndDeleteServiceBestEffort();
   ForceStopAndReleaseServiceProcesses();
-  if not WaitServiceAbsent(ServiceName, 20) then
+  if ScQueryServiceState(ServiceName) <> ScSvcNotRegistered then
   begin
     InstallHealthStatus := 'install-health:degraded-service-stuck-precreate';
     Log('Warning: AriaSignatureService still present in SCM before create; continuing with create retries.');
-    ExecSc(Format('stop %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_ACTIVE);
-    ExecSc(Format('delete %s', [ServiceName]), 0, SC_ACCEPTABLE_NOT_FOUND);
-    KillServiceProcessBestEffort();
-    SleepWithWizardUi(2000, 'Повторная подготовка SCM перед регистрацией службы...');
+    FastRemoveServiceBestEffort(ServiceName);
   end;
 
   { binPath в кавычках (AddQuotes): иначе "Program Files" ломает sc create и служба не регистрируется }
@@ -887,24 +995,27 @@ begin
     end;
   end;
 
-  Healthy := False;
-  for PortAttempt := 1 to 8 do
+  Healthy := ProbeLocalApiHealth(5160);
+  if not Healthy then
   begin
-    if IsPostInstallTimedOut('api-health') then
+    for PortAttempt := 1 to 3 do
     begin
-      InstallHealthStatus := 'install-health:degraded-timeout-api';
-      Log('marker=install-health status=' + InstallHealthStatus + ' stage=api-health');
-      Exit;
-    end;
+      if IsPostInstallTimedOut('api-health') then
+      begin
+        InstallHealthStatus := 'install-health:degraded-timeout-api';
+        Log('marker=install-health status=' + InstallHealthStatus + ' stage=api-health');
+        Exit;
+      end;
 
-    PumpWizardUi(Format('Проверка локального API (%d/8)...', [PortAttempt]));
-    if ProbeLocalApiHealth(5160) then
-    begin
-      Healthy := True;
-      Break;
+      PumpWizardUi(Format('Проверка локального API (%d/3)...', [PortAttempt]));
+      if ProbeLocalApiHealth(5160) then
+      begin
+        Healthy := True;
+        Break;
+      end;
+      Log(Format('Health probe attempt %d failed with code %d', [PortAttempt, LastProbeExitCode]));
+      SleepWithWizardUi(1500, 'Ожидание готовности локального API...');
     end;
-    Log(Format('Health probe attempt %d failed with code %d', [PortAttempt, LastProbeExitCode]));
-    SleepWithWizardUi(1500, 'Ожидание готовности локального API...');
   end;
 
   if not Healthy then
@@ -968,9 +1079,9 @@ begin
   PumpWizardUi('Подготовка к установке...');
   StopAndDeleteServiceBestEffort();
   ForceStopAndReleaseServiceProcesses();
-  if not WaitServiceAbsent(ServiceName, 15) then
+  if ScQueryServiceState(ServiceName) <> ScSvcNotRegistered then
     Log('Warning: AriaSignatureService still in SCM before file copy; post-install will force recreate.');
-  if not WaitServiceAbsent(MelezhServiceName, 15) then
+  if ScQueryServiceState(MelezhServiceName) <> ScSvcNotRegistered then
     Log('Warning: AriaSignatureMelezhService still in SCM before file copy; post-install will force recreate.');
 end;
 
@@ -1303,30 +1414,14 @@ begin
   if CurUninstallStep = usUninstall then
   begin
     DeleteTrayLogonTaskBestEffort();
-    ForceStopAndReleaseServiceProcesses();
-    StopAndDeleteServiceBestEffort();
     KillServiceProcessBestEffort();
-    if WaitServiceAbsent(MelezhServiceName, 25) and WaitServiceAbsent(ServiceName, 25) then
+    FastRemoveServiceBestEffort(MelezhServiceName);
+    FastRemoveServiceBestEffort(ServiceName);
+    if (ScQueryServiceState(MelezhServiceName) = ScSvcNotRegistered) and
+       (ScQueryServiceState(ServiceName) = ScSvcNotRegistered) then
       Log('marker=uninstall-service-removal status=ok')
     else
-    begin
-      Log('Uninstall first-pass service removal timed out; running second-pass stop/delete.');
-      StopAndDeleteServiceBestEffort();
-      KillServiceProcessBestEffort();
-      if WaitServiceAbsent(MelezhServiceName, 60) and WaitServiceAbsent(ServiceName, 60) then
-      begin
-        Log('marker=uninstall-service-removal status=ok mode=second-pass');
-      end
-      else
-      begin
-        Log('marker=uninstall-service-removal status=degraded reason=service-still-present-or-pending');
-        MsgBox(
-          'Службы AriaSignature или Melezh могли остаться в Windows после удаления.'#13#10 +
-          'Удалите AriaSignatureService и AriaSignatureMelezhService в services.msc.',
-          mbInformation,
-          MB_OK);
-      end;
-    end;
+      Log('marker=uninstall-service-removal status=degraded reason=service-still-present-or-pending');
 
     if DirExists(ExpandConstant('{commonappdata}\AriaSignature\melezh')) then
     begin

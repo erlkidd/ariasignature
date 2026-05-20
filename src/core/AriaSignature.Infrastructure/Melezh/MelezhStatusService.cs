@@ -235,7 +235,12 @@ public sealed class MelezhStatusService : IMelezhStatusService
     private static async Task<(bool Reachable, string? Error)> ProbeUiAsync(int port, CancellationToken cancellationToken)
     {
         using var http = new HttpClient { Timeout = UiProbeTimeout };
-        var uris = new[] { $"http://127.0.0.1:{port}/ui", $"http://127.0.0.1:{port}/" };
+        var uris = new[]
+        {
+            $"http://127.0.0.1:{port}/aria_ping",
+            $"http://127.0.0.1:{port}/ui",
+            $"http://127.0.0.1:{port}/",
+        };
         string? lastErr = null;
 
         foreach (var uri in uris)

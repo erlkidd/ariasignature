@@ -64,6 +64,8 @@ public sealed class LocalApiHostedService : BackgroundService
             webBuilder.Services.AddSingleton<ISmartRefreshCronApplier>(cronApplier);
             var outboundCronApplier = _serviceProvider.GetRequiredService<IOutboundSyncCronApplier>();
             webBuilder.Services.AddSingleton<IOutboundSyncCronApplier>(outboundCronApplier);
+            var melezhSyncCronApplier = _serviceProvider.GetRequiredService<IMelezhSyncCronApplier>();
+            webBuilder.Services.AddSingleton<IMelezhSyncCronApplier>(melezhSyncCronApplier);
 
             webApp = webBuilder.Build();
             webApp.UseAriaApi();

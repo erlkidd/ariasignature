@@ -2,6 +2,7 @@ using System.IO;
 using AriaSignature.Application;
 using AriaSignature.Application.Abstractions;
 using AriaSignature.Infrastructure;
+using AriaSignature.Infrastructure.Melezh;
 using AriaSignature.Service.Jobs;
 using Quartz;
 using AriaSignature.Service;
@@ -85,11 +86,17 @@ try
     builder.Services.AddHostedService<BackupSchedulerHostedService>();
     builder.Services.AddSingleton<ISmartRefreshCronApplier, QuartzSmartRefreshCronApplier>();
     builder.Services.AddSingleton<IOutboundSyncCronApplier, QuartzOutboundSyncCronApplier>();
+    builder.Services.AddSingleton<IMelezhSyncCronApplier, QuartzMelezhSyncCronApplier>();
     builder.Services.AddHostedService<SmartMonitoringCronSyncHostedService>();
     builder.Services.AddHostedService<OutboundSyncCronSyncHostedService>();
+    builder.Services.AddHostedService<MelezhSyncCronSyncHostedService>();
     builder.Services.AddHttpClient(OutboundSyncJob.HttpClientName, client =>
     {
         client.Timeout = TimeSpan.FromSeconds(120);
+    });
+    builder.Services.AddHttpClient(MelezhSyncDispatcher.HttpClientName, client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(60);
     });
     builder.Services.AddQuartz(options =>
     {
@@ -110,6 +117,15 @@ try
             .ForJob(outboundJobKey)
             .WithIdentity("outbound-sync-trigger")
             .WithCronSchedule(outboundCron));
+
+        var melezhJobKey = new JobKey("melezh-sync-job");
+        var melezhCron = builder.Configuration.GetValue<string>("MelezhSync:Cron") ?? "0 0/15 * * * ?";
+
+        options.AddJob<MelezhSyncJob>(configure => configure.WithIdentity(melezhJobKey));
+        options.AddTrigger(configure => configure
+            .ForJob(melezhJobKey)
+            .WithIdentity("melezh-sync-trigger")
+            .WithCronSchedule(melezhCron));
     });
     builder.Services.AddQuartzHostedService(options => options.WaitForJobsToComplete = true);
 

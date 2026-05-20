@@ -1,7 +1,9 @@
 using System.Reflection;
 using System.Text.Json;
 using AriaSignature.Application.Services;
+using AriaSignature.Application.Telemetry;
 using AriaSignature.Infrastructure.Backup;
+using AriaSignature.Infrastructure.Melezh;
 using AriaSignature.Infrastructure.Monitoring;
 using AriaSignature.MelezhHost;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -181,19 +183,49 @@ public class MelezhCliCommandsTests
     }
 }
 
-public class DiskMediaInferenceTests
+public class DiskTelemetryRulesTests
 {
     [Theory]
-    [InlineData("NVMe", "Samsung PM9A1", "SSD")]
-    [InlineData("SATA", "ST1000DM010", "HDD")]
-    [InlineData("Unknown", "Generic USB enclosure", "Не определён")]
-    public void InferMediaType_UsesStrongerHeuristics(string iface, string model, string expected)
+    [InlineData("Fixed hard disk media", "SATA", "ST1000DM010", null, "HDD")]
+    [InlineData("", "NVMe", "Samsung PM9A1", null, "NVMe")]
+    [InlineData("SSD", "SATA", "ADATA SU650", null, "SSD")]
+    public void NormalizeMediaType_PrefersStorageMapAndHeuristics(
+        string raw,
+        string iface,
+        string model,
+        int? physicalIndex,
+        string expected)
     {
-        var method = typeof(WmiDiskTelemetryCollector)
-            .GetMethod("InferMediaType", BindingFlags.NonPublic | BindingFlags.Static);
-        Assert.NotNull(method);
-
-        var actual = (string?)method!.Invoke(null, [iface, model]);
+        IReadOnlyDictionary<int, string>? map = physicalIndex is int idx
+            ? new Dictionary<int, string> { [idx] = "HDD" }
+            : null;
+        var actual = DiskTelemetryRules.NormalizeMediaType(raw, physicalIndex, iface, model, map);
         Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void NormalizeSsdLife_ReturnsNull_WhenZeroWithoutWearConfirmation()
+    {
+        Assert.Null(DiskTelemetryRules.NormalizeSsdLifeRemainingPercent(0, wearConfirmed: false));
+        Assert.Equal(42, DiskTelemetryRules.NormalizeSsdLifeRemainingPercent(42, wearConfirmed: false));
+        Assert.Equal(5, DiskTelemetryRules.NormalizeSsdLifeRemainingPercent(5, wearConfirmed: true));
+    }
+
+    [Fact]
+    public void NormalizeMediaType_StorageMapOverridesRawFixedDisk()
+    {
+        var map = new Dictionary<int, string> { [0] = "HDD" };
+        var actual = DiskTelemetryRules.NormalizeMediaType("Fixed hard disk media", 0, "SCSI", "Unknown", map);
+        Assert.Equal("HDD", actual);
+    }
+}
+
+public class MelezhSyncDispatcherTests
+{
+    [Fact]
+    public void BuildTargetUrl_UsesLocalhostPortAndHandler()
+    {
+        var url = $"http://127.0.0.1:{7788}/{"aria_sync".TrimStart('/')}";
+        Assert.Equal("http://127.0.0.1:7788/aria_sync", url);
     }
 }

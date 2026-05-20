@@ -290,27 +290,8 @@ public partial class MainWindow : Window
 
     private void ScheduleAppReadyFallbackHide()
     {
+        // Overlay stays until WebView posts action=appReady (see OnWebMessage).
         CancelAppReadyFallback();
-        _appReadyFallbackCts = new CancellationTokenSource();
-        var token = _appReadyFallbackCts.Token;
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(8), token).ConfigureAwait(false);
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    if (_awaitingAppReady)
-                    {
-                        HideLoadingOverlay();
-                    }
-                });
-            }
-            catch (OperationCanceledException)
-            {
-                // ignore cancellation
-            }
-        }, token);
     }
 
     private void CancelAppReadyFallback()

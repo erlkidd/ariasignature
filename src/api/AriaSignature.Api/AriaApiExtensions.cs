@@ -51,6 +51,7 @@ public static class AriaApiExtensions
         });
         services.AddSingleton<ISmartRefreshCronApplier, NoOpSmartRefreshCronApplier>();
         services.AddSingleton<IOutboundSyncCronApplier, NoOpOutboundSyncCronApplier>();
+        services.AddSingleton<IMelezhSyncCronApplier, NoOpMelezhSyncCronApplier>();
         return services;
     }
 
@@ -197,6 +198,13 @@ public static class AriaApiExtensions
                     total = snapshot.OutboundSyncTotal,
                     successRatio = snapshot.OutboundSyncSuccessRatio
                 },
+                melezhSync = new
+                {
+                    succeeded = snapshot.MelezhSyncSucceeded,
+                    failed = snapshot.MelezhSyncFailed,
+                    total = snapshot.MelezhSyncTotal,
+                    successRatio = snapshot.MelezhSyncSuccessRatio
+                },
                 snapshot.DbBusyRetries
             });
         })
@@ -221,6 +229,13 @@ public static class AriaApiExtensions
                 ?? "0 0/30 * * * ?";
             var apiBind = NormalizeApiBind(dict.GetValueOrDefault(AppSettingsApiKeys.Bind));
             var apiSharedSecret = dict.GetValueOrDefault(AppSettingsApiKeys.SharedSecret) ?? string.Empty;
+            var melezhSyncEnabled = ParseBoolOrDefault(dict.GetValueOrDefault(AppSettingsMelezhSyncKeys.Enabled), defaultValue: true);
+            var melezhSyncHandler = dict.GetValueOrDefault(AppSettingsMelezhSyncKeys.Handler) ?? "aria_sync";
+            var melezhSyncCron = dict.GetValueOrDefault(AppSettingsMelezhSyncKeys.Cron)
+                ?? configuration.GetValue<string>("MelezhSync:Cron")
+                ?? "0 0/15 * * * ?";
+            var melezhSyncLastOk = dict.GetValueOrDefault(AppSettingsMelezhSyncKeys.LastOkUtc);
+            var melezhSyncLastError = dict.GetValueOrDefault(AppSettingsMelezhSyncKeys.LastError);
             var melezh = await melezhStatus.GetSnapshotAsync(cancellationToken);
             return Results.Ok(new
             {
@@ -233,6 +248,11 @@ public static class AriaApiExtensions
                 outboundSyncEnabled = outboundEnabled,
                 outboundSyncUrl = outboundUrl,
                 outboundSyncCron = outboundCron,
+                melezhSyncEnabled = melezhSyncEnabled,
+                melezhSyncHandler = melezhSyncHandler,
+                melezhSyncCron = melezhSyncCron,
+                melezhSyncLastOk = string.IsNullOrWhiteSpace(melezhSyncLastOk) ? null : melezhSyncLastOk,
+                melezhSyncLastError = string.IsNullOrWhiteSpace(melezhSyncLastError) ? null : melezhSyncLastError,
                 melezhEnabled = melezh.Enabled,
                 melezhPort = melezh.Port,
                 melezhUiUrl = melezh.UiUrl,
@@ -263,6 +283,7 @@ public static class AriaApiExtensions
             IAppSettingsService settings,
             ISmartRefreshCronApplier cronApplier,
             IOutboundSyncCronApplier outboundCronApplier,
+            IMelezhSyncCronApplier melezhSyncCronApplier,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
@@ -296,6 +317,19 @@ public static class AriaApiExtensions
                 {
                     errors["outboundSyncCron"] = ["Некорректное cron-выражение (Quartz)."];
                 }
+            }
+
+            if (body.MelezhSyncCron is { } melezhCronRaw &&
+                !CronExpression.IsValidExpression(melezhCronRaw.Trim()))
+            {
+                errors["melezhSyncCron"] = ["Некорректное cron-выражение (Quartz)."];
+            }
+
+            if (body.MelezhSyncHandler is { } handlerRaw &&
+                !string.IsNullOrWhiteSpace(handlerRaw) &&
+                !System.Text.RegularExpressions.Regex.IsMatch(handlerRaw.Trim(), @"^[a-zA-Z0-9_\-]+$"))
+            {
+                errors["melezhSyncHandler"] = ["Имя handler: только латиница, цифры, _ и -."];
             }
 
             if (body.ApiPort is int ap)
@@ -354,6 +388,8 @@ public static class AriaApiExtensions
 
             var blockOutboundUrl = errors.ContainsKey("outboundSyncUrl");
             var blockOutboundCron = errors.ContainsKey("outboundSyncCron");
+            var blockMelezhCron = errors.ContainsKey("melezhSyncCron");
+            var blockMelezhHandler = errors.ContainsKey("melezhSyncHandler");
 
             if (!blockOutboundUrl && body.OutboundSyncEnabled is { } obEn)
             {
@@ -381,6 +417,32 @@ public static class AriaApiExtensions
                 }
             }
 
+            if (!blockMelezhHandler && body.MelezhSyncEnabled is { } mzEn)
+            {
+                await settings.SetAsync(AppSettingsMelezhSyncKeys.Enabled, mzEn ? "true" : "false", cancellationToken);
+            }
+
+            if (!blockMelezhHandler && body.MelezhSyncHandler is not null)
+            {
+                await settings.SetAsync(AppSettingsMelezhSyncKeys.Handler, body.MelezhSyncHandler.Trim(), cancellationToken);
+            }
+
+            if (!blockMelezhCron &&
+                body.MelezhSyncCron is { } melezhCron &&
+                CronExpression.IsValidExpression(melezhCron.Trim()))
+            {
+                var trimmedMz = melezhCron.Trim();
+                await settings.SetAsync(AppSettingsMelezhSyncKeys.Cron, trimmedMz, cancellationToken);
+                try
+                {
+                    await melezhSyncCronApplier.ApplyCronAsync(trimmedMz, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    log.LogWarning(ex, "Не удалось перепланировать Melezh sync в Quartz; значение сохранено в базе");
+                }
+            }
+
             return errors.Count > 0
                 ? Results.ValidationProblem(errors)
                 : Results.Ok(new { saved = true });
@@ -388,6 +450,24 @@ public static class AriaApiExtensions
         .WithName("UpdateSettings")
         .WithTags("Settings")
         .WithOpenApi();
+
+        api.MapPost("/melezh/push", async (IMelezhSyncDispatcher dispatcher, CancellationToken cancellationToken) =>
+        {
+            var result = await dispatcher.PushSnapshotAsync(cancellationToken);
+            if (!result.Ok)
+            {
+                return Results.Json(new { ok = false, error = result.Error, targetUrl = result.TargetUrl }, statusCode: StatusCodes.Status502BadGateway);
+            }
+
+            return Results.Ok(new { ok = true, targetUrl = result.TargetUrl });
+        })
+        .WithName("PushMelezhSync")
+        .WithTags("Melezh")
+        .WithOpenApi(o =>
+        {
+            o.Description = "Немедленная отправка снимка телеметрии в Melezh (POST http://127.0.0.1:{port}/{handler}).";
+            return o;
+        });
 
         api.MapPost("/backups/test-mssql", async (MsSqlConnectionPayload payload, CancellationToken cancellationToken) =>
         {
@@ -601,6 +681,9 @@ public static class AriaApiExtensions
 
     private static bool ParseBool(string? value) =>
         bool.TryParse(value, out var b) && b;
+
+    private static bool ParseBoolOrDefault(string? value, bool defaultValue) =>
+        value is null ? defaultValue : bool.TryParse(value, out var b) && b;
 
     private static bool IsUnchangedFileSourceOnUpdate(string requestSource, BackupJob? existingForUpdate)
     {

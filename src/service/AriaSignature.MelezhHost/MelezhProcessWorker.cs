@@ -91,19 +91,40 @@ public sealed class MelezhProcessWorker : BackgroundService
 
     private async Task EnsureProjectExistsAsync(CancellationToken cancellationToken)
     {
-        if (File.Exists(_options.ProjectPath))
+        if (!File.Exists(_options.ProjectPath))
         {
-            return;
+            var templatePath = ResolveBundledTemplatePath();
+            if (templatePath is not null)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_options.ProjectPath)!);
+                File.Copy(templatePath, _options.ProjectPath, overwrite: false);
+                _logger.LogInformation("Copied Melezh project template from {Template}", templatePath);
+            }
+            else
+            {
+                _logger.LogInformation("Creating Melezh project at {Path}", _options.ProjectPath);
+                var args = MelezhCliCommands.BuildCreateProjectArgs(_options.ProjectPath);
+                var exitCode = await RunMelezhCliAsync(args, cancellationToken);
+                if (exitCode != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"{MelezhCliCommands.CreateProjectMethod} failed with exit code {exitCode}");
+                }
+            }
         }
 
-        _logger.LogInformation("Creating Melezh project at {Path}", _options.ProjectPath);
-        var args = MelezhCliCommands.BuildCreateProjectArgs(_options.ProjectPath);
-        var exitCode = await RunMelezhCliAsync(args, cancellationToken);
-        if (exitCode != 0)
-        {
-            throw new InvalidOperationException(
-                $"{MelezhCliCommands.CreateProjectMethod} failed with exit code {exitCode}");
-        }
+        await MelezhProjectSeeder.EnsureDefaultHandlersAsync(
+            _options,
+            RunMelezhCliAsync,
+            cancellationToken);
+    }
+
+    private string? ResolveBundledTemplatePath()
+    {
+        var baseDir = AppContext.BaseDirectory.TrimEnd('\\', '/');
+        var installRoot = Path.GetFullPath(Path.Combine(baseDir, ".."));
+        var candidate = Path.Combine(installRoot, "melezh", "templates", "AriaSignature.melezh");
+        return File.Exists(candidate) ? candidate : null;
     }
 
     private Process? StartMelezhProcess()

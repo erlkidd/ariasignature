@@ -21,6 +21,8 @@ public static class DependencyInjection
             services.AddSingleton<SmartCtlLowLevelReader>();
             services.AddSingleton<IDiskTelemetryCollector, WmiDiskTelemetryCollector>();
             services.AddSingleton<IMelezhStatusService, MelezhStatusService>();
+            services.AddHttpClient(MelezhSyncDispatcher.HttpClientName);
+            services.AddSingleton<IMelezhSyncDispatcher, MelezhSyncDispatcher>();
         }
         else
         {

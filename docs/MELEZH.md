@@ -33,7 +33,14 @@
 - URL: `http://127.0.0.1:7788/ui`
 - Ссылка также доступна в панели AriaSignature: **Настройки → Melezh / OpenIntegrations**
 
-В Web UI настраиваются handlers, аргументы и логи Melezh.
+При первом старте `AriaSignature.MelezhHost` создаёт проект и по умолчанию регистрирует handlers:
+
+| URL path | OInt | Назначение |
+|----------|------|------------|
+| `http://127.0.0.1:7788/aria_ping` | `http` / `Get` (GET) | Проверка связи (используется диагностикой агента) |
+| `http://127.0.0.1:7788/aria_sync` | `http` / `Post` (JSON) | Приём снимка телеметрии от `AriaSignatureService` |
+
+Дополнительные handlers настраиваются в Web UI.
 
 ## Связка 1С ↔ AriaSignature ↔ Melezh
 
@@ -41,6 +48,8 @@
 1С (расширение)
   ├─ GET http://<agent-ip>:5160/api/v1/disks|backups|...   ← данные агента
   └─ POST http://<agent-ip>:7788/<handler>                 ← интеграции OInt через Melezh
+
+Периодическая отправка снимка с агента в Melezh (тот же JSON, что исходящий sync): настройки `melezhSync*` в `GET/PUT /api/v1/settings`, ручной push — `POST /api/v1/melezh/push`. См. `docs/API.md`.
 ```
 
 ## CLI (OInt 0.12+ / Melezh 0.12)

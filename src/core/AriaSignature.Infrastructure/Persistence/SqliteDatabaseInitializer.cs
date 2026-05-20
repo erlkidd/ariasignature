@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
+using AriaSignature.Application;
 using AriaSignature.Application.Runtime;
 
 namespace AriaSignature.Infrastructure.Persistence;
@@ -343,6 +344,11 @@ public sealed class SqliteDatabaseInitializer : ISqliteDatabaseInitializer
         await UpsertSettingIfMissingAsync(connection, "OutboundSync:Enabled", "false", cancellationToken);
         await UpsertSettingIfMissingAsync(connection, "OutboundSync:Url", "", cancellationToken);
         await UpsertSettingIfMissingAsync(connection, "OutboundSync:Cron", "0 0/30 * * * ?", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, AppSettingsMelezhSyncKeys.Enabled, "true", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, AppSettingsMelezhSyncKeys.Handler, "aria_sync", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, AppSettingsMelezhSyncKeys.Cron, "0 0/15 * * * ?", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, AppSettingsMelezhSyncKeys.LastOkUtc, "", cancellationToken);
+        await UpsertSettingIfMissingAsync(connection, AppSettingsMelezhSyncKeys.LastError, "", cancellationToken);
     }
 
     private static async Task UpsertSettingIfMissingAsync(

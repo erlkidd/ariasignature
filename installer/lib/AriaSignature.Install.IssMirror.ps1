@@ -39,20 +39,19 @@ function Invoke-IssPreInstallCleanup {
         Stop-AriaProcesses
         Start-Sleep -Seconds 1
     }
-    if (-not (Wait-AriaServiceAbsent -ServiceName $cfg.mainServiceName -TimeoutSeconds 15)) {
-        Write-AriaInstallLog "WARN: $($cfg.mainServiceName) still in SCM before file copy equivalent"
-    }
-    if (-not (Wait-AriaServiceAbsent -ServiceName $cfg.melezhServiceName -TimeoutSeconds 15)) {
-        Write-AriaInstallLog "WARN: $($cfg.melezhServiceName) still in SCM before file copy equivalent"
+    foreach ($svc in @($cfg.mainServiceName, $cfg.melezhServiceName)) {
+        if ((Get-AriaScServiceState -ServiceName $svc) -ne 'NotRegistered') {
+            Write-AriaInstallLog "WARN: $svc still in SCM before file copy (state=$(Get-AriaScServiceState -ServiceName $svc))"
+        }
     }
 }
 
 function Invoke-IssStopAndDeleteBothBestEffort {
     $cfg = Get-AriaInstallConfig
     foreach ($name in @($cfg.melezhServiceName, $cfg.mainServiceName)) {
-        Invoke-IssSc "stop $name" -AcceptExitCodes @(0, 1062, 1060) | Out-Null
-        Invoke-IssSc "delete $name" -AcceptExitCodes @(0, 1060, 1072) | Out-Null
+        Remove-AriaServiceFast -ServiceName $name | Out-Null
     }
+    Write-AriaInstallLog 'marker=uninstall-service-removal'
 }
 
 function Assert-IssMelezhBundleOrAbort {

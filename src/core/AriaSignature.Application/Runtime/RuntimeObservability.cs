@@ -15,6 +15,8 @@ public static class RuntimeObservability
     private static long _smartRefreshFailed;
     private static long _outboundSyncSucceeded;
     private static long _outboundSyncFailed;
+    private static long _melezhSyncSucceeded;
+    private static long _melezhSyncFailed;
     private static long _dbBusyRetries;
 
     public static void RecordApiStartupLatency(TimeSpan latency)
@@ -63,6 +65,18 @@ public static class RuntimeObservability
         }
     }
 
+    public static void RecordMelezhSync(bool success)
+    {
+        if (success)
+        {
+            Interlocked.Increment(ref _melezhSyncSucceeded);
+        }
+        else
+        {
+            Interlocked.Increment(ref _melezhSyncFailed);
+        }
+    }
+
     public static void RecordDbBusyRetry()
     {
         Interlocked.Increment(ref _dbBusyRetries);
@@ -82,8 +96,10 @@ public static class RuntimeObservability
             SmartRefreshFailed: Interlocked.Read(ref _smartRefreshFailed),
             OutboundSyncSucceeded: Interlocked.Read(ref _outboundSyncSucceeded),
             OutboundSyncFailed: Interlocked.Read(ref _outboundSyncFailed),
+            MelezhSyncSucceeded: Interlocked.Read(ref _melezhSyncSucceeded),
+            MelezhSyncFailed: Interlocked.Read(ref _melezhSyncFailed),
             DbBusyRetries: Interlocked.Read(ref _dbBusyRetries));
-    }
+}
 }
 
 public sealed record RuntimeObservabilitySnapshot(
@@ -97,6 +113,8 @@ public sealed record RuntimeObservabilitySnapshot(
     long SmartRefreshFailed,
     long OutboundSyncSucceeded,
     long OutboundSyncFailed,
+    long MelezhSyncSucceeded,
+    long MelezhSyncFailed,
     long DbBusyRetries)
 {
     public long BackupTotal => BackupSucceeded + BackupFailed;
@@ -105,4 +123,6 @@ public sealed record RuntimeObservabilitySnapshot(
     public double SmartRefreshSuccessRatio => SmartRefreshTotal == 0 ? 1d : (double)SmartRefreshSucceeded / SmartRefreshTotal;
     public long OutboundSyncTotal => OutboundSyncSucceeded + OutboundSyncFailed;
     public double OutboundSyncSuccessRatio => OutboundSyncTotal == 0 ? 1d : (double)OutboundSyncSucceeded / OutboundSyncTotal;
+    public long MelezhSyncTotal => MelezhSyncSucceeded + MelezhSyncFailed;
+    public double MelezhSyncSuccessRatio => MelezhSyncTotal == 0 ? 1d : (double)MelezhSyncSucceeded / MelezhSyncTotal;
 }

@@ -3,6 +3,7 @@ using System.IO;
 using System.Management;
 using System.Runtime.Versioning;
 using AriaSignature.Application.Abstractions;
+using AriaSignature.Application.Telemetry;
 using AriaSignature.Domain.Entities;
 using AriaSignature.Domain.Enums;
 using Microsoft.Extensions.Logging;
@@ -73,8 +74,18 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                         var reallocated = smart.ReallocatedSectors;
                         var pending = smart.PendingSectors;
                         var uncorrectable = smart.UncorrectableErrors;
-                        var ssdLife = smart.SsdLifeRemainingPercent;
-                        var hadTelemetry = HasTelemetrySignal(smart) || smart.PredictFailure;
+                        var wearConfirmed = smartCtlUsed || storageUsed;
+                        var ssdLife = DiskTelemetryRules.NormalizeSsdLifeRemainingPercent(
+                            smart.SsdLifeRemainingPercent,
+                            wearConfirmed);
+                        var hadTelemetry = DiskTelemetryRules.HasMeaningfulTelemetrySignal(
+                            smart.TemperatureCelsius,
+                            smart.PowerOnHours,
+                            reallocated,
+                            pending,
+                            uncorrectable,
+                            ssdLife,
+                            wearConfirmed) || smart.PredictFailure;
                         var health = EstimateHealthPercent(reallocated, pending, uncorrectable, ssdLife, hadTelemetry, smart.PredictFailure);
                         var status = CalculateStatus(reallocated, pending, uncorrectable, ssdLife);
 
@@ -84,7 +95,12 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                             Model = model,
                             Serial = serial,
                             Interface = iface,
-                            MediaType = ResolveMediaType(mediaType, physicalIndex, iface, model, storageMediaType),
+                            MediaType = DiskTelemetryRules.NormalizeMediaType(
+                                mediaType,
+                                physicalIndex,
+                                iface,
+                                model,
+                                storageMediaType),
                             SizeTotalBytes = diskCapacity.total > 0 ? diskCapacity.total : size,
                             SizeFreeBytes = diskCapacity.free,
                             SsdLifeRemainingPercent = ssdLife,

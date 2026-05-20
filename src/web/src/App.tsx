@@ -75,6 +75,11 @@ interface SettingsDto {
   outboundSyncEnabled: boolean;
   outboundSyncUrl: string;
   outboundSyncCron: string;
+  melezhSyncEnabled: boolean;
+  melezhSyncHandler: string;
+  melezhSyncCron: string;
+  melezhSyncLastOk?: string | null;
+  melezhSyncLastError?: string | null;
   melezhEnabled: boolean;
   melezhPort: number;
   melezhUiUrl: string;
@@ -142,16 +147,11 @@ const quartzDays = [
 
 function formatSsdLifePercent(d: Pick<DiskRow, "ssdLifeRemainingPercent" | "healthPercent" | "mediaType" | "interface">): string {
   const media = (d.mediaType ?? "").toUpperCase();
-  const iface = (d["interface"] ?? "").toUpperCase();
   if (media.includes("HDD") || media.includes("ЖЕСТК")) {
     return "—";
   }
   if (d.ssdLifeRemainingPercent != null) {
     return `${d.ssdLifeRemainingPercent}%`;
-  }
-  const isFlash = media.includes("SSD") || media.includes("NVME") || media.includes("FLASH") || iface.includes("NVME");
-  if (isFlash && d.healthPercent != null) {
-    return `${d.healthPercent}%`;
   }
   return "н/д";
 }
@@ -551,6 +551,7 @@ export default function App() {
   const [autostartMelezhBootAuto, setAutostartMelezhBootAuto] = useState<boolean | null>(null);
   const [autostartAllServicesBootAuto, setAutostartAllServicesBootAuto] = useState<boolean | null>(null);
   const [melezhRepairBusy, setMelezhRepairBusy] = useState(false);
+  const [melezhPushBusy, setMelezhPushBusy] = useState(false);
   const [autostartBusy, setAutostartBusy] = useState(false);
 
   const [jobName, setJobName] = useState("");
@@ -826,6 +827,11 @@ export default function App() {
         outboundSyncEnabled: Boolean(s.outboundSyncEnabled),
         outboundSyncUrl: s.outboundSyncUrl ?? "",
         outboundSyncCron: s.outboundSyncCron ?? "0 0/30 * * * ?",
+        melezhSyncEnabled: s.melezhSyncEnabled ?? true,
+        melezhSyncHandler: s.melezhSyncHandler ?? "aria_sync",
+        melezhSyncCron: s.melezhSyncCron ?? "0 0/15 * * * ?",
+        melezhSyncLastOk: s.melezhSyncLastOk ?? null,
+        melezhSyncLastError: s.melezhSyncLastError ?? null,
         melezhEnabled: s.melezhEnabled ?? true,
         melezhPort: s.melezhPort ?? 7788,
         melezhUiUrl: s.melezhUiUrl ?? "http://127.0.0.1:7788/ui",
@@ -1340,6 +1346,9 @@ export default function App() {
         outboundSyncEnabled: settings.outboundSyncEnabled,
         outboundSyncUrl: settings.outboundSyncUrl,
         outboundSyncCron: outboundCronPreview,
+        melezhSyncEnabled: settings.melezhSyncEnabled,
+        melezhSyncHandler: settings.melezhSyncHandler,
+        melezhSyncCron: settings.melezhSyncCron,
       };
       await apiSend("/settings", "PUT", body);
       await refreshSettings();
@@ -2727,10 +2736,62 @@ export default function App() {
                   ) : null}
                 </p>
               ) : null}
+              <h3>Синхронизация в Melezh</h3>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={settings.melezhSyncEnabled}
+                  onChange={(e) => setSettings({ ...settings, melezhSyncEnabled: e.target.checked })}
+                />
+                Периодическая отправка телеметрии в Melezh (POST)
+              </label>
+              <label>
+                Handler (URL path)
+                <input
+                  value={settings.melezhSyncHandler}
+                  onChange={(e) => setSettings({ ...settings, melezhSyncHandler: e.target.value })}
+                  placeholder="aria_sync"
+                />
+              </label>
+              <label>
+                Cron (Quartz)
+                <input
+                  value={settings.melezhSyncCron}
+                  onChange={(e) => setSettings({ ...settings, melezhSyncCron: e.target.value })}
+                />
+              </label>
+              {settings.melezhSyncLastOk ? (
+                <p className="hint">
+                  Последняя успешная отправка: <span className="mono">{settings.melezhSyncLastOk}</span>
+                </p>
+              ) : null}
+              {settings.melezhSyncLastError ? (
+                <p className="hint warn">Ошибка sync: {settings.melezhSyncLastError}</p>
+              ) : null}
               <div className="row">
                 <a href={settings.melezhUiUrl} target="_blank" rel="noreferrer">
                   Открыть Web UI Melezh
                 </a>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={melezhPushBusy}
+                  onClick={async () => {
+                    setMelezhPushBusy(true);
+                    setError(null);
+                    try {
+                      await apiSend<{ ok: boolean; error?: string }>("/melezh/push", "POST", {});
+                      await refreshSettings();
+                      setStatus("Снимок телеметрии отправлен в Melezh.");
+                    } catch (e) {
+                      showErr(e);
+                    } finally {
+                      setMelezhPushBusy(false);
+                    }
+                  }}
+                >
+                  {melezhPushBusy ? "Отправка…" : "Отправить сейчас"}
+                </button>
                 <button type="button" className="secondary" onClick={() => void refreshSettings()}>
                   Обновить статус
                 </button>

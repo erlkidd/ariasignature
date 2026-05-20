@@ -6,6 +6,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- Melezh sync: `MelezhSyncJob`, `POST /api/v1/melezh/push`, настройки `melezhSync*`, handlers `aria_ping` / `aria_sync` при создании проекта.
+- `DiskTelemetryRules`: нормализация HDD/SSD/NVMe и `ssdLifeRemainingPercent` (0 без wear → null).
+- Документ `docs/INCIDENT_PRODUCT_STABILITY.md`.
+
+### Changed
+
+- Installer: fast SCM remove, WebView2 skip if installed, uninstall без MsgBox; mirror в `AriaSignature.Install.psm1`.
+- UI: overlay до `appReady` (без 8-секундного белого экрана).
+
+### Fixed
+
+- «Ресурс SSD» в панели не подставляет `healthPercent` для flash-носителей.
+
 ## [1.1.0] - 2026-05-19
 
 ### Added
