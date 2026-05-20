@@ -340,7 +340,7 @@ try {
         robocopy .\installer\smartctl (Join-Path $cliTestRoot "service\smartctl") /MIR /NFL /NDL /NJH /NJS /NC /NS /NP | Out-Null
     }
 
-    powershell -ExecutionPolicy Bypass -File ".\scripts\install-cli.ps1" -Action Install -InstallRoot $cliTestRoot -ExpectedVersion $expectedProductVersion
+    powershell -ExecutionPolicy Bypass -File ".\scripts\install-cli.ps1" -Action Install -InstallRoot $cliTestRoot -ExpectedVersion $expectedProductVersion -SkipFirewall
     if ($LASTEXITCODE -ne 0) { throw "[release-gate][step-fail] operation=""cli-install"" exit_code=$LASTEXITCODE" }
 
     powershell -ExecutionPolicy Bypass -File ".\scripts\install-cli.ps1" -Action Verify -InstallRoot $cliTestRoot -ExpectedVersion $expectedProductVersion

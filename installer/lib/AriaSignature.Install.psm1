@@ -1,4 +1,5 @@
-# Shared install/upgrade/uninstall logic for AriaSignature (CLI + Inno Setup).
+# PowerShell mirror of installer/inno/AriaSignature.iss for agents (install-cli.ps1).
+# Production installs use Inno Setup only — not this module.
 $script:Config = $null
 $script:LogPath = $null
 
@@ -322,9 +323,9 @@ function Invoke-AriaInstallAction {
 
     switch ($Action) {
         "Uninstall" {
-            if ($WhatIf) { Write-AriaInstallLog "WhatIf: uninstall services"; return }
+            if ($WhatIf) { Write-AriaInstallLog "WhatIf: ISS-mirror uninstall"; return }
             if (-not $SkipFirewall) { Remove-AriaFirewallRules }
-            Uninstall-AriaServices -WarnIfStuck
+            Uninstall-IssServices
             return
         }
         "Verify" {
@@ -355,22 +356,40 @@ function Invoke-AriaInstallAction {
             }
             return
         }
-        default {
-            if ($WhatIf) {
-                Write-AriaInstallLog "WhatIf: install services"
-                return
-            }
-            $cfg = Get-AriaInstallConfig
-            Test-MelezhBundleComplete -MelezhRoot (Join-Path $installRootFull "melezh") -IncludeInstallRoot -InstallRoot $installRootFull
-            Install-AriaMainService -InstallRoot $installRootFull -ExpectedVersion $ExpectedVersion
-            if (-not $SkipMelezh) {
-                Install-AriaMelezhService -InstallRoot $installRootFull
-            }
-            if (-not $SkipFirewall) {
-                Add-AriaFirewallRules
-            }
-            Write-AriaInstallLog "marker=install-health status=ok"
+        "Install" {
+            Invoke-IssMirrorInstallAction -InstallRoot $installRootFull -ExpectedVersion $ExpectedVersion `
+                -SkipMelezh:$SkipMelezh -SkipFirewall:$SkipFirewall -WhatIf:$WhatIf
+            return
         }
+        "Upgrade" {
+            Invoke-IssMirrorInstallAction -InstallRoot $installRootFull -ExpectedVersion $ExpectedVersion `
+                -SkipMelezh:$SkipMelezh -SkipFirewall:$SkipFirewall -WhatIf:$WhatIf
+            return
+        }
+    }
+}
+
+. (Join-Path $PSScriptRoot "AriaSignature.Install.IssMirror.ps1")
+
+function Invoke-IssMirrorInstallAction {
+    param(
+        [string]$InstallRoot,
+        [string]$ExpectedVersion,
+        [switch]$SkipMelezh,
+        [switch]$SkipFirewall,
+        [switch]$WhatIf
+    )
+    if ($WhatIf) {
+        Write-AriaInstallLog "WhatIf: ISS-mirror install (AriaSignature.iss post-install path)"
+        return
+    }
+    if (-not $SkipFirewall) {
+        Add-AriaFirewallRules
+        Write-AriaInstallLog "Note: firewall rules added ([Run] section equivalent; use -SkipFirewall for SCM-only test)"
+    }
+    Invoke-IssMirrorInstall -InstallRoot $InstallRoot -ExpectedVersion $ExpectedVersion
+    if ($SkipMelezh) {
+        Write-AriaInstallLog "WARN: -SkipMelezh is not supported in ISS parity mode"
     }
 }
 

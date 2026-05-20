@@ -1,9 +1,17 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    CLI installer for AriaSignature (install/upgrade/uninstall/verify/diagnose).
+    CLI mirror of Inno Setup (AriaSignature.iss) for AI agents and release-gate smoke tests.
+
 .DESCRIPTION
-    Run before Inno Setup build via release-gate smoke, or invoked from AriaSignature.iss post-install.
+    Replicates the same SCM/Melezh steps as installer/inno/AriaSignature.iss (not a replacement for AriaSignature-Setup.exe).
+    Production users install via AriaSignature-Setup.exe only.
+
+    Logs: %ProgramData%\AriaSignature\logs\install-cli-*.log
+    Health markers match ISS: install-health:ok, install-health:fail-hard-*, install-health:degraded-*
+
+.EXAMPLE
+    .\scripts\install-cli.ps1 -Action Install -InstallRoot "C:\Program Files\AriaSignature"
 #>
 param(
     [ValidateSet("Install", "Upgrade", "Uninstall", "Verify", "Diagnose")]
@@ -21,10 +29,11 @@ $ErrorActionPreference = "Stop"
 Set-Location (Resolve-Path "$PSScriptRoot\..")
 
 if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) {
-    $propsPath = ".\Directory.Build.props"
-    if (Test-Path $propsPath) {
-        $xml = [xml](Get-Content $propsPath)
-        $ExpectedVersion = $xml.Project.PropertyGroup.Version
+    if (Test-Path ".\VERSION") {
+        $ExpectedVersion = (Get-Content ".\VERSION" -Raw).Trim()
+    }
+    elseif (Test-Path ".\Directory.Build.props") {
+        $ExpectedVersion = ([xml](Get-Content ".\Directory.Build.props")).Project.PropertyGroup.Version
     }
     if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) {
         $ExpectedVersion = "1.1.0"
@@ -49,16 +58,14 @@ try {
         -WhatIf:$WhatIf
 
     if ($ReportPath) {
-        $report = @{
+        @{
             action          = $Action
             installRoot     = $InstallRoot
             expectedVersion = $ExpectedVersion
             status          = "ok"
+            issMirror       = $true
             utc             = (Get-Date).ToUniversalTime().ToString("o")
-        }
-        $dir = Split-Path $ReportPath -Parent
-        if ($dir) { New-Item -Path $dir -ItemType Directory -Force | Out-Null }
-        $report | ConvertTo-Json | Set-Content -Path $ReportPath -Encoding UTF8
+        } | ConvertTo-Json | Set-Content -Path $ReportPath -Encoding UTF8
     }
     exit 0
 }

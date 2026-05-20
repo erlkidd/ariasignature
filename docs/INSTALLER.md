@@ -90,17 +90,19 @@ dotnet publish .\src\service\AriaSignature.MelezhHost\AriaSignature.MelezhHost.c
 - штатный выход выполняется через меню трея.
 - флажок **Автозапуск** в настройках включает панель и тип запуска **Автоматически** для `AriaSignatureService` и `AriaSignatureMelezhService` (может запросить UAC).
 
-## 7.2 CLI-установщик (install-cli)
+## 7.2 CLI-зеркало ISS (только для агентов / CI)
 
-Логика SCM/Melezh вынесена в [`installer/lib/AriaSignature.Install.psm1`](../installer/lib/AriaSignature.Install.psm1). Точка входа:
+**Пользовательский установщик** — только `AriaSignature-Setup.exe` (Inno Setup, [`AriaSignature.iss`](../installer/inno/AriaSignature.iss)). Логика SCM/Melezh выполняется **в Pascal**, как раньше.
+
+**CLI** ([`scripts/install-cli.ps1`](../scripts/install-cli.ps1)) — зеркало тех же шагов для нейросетей и `release-gate`: те же `install-health:*` маркеры, fail-hard на версии API и Melezh, degraded-пути для основной службы. Не включается в состав setup.exe.
 
 ```powershell
-.\scripts\install-cli.ps1 -Action Install -InstallRoot "C:\Program Files\AriaSignature" -ExpectedVersion 1.1.0
+.\scripts\install-cli.ps1 -Action Install -InstallRoot "C:\Program Files\AriaSignature" -SkipFirewall
 ```
 
-Действия: `Install`, `Upgrade`, `Uninstall`, `Verify`, `Diagnose`.
+Действия: `Install`, `Upgrade`, `Uninstall`, `Verify`, `Diagnose`. Реализация: [`AriaSignature.Install.IssMirror.ps1`](../installer/lib/AriaSignature.Install.IssMirror.ps1).
 
-Inno Setup после копирования файлов вызывает `install-cli.ps1 -Action Install`. `release-gate` прогоняет smoke install → verify → uninstall во временную папку **до** сборки `AriaSignature-Setup.exe`.
+`release-gate` прогоняет cli-install-smoke **до** ISCC, чтобы поймать те же ошибки SCM, что и в ISS, без замены production-installer.
 
 ## 7.3 Bundle OInt / Melezh
 

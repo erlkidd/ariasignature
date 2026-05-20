@@ -49,11 +49,6 @@ Source: "..\..\publish\ui\*"; DestDir: "{app}\ui"; Flags: recursesubdirs createa
 Source: "..\..\publish\service\*"; DestDir: "{app}\service"; Flags: recursesubdirs createallsubdirs ignoreversion restartreplace
 Source: "..\..\publish\melezh-host\*"; DestDir: "{app}\melezh-host"; Flags: recursesubdirs createallsubdirs ignoreversion restartreplace
 Source: "..\melezh\bundle\*"; DestDir: "{app}\melezh"; Flags: recursesubdirs createallsubdirs ignoreversion restartreplace
-Source: "..\melezh\required-files.json"; DestDir: "{app}\installer\melezh"; Flags: ignoreversion
-Source: "..\..\installer\lib\*"; DestDir: "{app}\installer\lib"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "..\..\scripts\install-cli.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
-Source: "..\..\scripts\Test-MelezhBundle.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
-Source: "..\..\scripts\diagnose-melezh.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "..\smartctl\*"; DestDir: "{app}\service\smartctl"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\webview2\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall ignoreversion
 
@@ -449,7 +444,6 @@ procedure AssertOnDiskServiceVersionOrAbort(const ApiExePath: string); forward;
 procedure ForceStopAndReleaseServiceProcesses(); forward;
 function TryScCreateServiceOnly(const CreateParams: string): Boolean; forward;
 procedure AssertMelezhBundleOrAbort(); forward;
-procedure RunInstallCliOrAbort(const Action: string); forward;
 
 procedure StopAndDeleteServiceBestEffort();
 begin
@@ -636,35 +630,6 @@ begin
       mbError,
       MB_OK);
     RaiseException('OInt bundle incomplete (share/oint-cli missing).');
-  end;
-end;
-
-procedure RunInstallCliOrAbort(const Action: string);
-var
-  ExitCode: Integer;
-  ScriptPath: string;
-  PsParams: string;
-begin
-  ScriptPath := ExpandConstant('{app}\scripts\install-cli.ps1');
-  AssertFileExistsOrAbort(ScriptPath, 'install-cli.ps1');
-  PsParams :=
-    '-NoProfile -ExecutionPolicy Bypass -File "' + ScriptPath + '" -Action ' + Action +
-    ' -InstallRoot "' + ExpandConstant('{app}') + '" -ExpectedVersion "{#MyAppVersion}"';
-  Log('marker=install-cli action=' + Action);
-  if not Exec(
-       ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-       PsParams,
-       '',
-       SW_HIDE,
-       ewWaitUntilTerminated,
-       ExitCode) or (ExitCode <> 0) then
-  begin
-    MsgBox(
-      'Сценарий установки install-cli (' + Action + ') завершился с кодом ' + IntToStr(ExitCode) + '.'#13#10 +
-      'См. %ProgramData%\AriaSignature\logs\install-cli-*.log',
-      mbError,
-      MB_OK);
-    RaiseException('install-cli failed: ' + Action + ' exit=' + IntToStr(ExitCode));
   end;
 end;
 
@@ -1223,8 +1188,19 @@ begin
     StartPostInstallBudget();
     AssertOnDiskServiceVersionOrAbort(ExpandConstant('{app}\service\AriaSignature.Api.exe'));
     AssertMelezhBundleOrAbort();
-    RunInstallCliOrAbort('Install');
-    InstallHealthStatus := 'install-health:ok';
+    InstallServiceOrAbort();
+    if InstallHealthStatus <> 'install-health:ok' then
+    begin
+      MsgBox(
+        'Служба AriaSignature не прошла полную проверку после установки.'#13#10 +
+        'Статус: ' + InstallHealthStatus + #13#10 +
+        'Установка прервана. Закройте приложение и повторите установку от администратора.',
+        mbError,
+        MB_OK);
+      RaiseException('AriaSignature service install verification failed: ' + InstallHealthStatus);
+    end;
+
+    InstallMelezhServiceOrAbort();
     RegisterTrayLogonTaskBestEffort();
     RemoveLegacyCommonStartupShortcutBestEffort();
     if Pos('install-health:degraded', InstallHealthStatus) = 1 then
@@ -1263,33 +1239,18 @@ begin
   begin
     DeleteTrayLogonTaskBestEffort();
     ForceStopAndReleaseServiceProcesses();
-    if FileExists(ExpandConstant('{app}\scripts\install-cli.ps1')) then
-    begin
-      try
-        RunInstallCliOrAbort('Uninstall');
-      except
-        MsgBox(
-          'Не удалось полностью удалить службы AriaSignature через install-cli.'#13#10 +
-          'Остановите процессы AriaSignature вручную и удалите службы в services.msc.',
-          mbError,
-          MB_OK);
-      end;
-    end
+    StopAndDeleteServiceBestEffort();
+    KillServiceProcessBestEffort();
+    if WaitServiceAbsent(MelezhServiceName, 25) and WaitServiceAbsent(ServiceName, 25) then
+      Log('marker=uninstall-service-removal status=ok')
     else
     begin
-      StopAndDeleteServiceBestEffort();
-      KillServiceProcessBestEffort();
-      if not WaitServiceAbsent(MelezhServiceName, 25) or not WaitServiceAbsent(ServiceName, 25) then
-      begin
-        Log('marker=uninstall-service-removal status=degraded reason=service-still-present-or-pending');
-        MsgBox(
-          'Службы AriaSignature или Melezh могли остаться в Windows после удаления.'#13#10 +
-          'Удалите AriaSignatureService и AriaSignatureMelezhService в services.msc.',
-          mbInformation,
-          MB_OK);
-      end
-      else
-        Log('marker=uninstall-service-removal status=ok');
+      Log('marker=uninstall-service-removal status=degraded reason=service-still-present-or-pending');
+      MsgBox(
+        'Службы AriaSignature или Melezh могли остаться в Windows после удаления.'#13#10 +
+        'Удалите AriaSignatureService и AriaSignatureMelezhService в services.msc.',
+        mbInformation,
+        MB_OK);
     end;
 
     if DirExists(ExpandConstant('{commonappdata}\AriaSignature\melezh')) then
