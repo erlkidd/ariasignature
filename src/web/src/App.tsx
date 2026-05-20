@@ -81,6 +81,8 @@ interface SettingsDto {
   melezhServiceName: string;
   melezhServiceStatus?: string | null;
   melezhRunning: boolean;
+  melezhLastError?: string | null;
+  melezhLogHint?: string | null;
 }
 
 interface NetworkAddressInfoDto {
@@ -546,6 +548,10 @@ export default function App() {
   const [outboundSettingsExpanded, setOutboundSettingsExpanded] = useState(false);
   /** Сообщение хоста: тип запуска службы — Automatic (null = ещё не приходило). */
   const [autostartServiceBootAuto, setAutostartServiceBootAuto] = useState<boolean | null>(null);
+  const [autostartMelezhBootAuto, setAutostartMelezhBootAuto] = useState<boolean | null>(null);
+  const [autostartAllServicesBootAuto, setAutostartAllServicesBootAuto] = useState<boolean | null>(null);
+  const [melezhRepairBusy, setMelezhRepairBusy] = useState(false);
+  const [autostartBusy, setAutostartBusy] = useState(false);
 
   const [jobName, setJobName] = useState("");
   const [jobType, setJobType] = useState<"file" | "msSql">("file");
@@ -826,6 +832,8 @@ export default function App() {
         melezhServiceName: s.melezhServiceName ?? "AriaSignatureMelezhService",
         melezhServiceStatus: s.melezhServiceStatus ?? null,
         melezhRunning: Boolean(s.melezhRunning),
+        melezhLastError: s.melezhLastError ?? null,
+        melezhLogHint: s.melezhLogHint ?? null,
       });
     } catch (e) {
       showErr(e);
@@ -967,11 +975,32 @@ export default function App() {
         const data = JSON.parse(ev.data);
         if (data?.action === "autostart" && typeof data.enabled === "boolean") {
           setLaunchAtStartup(data.enabled);
+          setAutostartBusy(false);
           if (typeof data.serviceBootAuto === "boolean") {
             setAutostartServiceBootAuto(data.serviceBootAuto);
           } else {
             setAutostartServiceBootAuto(null);
           }
+          if (typeof data.melezhServiceBootAuto === "boolean") {
+            setAutostartMelezhBootAuto(data.melezhServiceBootAuto);
+          } else {
+            setAutostartMelezhBootAuto(null);
+          }
+          if (typeof data.allServicesBootAuto === "boolean") {
+            setAutostartAllServicesBootAuto(data.allServicesBootAuto);
+          } else {
+            setAutostartAllServicesBootAuto(null);
+          }
+        }
+        if (data?.action === "autostartProgress") {
+          setAutostartBusy(true);
+        }
+        if (data?.action === "repairMelezhProgress") {
+          setMelezhRepairBusy(true);
+        }
+        if (data?.action === "repairMelezh") {
+          setMelezhRepairBusy(false);
+          void refreshSettings();
         }
         if (data?.action === "pickedFile" && typeof data.path === "string") {
           setFileSource(data.path);
@@ -988,7 +1017,7 @@ export default function App() {
     };
     chromeWebview.addEventListener("message", fn);
     return () => chromeWebview.removeEventListener("message", fn);
-  }, []);
+  }, [refreshSettings]);
 
   useEffect(() => {
     if (tab !== "settings") {
@@ -2687,6 +2716,17 @@ export default function App() {
                 Порт: <span className="mono">{settings.melezhPort}</span> · служба{" "}
                 <span className="mono">{settings.melezhServiceName}</span>
               </p>
+              {settings.melezhLastError ? (
+                <p className="hint warn">
+                  {settings.melezhLastError}
+                  {settings.melezhLogHint ? (
+                    <>
+                      {" "}
+                      · лог: <span className="mono">{settings.melezhLogHint}</span>
+                    </>
+                  ) : null}
+                </p>
+              ) : null}
               <div className="row">
                 <a href={settings.melezhUiUrl} target="_blank" rel="noreferrer">
                   Открыть Web UI Melezh
@@ -2698,12 +2738,13 @@ export default function App() {
                   <button
                     type="button"
                     className="secondary"
+                    disabled={melezhRepairBusy}
                     onClick={() => {
+                      setMelezhRepairBusy(true);
                       postToHost({ action: "repairMelezh" });
-                      window.setTimeout(() => void refreshSettings(), 3000);
                     }}
                   >
-                    Восстановить службу Melezh
+                    {melezhRepairBusy ? "Восстановление…" : "Восстановить службу Melezh"}
                   </button>
                 )}
               </div>
@@ -2728,23 +2769,30 @@ export default function App() {
             <input
               type="checkbox"
               checked={launchAtStartup}
+              disabled={autostartBusy}
               onChange={(e) => {
                 setLaunchAtStartup(e.target.checked);
+                setAutostartBusy(true);
                 postToHost({ action: "setAutostart", enabled: e.target.checked });
               }}
             />
-            Запускать AriaSignature при входе в Windows
+            {autostartBusy ? "Настройка автозапуска…" : "Запускать AriaSignature и Melezh при входе в Windows"}
           </label>
           <p className="hint">
-            Флажок включает или выключает автозапуск панели для вашей учётной записи (настраивает приложение само, без
-            ручного редактирования реестра). Фоновая служба при установке уже получает тип запуска «Автоматически»; из
-            настроек запросов администратора не будет.
+            Включает автозапуск панели (ярлык/реестр) и тип запуска служб Windows «Автоматически» для AriaSignature и
+            Melezh. Может потребоваться подтверждение UAC.
           </p>
-          {launchAtStartup && autostartServiceBootAuto === false ? (
+          {launchAtStartup && autostartAllServicesBootAuto === false ? (
             <p className="hint warn">
-              Служба AriaSignatureService не в режиме автозапуска (возможно, сбой установки или ручное изменение).
-              Переустановите приложение от имени администратора или обратитесь к администратору ПК.
+              Одна или обе службы (AriaSignatureService / AriaSignatureMelezhService) не в режиме автозапуска. Повторите
+              включение флажка от администратора или переустановите приложение.
             </p>
+          ) : null}
+          {launchAtStartup && autostartServiceBootAuto === false && autostartMelezhBootAuto !== false ? (
+            <p className="hint warn">Служба AriaSignatureService не в режиме автозапуска.</p>
+          ) : null}
+          {launchAtStartup && autostartMelezhBootAuto === false && autostartServiceBootAuto !== false ? (
+            <p className="hint warn">Служба AriaSignatureMelezhService не в режиме автозапуска.</p>
           ) : null}
         </section>
       )}

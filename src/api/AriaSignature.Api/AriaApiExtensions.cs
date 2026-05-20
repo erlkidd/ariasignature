@@ -239,6 +239,8 @@ public static class AriaApiExtensions
                 melezhServiceName = melezh.ServiceName,
                 melezhServiceStatus = melezh.ServiceStatus,
                 melezhRunning = melezh.UiReachable,
+                melezhLastError = melezh.LastError,
+                melezhLogHint = melezh.LogHint,
             });
         })
         .WithName("GetSettings")

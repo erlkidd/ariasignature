@@ -10,6 +10,8 @@
 
 `bundle/` is not committed (see root `.gitignore`).
 
+`required-files.json` — manifest checked by `scripts/Test-MelezhBundle.ps1` and `release-gate`.
+
 ## Prepare before installer build
 
 ```powershell

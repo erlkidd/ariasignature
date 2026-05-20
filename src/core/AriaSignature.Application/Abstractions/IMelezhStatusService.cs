@@ -6,7 +6,9 @@ public sealed record MelezhStatusSnapshot(
     string UiUrl,
     string ServiceName,
     string? ServiceStatus,
-    bool UiReachable);
+    bool UiReachable,
+    string? LastError = null,
+    string? LogHint = null);
 
 public interface IMelezhStatusService
 {

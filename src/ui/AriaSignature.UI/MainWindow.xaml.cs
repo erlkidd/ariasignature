@@ -731,52 +731,25 @@ public partial class MainWindow : Window
             {
                 var want = en.GetBoolean();
                 WindowsServiceAutostartConfigurator.ApplyAutostart(want, _startup);
-
-                if (want)
-                {
-                    var serviceExePath = Path.GetFullPath(
-                        Path.Combine(AppContext.BaseDirectory, "..", "service", "AriaSignature.Service.exe"));
-                    WindowsServiceEnsure.TryStartOrFallback(serviceExePath, TimeSpan.FromSeconds(25), _serviceBootstrapExePath, out var svcWarn);
-                    if (!string.IsNullOrEmpty(svcWarn))
-                    {
-                        System.Windows.MessageBox.Show(svcWarn, "AriaSignature", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    }
-                }
-
-                Browser.CoreWebView2?.PostWebMessageAsString(
-                    WindowsServiceAutostartConfigurator.SerializeAutostartWebMessage(_startup));
+                PostWebMessageJson(new { action = "autostartProgress", phase = "panel" });
+                _ = RunAutostartServicesAsync(want);
             }
             else if (action == "getAutostart")
             {
-                Browser.CoreWebView2?.PostWebMessageAsString(
-                    WindowsServiceAutostartConfigurator.SerializeAutostartWebMessage(_startup));
+                PostWebMessageString(WindowsServiceAutostartConfigurator.SerializeAutostartWebMessage(_startup));
             }
             else if (action == "getWindowsServiceStatus")
             {
-                var payload = JsonSerializer.Serialize(TryGetWindowsServiceStatus());
-                Browser.CoreWebView2?.PostWebMessageAsString(payload);
+                _ = RunWindowsServiceStatusAsync();
             }
             else if (action == "controlWindowsService" && root.TryGetProperty("command", out var cmdEl))
             {
                 var cmd = cmdEl.GetString();
-                var payload = JsonSerializer.Serialize(TryControlWindowsService(cmd));
-                Browser.CoreWebView2?.PostWebMessageAsString(payload);
-                var statusPayload = JsonSerializer.Serialize(TryGetWindowsServiceStatus());
-                Browser.CoreWebView2?.PostWebMessageAsString(statusPayload);
+                _ = RunWindowsServiceControlAsync(cmd);
             }
             else if (action == "repairMelezh")
             {
-                var (ok, error) = MelezhServiceRepair.TryRepairWithElevation();
-                var payload = JsonSerializer.Serialize(new { action = "repairMelezh", ok, error });
-                Browser.CoreWebView2?.PostWebMessageAsString(payload);
-                if (ok)
-                {
-                    _ = Dispatcher.InvokeAsync(async () =>
-                    {
-                        await Task.Delay(500);
-                        Browser.CoreWebView2?.Reload();
-                    });
-                }
+                _ = RunMelezhRepairAsync();
             }
             else if (action == "pickFile")
             {
@@ -829,6 +802,82 @@ public partial class MainWindow : Window
         {
             // ignore malformed messages
         }
+    }
+
+    private void PostWebMessageString(string json) =>
+        Dispatcher.InvokeAsync(() => Browser.CoreWebView2?.PostWebMessageAsString(json));
+
+    private void PostWebMessageJson(object payload) =>
+        PostWebMessageString(JsonSerializer.Serialize(payload));
+
+    private async Task RunAutostartServicesAsync(bool want)
+    {
+        PostWebMessageJson(new { action = "autostartProgress", phase = "services" });
+        var (svcOk, svcErr) = await Task.Run(() =>
+            WindowsServicesAutostartCoordinator.ApplyServicesBootStart(want, startIfEnabled: want)).ConfigureAwait(true);
+
+        string? svcWarn = null;
+        if (want && svcOk)
+        {
+            var serviceExePath = Path.GetFullPath(
+                Path.Combine(AppContext.BaseDirectory, "..", "service", "AriaSignature.Service.exe"));
+            svcWarn = await Task.Run(() =>
+            {
+                WindowsServiceEnsure.TryStartOrFallback(
+                    serviceExePath,
+                    TimeSpan.FromSeconds(25),
+                    _serviceBootstrapExePath,
+                    out var warn);
+                return warn;
+            }).ConfigureAwait(true);
+        }
+
+        await Dispatcher.InvokeAsync(() =>
+        {
+            if (!svcOk && !string.IsNullOrEmpty(svcErr))
+            {
+                System.Windows.MessageBox.Show(svcErr, "AriaSignature — автозапуск служб", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            else if (!string.IsNullOrEmpty(svcWarn))
+            {
+                System.Windows.MessageBox.Show(svcWarn, "AriaSignature", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+
+            PostWebMessageString(WindowsServiceAutostartConfigurator.SerializeAutostartWebMessage(_startup));
+        });
+    }
+
+    private async Task RunWindowsServiceStatusAsync()
+    {
+        var payload = await Task.Run(TryGetWindowsServiceStatus).ConfigureAwait(true);
+        PostWebMessageJson(payload);
+    }
+
+    private async Task RunWindowsServiceControlAsync(string? cmd)
+    {
+        PostWebMessageJson(new { action = "windowsServiceProgress", command = cmd });
+        var controlPayload = await Task.Run(() => TryControlWindowsService(cmd)).ConfigureAwait(true);
+        var statusPayload = await Task.Run(TryGetWindowsServiceStatus).ConfigureAwait(true);
+        await Dispatcher.InvokeAsync(() =>
+        {
+            PostWebMessageJson(controlPayload);
+            PostWebMessageJson(statusPayload);
+        });
+    }
+
+    private async Task RunMelezhRepairAsync()
+    {
+        PostWebMessageJson(new { action = "repairMelezhProgress", phase = "start" });
+        var result = await Task.Run(MelezhServiceRepair.TryRepairWithElevation).ConfigureAwait(true);
+        await Dispatcher.InvokeAsync(async () =>
+        {
+            PostWebMessageJson(new { action = "repairMelezh", ok = result.Ok, error = result.Error });
+            if (result.Ok)
+            {
+                await Task.Delay(500);
+                Browser.CoreWebView2?.Reload();
+            }
+        });
     }
 
     private static object TryGetWindowsServiceStatus()

@@ -88,6 +88,23 @@ dotnet publish .\src\service\AriaSignature.MelezhHost\AriaSignature.MelezhHost.c
 - optional startup shortcut в `commonstartup`;
 - запуск UI с параметром `--tray`;
 - штатный выход выполняется через меню трея.
+- флажок **Автозапуск** в настройках включает панель и тип запуска **Автоматически** для `AriaSignatureService` и `AriaSignatureMelezhService` (может запросить UAC).
+
+## 7.2 CLI-установщик (install-cli)
+
+Логика SCM/Melezh вынесена в [`installer/lib/AriaSignature.Install.psm1`](../installer/lib/AriaSignature.Install.psm1). Точка входа:
+
+```powershell
+.\scripts\install-cli.ps1 -Action Install -InstallRoot "C:\Program Files\AriaSignature" -ExpectedVersion 1.1.0
+```
+
+Действия: `Install`, `Upgrade`, `Uninstall`, `Verify`, `Diagnose`.
+
+Inno Setup после копирования файлов вызывает `install-cli.ps1 -Action Install`. `release-gate` прогоняет smoke install → verify → uninstall во временную папку **до** сборки `AriaSignature-Setup.exe`.
+
+## 7.3 Bundle OInt / Melezh
+
+Манифест обязательных путей: [`installer/melezh/required-files.json`](../installer/melezh/required-files.json). Проверка: `.\scripts\Test-MelezhBundle.ps1 -RootPath .\installer\melezh\bundle`.
 
 ## 9. Верификация после установки
 

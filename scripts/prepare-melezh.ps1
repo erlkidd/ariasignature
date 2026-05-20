@@ -72,6 +72,10 @@ if (-not [string]::IsNullOrWhiteSpace($externalDir) -and (Test-Path $externalDir
         if ($installerPath = Get-OintInstallerPath -Root $TargetDir) {
             Get-InstallerFingerprint -InstallerPath $installerPath | Out-File -FilePath $stampFile -Encoding ascii -NoNewline
         }
+        $bundleTest = Join-Path $PSScriptRoot "Test-MelezhBundle.ps1"
+        if (Test-Path $bundleTest) {
+            & $bundleTest -RootPath $bundleDir
+        }
         Write-PrepareLog "Bundle copied from external directory"
         exit 0
     }
@@ -120,3 +124,14 @@ if (-not (Test-OintBundleReady -BundleDir $bundleDir)) {
 
 Get-InstallerFingerprint -InstallerPath $installerExe | Out-File -FilePath $stampFile -Encoding ascii -NoNewline
 Write-PrepareLog "OInt/Melezh bundle ready at $bundleDir"
+
+$bundleTest = Join-Path $PSScriptRoot "Test-MelezhBundle.ps1"
+if (Test-Path $bundleTest) {
+    & $bundleTest -RootPath $bundleDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "[prepare-melezh] Bundle completeness check failed"
+    }
+}
+else {
+    Write-PrepareLog "WARNING: Test-MelezhBundle.ps1 not found; skipped extended validation"
+}

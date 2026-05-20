@@ -26,7 +26,11 @@ Pipeline выполняет:
    - `WebView2` принимается только как standalone offline installer: проверяется минимальный размер файла и валидная Microsoft-подпись (bootstrap online-пакет блокирует gate)
    - `prepare-melezh.ps1`: извлекает OInt/Melezh из `installer/melezh/oint_*_installer_ru.exe` в `installer/melezh/bundle/` (обязательно перед Inno), см. `installer/melezh/README.md`
 6. regression smoke для уже установленной службы (`scripts/service-startup-smoke.ps1`) — если служба присутствует на build-host
-7. `ISCC` сборку `installer/inno/AriaSignature.iss`
+7. `Test-MelezhBundle.ps1` — полнота OInt bundle;
+8. `install-cli.ps1` smoke (install → verify → uninstall во временную папку);
+9. `ISCC` сборку `installer/inno/AriaSignature.iss`
+
+Опционально (локально): `Invoke-Pester .\tests\installer\ -ExcludeTag Integration`
 
 Выходной артефакт:
 - `artifacts/installer/AriaSignature-Setup.exe`

@@ -53,7 +53,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "[repair-melezh] sc start failed with exit code $LASTEXITCODE"
 }
 
-$deadline = (Get-Date).AddSeconds(60)
+$deadline = (Get-Date).AddSeconds(90)
 $uiOk = $false
 while ((Get-Date) -lt $deadline) {
     try {
