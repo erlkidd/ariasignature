@@ -1,7 +1,7 @@
 {
   "name": "ariasignature-web",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.2",
   "engines": {
     "node": ">=20"
   },

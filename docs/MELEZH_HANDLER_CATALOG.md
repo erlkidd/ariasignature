@@ -1,6 +1,6 @@
-﻿# Melezh handler catalog (AriaSignature API bridge)
+# Melezh handler catalog (AriaSignature API bridge)
 
-Версия документа: 1.1.1
+Версия документа: 1.1.2
 
 Источник правды в коде: `src/service/AriaSignature.MelezhHost/MelezhAriaApiHandlerCatalog.cs`.  
 При старте `AriaSignatureMelezhService` выполняется идемпотентный bootstrap (`MelezhProjectBootstrap`, schema v2: пересоздание handler при несовпадении `library`/`function`/`method` или устаревшей версии в SQLite).
@@ -40,6 +40,12 @@
 | `aria_get_backups_logs` | `GET /backups/logs` | да |
 | `aria_get_disk` | `GET /disks/{diskId}` | нет (нужен `diskId` в URL) |
 | `aria_get_disk_smart` | `GET /disks/{diskId}/smart` | нет |
+
+### Handler’ы с `{diskId}` / `{backupId}` (placeholder в bootstrap)
+
+При создании проекта bootstrap подставляет GUID-заглушку `00000000-0000-0000-0000-000000000001` в URL аргументов handler’а. Проверка `aria_get_disk_smart` из Web UI Melezh **без замены id** проксирует запрос к API с этим GUID → ответ **404 «Диск не найден»** — это норма, не ошибка установки.
+
+Правильный сценарий: `aria_get_disks` → взять `id` реального диска → вызвать handler с подставленным id (1С, скрипт, ручной URL).
 
 ## Outbound POST / PUT / DELETE
 

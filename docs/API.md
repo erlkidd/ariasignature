@@ -1,6 +1,6 @@
-﻿# AriaSignature — спецификация API (v1)
+# AriaSignature — спецификация API (v1)
 
-Версия документа: 1.1.1
+Версия документа: 1.1.2
 
 ## 1. Общие параметры
 
@@ -72,8 +72,9 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
     - `outboundSyncEnabled` (`boolean`);
     - `outboundSyncUrl` (`string`, полный URL коллектора `http`/`https`);
     - `outboundSyncCron` (Quartz cron для исходящего `POST`).
-    - `melezhSyncEnabled`, `melezhSyncHandler` (по умолчанию `aria_sync`), `melezhSyncCron`, `melezhSyncLastOk`, `melezhSyncLastError` (read-only диагностика POST в Melezh).
-    - `melezhEnabled`, `melezhPort`, `melezhUiUrl`, `melezhServiceName`, `melezhServiceStatus`, `melezhRunning` (диагностика службы Melezh; см. `docs/MELEZH.md`).
+    - `melezhSyncEnabled`, `melezhSyncHandler` (по умолчанию `aria_sync`), `melezhSyncCron`;
+    - `melezhEnabled`, `melezhPort`, `melezhUiUrl`, `melezhServiceName`, `melezhServiceStatus`, `melezhRunning` (диагностика службы Melezh; см. `docs/MELEZH.md`);
+    - read-only: `melezhSyncLastOk`, `melezhSyncLastError`, `melezhLastError`, `melezhLogHint` (путь к последнему `melezh-host-*.log`).
   - Поле `note`: смена **порта** и **apiBind** вступает в силу после перезапуска службы `AriaSignatureService`; токен удалённого API и cron-поля применяются сразу после `PUT /settings`.
 
 - `PUT /settings`
@@ -91,7 +92,11 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
 - `POST /melezh/push`
   - Назначение: немедленная отправка снимка телеметрии в Melezh (`POST http://127.0.0.1:{melezhPort}/{melezhSyncHandler}`).
   - Тело запроса: пустое или `{}`.
-  - Ответ: `{ "ok": true, "targetUrl": "..." }` или `502` с `{ "ok": false, "error": "..." }`.
+  - Ответ: `{ "ok": true, "targetUrl": "..." }` или `502` с `{ "ok": false, "error": "...", "targetUrl": "..." }`.
+
+- `POST /melezh/ingest`
+  - Назначение: ACK для inbound handler Melezh `aria_sync` (целевой URL в bootstrap: `POST /api/v1/melezh/ingest`). Не вызывается из панели напрямую.
+  - Ответ: `{ "ok": true, "result": true }`.
 
 **Безопасность:** при **пустом** `apiSharedSecret` любой узел, который может открыть TCP до порта API, может вызывать те же операции, что и доверенный мониторинг — ограничивайте сеть (VPN), брандмауэр и при необходимости задавайте токен. Исходящий `POST` на коллектор по-прежнему не использует поля входящего API.
 
@@ -100,6 +105,24 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
 - `GET /system`
   - Назначение: сведения об узле (hostname, DNS, адреса активных интерфейсов, ОС, процессор, ОЗУ, видеокарты, время сбора, версия агента) — **как на вкладке «О системе»**.
   - Ответ: camelCase JSON (`hostName`, `networkAddresses[]`, `videoControllers[]`, …).
+
+### 3.3a Melezh и два HTTP-порта (`:5160` vs `:7788`)
+
+| Порт | Контракт | Swagger |
+|------|----------|---------|
+| **5160** | REST агента `/api/v1/*` | Да (`/swagger`) |
+| **7788** | Handler keys Melezh (`/aria_ping`, `/aria_get_*`, …) | Нет (см. [`MELEZH_HANDLER_CATALOG.md`](MELEZH_HANDLER_CATALOG.md)) |
+
+Соответствие (типовые примеры):
+
+| Агент `:5160` | Melezh `:7788` | Примечание |
+|---------------|----------------|------------|
+| `POST /api/v1/melezh/push` | `POST /aria_sync` | Один JSON-снимок телеметрии |
+| `GET /api/v1/disks` | `GET /aria_get_disks` | Pull по cron (stagger v5) |
+| `GET /api/v1/disks/{id}/smart` | `GET /aria_get_disk_smart` | В bootstrap URL подставлен **placeholder** `00000000-0000-0000-0000-000000000001`; тест из Web UI без реального `id` даёт **404** — ожидаемо. Возьмите `id` из `aria_get_disks` / `GET /disks`. |
+| `GET /api/v1/status` | `GET /aria_ping` | Health |
+
+Внешние интеграции (1С, OInt) для чтения данных агента ориентируются на **:7788**, не на прямой `:5160`.
 
 ### 3.4 Синхронизация в Melezh (локальный POST :7788)
 

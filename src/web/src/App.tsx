@@ -3,7 +3,7 @@ import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
 const MELEZH_REPO_URL = "https://github.com/Bayselonarrend/Melezh";
-const UI_BUILD_VERSION = "1.1.0";
+const UI_BUILD_VERSION = "1.1.2";
 const DISKS_LIVE_REFRESH_MS = 60_000;
 const MIN_TELEMETRY_CONFIDENCE_FOR_HEALTH = 50;
 
@@ -567,6 +567,7 @@ export default function App() {
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
   const [launchAtStartup, setLaunchAtStartup] = useState(true);
   const [serviceSettingsExpanded, setServiceSettingsExpanded] = useState(false);
+  const [melezhSettingsExpanded, setMelezhSettingsExpanded] = useState(true);
   const [outboundSettingsExpanded, setOutboundSettingsExpanded] = useState(false);
   /** Сообщение хоста: тип запуска службы — Automatic (null = ещё не приходило). */
   const [autostartServiceBootAuto, setAutostartServiceBootAuto] = useState<boolean | null>(null);
@@ -1050,6 +1051,11 @@ export default function App() {
         if (data?.action === "repairMelezh") {
           setMelezhRepairBusy(false);
           void refreshSettings();
+          if (data.ok === true) {
+            setStatus("Служба Melezh восстановлена.");
+          } else if (typeof data.error === "string" && data.error) {
+            setStatus(`Восстановление Melezh: ${data.error}`);
+          }
         }
         if (data?.action === "pickedFile" && typeof data.path === "string") {
           setFileSource(data.path);
@@ -1072,6 +1078,7 @@ export default function App() {
     if (tab !== "settings") {
       return;
     }
+    setMelezhSettingsExpanded(true);
     postToHost({ action: "getWindowsServiceStatus" });
   }, [tab]);
 
@@ -1481,27 +1488,6 @@ export default function App() {
           </button>
         </nav>
       </header>
-
-      {settings?.melezhEnabled &&
-      settings.melezhServiceStatus === "Running" &&
-      !settings.melezhRunning ? (
-        <div className="banner warn">
-          <strong>Melezh</strong>
-          <span>
-            {" "}
-            Шлюз OpenIntegrations (:7788) недоступен по HTTP
-            {settings.melezhLastError ? ` — ${settings.melezhLastError}` : ""}. Панель работает; восстановите Melezh в{" "}
-            <button type="button" className="btn-ghost" onClick={() => setTab("settings")}>
-              настройках
-            </button>{" "}
-            или{" "}
-            <a href={settings.melezhUiUrl} target="_blank" rel="noreferrer">
-              Web UI Melezh
-            </a>
-            .
-          </span>
-        </div>
-      ) : null}
 
       {error && (
         <div className="banner error">
@@ -2768,55 +2754,76 @@ export default function App() {
             </div>
           </details>
 
-          <details className="settings-collapsible">
-            <summary className="settings-collapsible-summary">Melezh</summary>
+          <details
+            className="settings-collapsible"
+            open={melezhSettingsExpanded}
+            onToggle={(e) => setMelezhSettingsExpanded((e.currentTarget as HTMLDetailsElement).open)}
+          >
+            <summary className="settings-collapsible-summary">Melezh / OpenIntegrations</summary>
             <div className="settings-collapsible-body">
-              <p className="hint">
-                HTTP-шлюз для интеграций OpenIntegrations (Telegram, HTTP, БД и др.)
-              </p>
-              <p>
-                <strong>Служба:</strong>{" "}
-                {settings.melezhServiceStatus === "Running" ? (
-                  <span className="pill ok">запущена</span>
-                ) : settings.melezhServiceStatus ? (
-                  <span className="pill warn">{settings.melezhServiceStatus}</span>
-                ) : (
-                  <span className="muted">—</span>
-                )}
-                {settings.melezhRunning ? (
-                  <>
-                    {" "}
-                    · <span className="pill ok">Web UI доступен</span>
-                  </>
-                ) : (
-                  <>
-                    {" "}
-                    · <span className="pill bad">Web UI недоступен</span>
-                  </>
-                )}
-              </p>
-              <p className="hint">
-                Порт: <span className="mono">{settings.melezhPort}</span> · служба{" "}
-                <span className="mono">{settings.melezhServiceName}</span>
-              </p>
-              {settings.melezhLastError ? (
-                <p className="hint warn">
-                  {settings.melezhLastError}
-                  {settings.melezhLogHint ? (
+              <div className="box service-control-box">
+                <p className="hint">
+                  HTTP-шлюз на порту <span className="mono">{settings.melezhPort}</span> (интеграции 1С, OInt).
+                </p>
+                <p>
+                  <strong>{settings.melezhServiceName}:</strong>{" "}
+                  {settings.melezhServiceStatus === "Running" ? (
+                    <span className="pill ok">запущена</span>
+                  ) : settings.melezhServiceStatus ? (
+                    <span className="pill warn">{settings.melezhServiceStatus}</span>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                  {settings.melezhRunning ? (
                     <>
                       {" "}
-                      · лог: <span className="mono">{settings.melezhLogHint}</span>
+                      · <span className="pill ok">Web UI доступен</span>
                     </>
-                  ) : null}
+                  ) : (
+                    <>
+                      {" "}
+                      · <span className="pill bad">Web UI недоступен</span>
+                    </>
+                  )}
                 </p>
-              ) : null}
+                {settings.melezhLastError ? (
+                  <p className="hint warn">
+                    {settings.melezhLastError}
+                    {settings.melezhLogHint ? (
+                      <>
+                        {" "}
+                        · лог: <span className="mono">{settings.melezhLogHint}</span>
+                      </>
+                    ) : null}
+                  </p>
+                ) : null}
+                {melezhRepairBusy ? (
+                  <p className="hint">Восстановление службы Melezh…</p>
+                ) : null}
+                <div className="row service-control-actions">
+                  <button type="button" className="secondary" onClick={() => void refreshSettings()}>
+                    Обновить статус
+                  </button>
+                  <a href={settings.melezhUiUrl} target="_blank" rel="noreferrer" className="secondary">
+                    Открыть Web UI
+                  </a>
+                  {(settings.melezhServiceStatus !== "Running" || !settings.melezhRunning) && (
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={melezhRepairBusy}
+                      onClick={() => {
+                        setMelezhRepairBusy(true);
+                        postToHost({ action: "repairMelezh" });
+                      }}
+                    >
+                      {melezhRepairBusy ? "Восстановление…" : "Восстановить службу"}
+                    </button>
+                  )}
+                </div>
+              </div>
+
               <h3>Синхронизация в Melezh</h3>
-              <p className="hint">
-                Handler <span className="mono">aria_sync</span> принимает только{" "}
-                <strong>POST</strong> с JSON. Открытие ссылки в Web UI Melezh (GET) даст «Method Not Allowed» — это
-                нормально. Проверка: кнопка «Отправить снимок» ниже или{" "}
-                <span className="mono">POST /api/v1/melezh/push</span>.
-              </p>
               <label className="checkbox">
                 <input
                   type="checkbox"
@@ -2841,10 +2848,6 @@ export default function App() {
                   placeholder="20 2/15 * * * ?"
                 />
               </label>
-              <p className="hint">
-                По умолчанию push сдвинут на 20-ю секунду (<span className="mono">20 2/15 * * * ?</span>), чтобы реже
-                совпадать с pull cron Melezh (каждые 5 мин, секунды 0/4/8/…).
-              </p>
               {settings.melezhSyncLastOk ? (
                 <p className="hint">
                   Последняя успешная отправка: <span className="mono">{settings.melezhSyncLastOk}</span>
@@ -2856,9 +2859,6 @@ export default function App() {
                 <p className="hint warn">Ошибка sync: {settings.melezhSyncLastError}</p>
               ) : null}
               <div className="row">
-                <a href={settings.melezhUiUrl} target="_blank" rel="noreferrer">
-                  Открыть Web UI Melezh
-                </a>
                 <button
                   type="button"
                   className="secondary"
@@ -2879,22 +2879,6 @@ export default function App() {
                 >
                   {melezhPushBusy ? "Отправка…" : "Отправить сейчас"}
                 </button>
-                <button type="button" className="secondary" onClick={() => void refreshSettings()}>
-                  Обновить статус
-                </button>
-                {(settings.melezhServiceStatus !== "Running" || !settings.melezhRunning) && (
-                  <button
-                    type="button"
-                    className="secondary"
-                    disabled={melezhRepairBusy}
-                    onClick={() => {
-                      setMelezhRepairBusy(true);
-                      postToHost({ action: "repairMelezh" });
-                    }}
-                  >
-                    {melezhRepairBusy ? "Восстановление…" : "Восстановить службу Melezh"}
-                  </button>
-                )}
               </div>
             </div>
           </details>

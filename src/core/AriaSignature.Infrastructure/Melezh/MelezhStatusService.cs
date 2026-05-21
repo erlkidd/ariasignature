@@ -237,9 +237,8 @@ public sealed class MelezhStatusService : IMelezhStatusService
         using var http = new HttpClient { Timeout = UiProbeTimeout };
         var uris = new[]
         {
-            $"http://127.0.0.1:{port}/aria_ping",
             $"http://127.0.0.1:{port}/ui",
-            $"http://127.0.0.1:{port}/",
+            $"http://127.0.0.1:{port}/aria_ping",
         };
         string? lastErr = null;
 
@@ -248,19 +247,44 @@ public sealed class MelezhStatusService : IMelezhStatusService
             try
             {
                 using var response = await http.GetAsync(uri, cancellationToken);
-                if (response.IsSuccessStatusCode)
+                if (!response.IsSuccessStatusCode)
                 {
-                    return (true, null);
+                    lastErr = $"HTTP {(int)response.StatusCode} ({uri})";
+                    continue;
                 }
 
-                lastErr = $"HTTP {(int)response.StatusCode} для {uri}";
+                if (uri.EndsWith("/aria_ping", StringComparison.OrdinalIgnoreCase))
+                {
+                    var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                    if (body.Contains("\"result\":false", StringComparison.OrdinalIgnoreCase)
+                        || body.Contains("\"result\": false", StringComparison.OrdinalIgnoreCase))
+                    {
+                        lastErr = "aria_ping вернул result=false";
+                        continue;
+                    }
+                }
+
+                return (true, null);
             }
             catch (Exception ex)
             {
-                lastErr = $"{uri}: {ex.Message}";
+                lastErr = FormatProbeFailure(port, ex);
             }
         }
 
-        return (false, lastErr);
+        return (false, lastErr ?? $"Порт {port} не отвечает. Подождите 30–60 с после запуска службы или перезапустите AriaSignatureMelezhService.");
+    }
+
+    private static string FormatProbeFailure(int port, Exception ex)
+    {
+        var msg = ex.Message;
+        if (msg.Contains("actively refused", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("connection refused", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("Подключение не установлено", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Порт {port} ещё не слушает HTTP (служба могла только что стартовать). Подождите или перезапустите Melezh.";
+        }
+
+        return msg.Length > 160 ? msg[..160] + "…" : msg;
     }
 }

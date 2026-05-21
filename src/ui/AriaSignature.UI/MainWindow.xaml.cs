@@ -1099,14 +1099,9 @@ public partial class MainWindow : Window
     {
         PostWebMessageJson(new { action = "repairMelezhProgress", phase = "start" });
         var result = await Task.Run(MelezhServiceRepair.TryRepairWithElevation).ConfigureAwait(true);
-        await Dispatcher.InvokeAsync(async () =>
+        await Dispatcher.InvokeAsync(() =>
         {
             PostWebMessageJson(new { action = "repairMelezh", ok = result.Ok, error = result.Error });
-            if (result.Ok)
-            {
-                await Task.Delay(500);
-                Browser.CoreWebView2?.Reload();
-            }
         });
     }
 

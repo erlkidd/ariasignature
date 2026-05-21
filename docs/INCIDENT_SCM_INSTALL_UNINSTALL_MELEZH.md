@@ -1,6 +1,6 @@
-﻿# Incident: SCM install/uninstall + Melezh autostart
+# Incident: SCM install/uninstall + Melezh autostart
 
-Версия документа: 1.1.1
+Версия документа: 1.1.2
 
 ## Симптомы
 
@@ -24,7 +24,7 @@
 3. На uninstall не хватало расширенного second-pass удаления.
 4. UI startup/recovery гарантировал подъем только `AriaSignatureService`, а не `AriaSignatureMelezhService`.
 5. В ISS использовалась несуществующая константа `{userdomain}` вместо `{%USERDOMAIN%}` / `{%USERNAME%}`.
-6. Проверка `InstallHealthStatus <> 'install-health:ok'` прерывала установку при любом `degraded-*`, хотя ниже были сообщения про «ограниченную готовность» (с 1.1.1+ degraded только в лог, без MsgBox).
+6. Проверка `InstallHealthStatus <> 'install-health:ok'` прерывала установку при любом `degraded-*`, хотя ниже были сообщения про «ограниченную готовность» (с 1.1.2+ degraded только в лог, без MsgBox).
 7. В OInt 0.12 bundle отсутствовал CLI-индекс модуля `http` → handlers с `library=http` не вызывались; bootstrap v1 пропускал существующие keys и не чинил после upgrade.
 8. Удаление `{app}` полагалось только на `[UninstallDelete]` без `DelTree` после остановки процессов в `usPostUninstall`.
 

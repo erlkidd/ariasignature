@@ -46,6 +46,8 @@ public static class MelezhServiceRepair
                 return (false, startErr ?? "Не удалось запустить службу Melezh (sc start).");
             }
 
+            TryRunBootstrapOnly(hostExe);
+
             if (!WaitForMelezhUi())
             {
                 return (false, "Служба Melezh запущена, но Web UI не отвечает на http://127.0.0.1:7788/ui.");
@@ -85,9 +87,29 @@ public static class MelezhServiceRepair
         Thread.Sleep(1500);
     }
 
+    private static void TryRunBootstrapOnly(string hostExe)
+    {
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = hostExe,
+                Arguments = "--bootstrap-only",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(hostExe) ?? AppContext.BaseDirectory
+            });
+            proc?.WaitForExit(120_000);
+        }
+        catch
+        {
+            // best-effort; host also bootstraps on service start
+        }
+    }
+
     private static bool WaitForMelezhUi()
     {
-        for (var i = 0; i < 12; i++)
+        for (var i = 0; i < 24; i++)
         {
             try
             {
@@ -102,7 +124,7 @@ public static class MelezhServiceRepair
                 // retry
             }
 
-            Thread.Sleep(2000);
+            Thread.Sleep(2500);
         }
 
         return false;

@@ -1,6 +1,6 @@
-﻿# AriaSignature - development notes
+# AriaSignature - development notes
 
-Версия документа: 1.1.1
+Версия документа: 1.1.2
 
 `docs/CHANGELOG.md` является каноничным журналом релизных изменений.
 

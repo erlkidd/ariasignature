@@ -1,6 +1,6 @@
-﻿# AriaSignature — регламент release-gate
+# AriaSignature — регламент release-gate
 
-Версия документа: 1.1.1
+Версия документа: 1.1.2
 
 ## 1. Цель
 
