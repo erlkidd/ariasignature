@@ -63,7 +63,7 @@ dotnet publish .\src\service\AriaSignature.MelezhHost\AriaSignature.MelezhHost.c
 - при неуспешном старте setup выполняет preflight/postflight проверки и запускает auto-repair через `AriaSignature.ServiceBootstrap.exe`;
 - установка не оставляет полу-рабочее состояние: если после auto-repair не подтверждены `service running + /api/v1/status`, setup завершается ошибкой.
 
-При критической ошибке регистрации/здоровья (`install-health:fail-hard`) установка завершается с ошибкой. Статусы `install-health:degraded-*` и `install-health:timeout` **не** прерывают мастер — пользователь может нажать «Завершить»; см. `SuppressibleMsgBox` в post-install.
+При критической ошибке регистрации/здоровья (`install-health:fail-hard`) установка завершается с ошибкой. Статусы `install-health:degraded-*` и `install-health:timeout` **не** прерывают мастер — пользователь может нажать «Завершить»; детали только в логе установщика (`marker=install-user-notice`, без MsgBox «ограниченной готовности»). Прогрев API/Melezh делегируется UI.
 
 Задача автозапуска трея при входе (`schtasks`, `AriaSignatureTrayLogon`) регистрируется с учётной записью `{%USERDOMAIN%}\{%USERNAME%}` (не `{userdomain}` — такой константы в Inno Setup нет).
 

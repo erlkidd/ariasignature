@@ -2765,7 +2765,9 @@ export default function App() {
                   Последняя успешная отправка: <span className="mono">{settings.melezhSyncLastOk}</span>
                 </p>
               ) : null}
-              {settings.melezhSyncLastError ? (
+              {settings.melezhSyncLastError &&
+              settings.melezhServiceStatus === "Running" &&
+              settings.melezhRunning ? (
                 <p className="hint warn">Ошибка sync: {settings.melezhSyncLastError}</p>
               ) : null}
               <div className="row">

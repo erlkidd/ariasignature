@@ -155,7 +155,7 @@ if (-not $apiOk) {
 if ($RepairMelezh -or -not $SkipMelezh) {
     $repairMelezh = Join-Path $PSScriptRoot "repair-melezh.ps1"
     if (Test-Path $repairMelezh) {
-        Write-RepairLog "Running repair-melezh.ps1"
+        Write-RepairLog "Running repair-melezh.ps1 (SCM + bootstrap-only handler catalog v2)"
         & $repairMelezh -InstallRoot $InstallRoot
         if ($LASTEXITCODE -ne 0) {
             throw "[repair-upgrade] repair-melezh.ps1 failed with exit code $LASTEXITCODE"

@@ -53,6 +53,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "[repair-melezh] sc start failed with exit code $LASTEXITCODE"
 }
 
+Write-RepairLog "Rebuilding Melezh handler catalog (bootstrap-only)"
+& $hostExe --bootstrap-only 2>&1 | ForEach-Object { Write-RepairLog $_ }
+if ($LASTEXITCODE -ne 0) {
+    throw "[repair-melezh] MelezhHost --bootstrap-only failed with exit code $LASTEXITCODE"
+}
+
 $deadline = (Get-Date).AddSeconds(90)
 $uiOk = $false
 while ((Get-Date) -lt $deadline) {
@@ -73,6 +79,13 @@ if (-not $uiOk) {
 }
 
 Write-RepairLog "Melezh Web UI is reachable"
+
+$assertScript = Join-Path $PSScriptRoot "Test-MelezhAssert.ps1"
+if (Test-Path $assertScript) {
+    . $assertScript
+    Assert-MelezhHandlerJson -Uri "http://127.0.0.1:$Port/aria_ping" -Label "aria_ping" | Out-Null
+    Write-RepairLog "aria_ping handler OK (result != false)"
+}
 
 if ($RestartMainService) {
     $main = Get-Service -Name "AriaSignatureService" -ErrorAction SilentlyContinue

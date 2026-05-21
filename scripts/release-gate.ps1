@@ -327,6 +327,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "[release-gate][step-fail] operation=""test-melezh-aria-bridge"" reason=""melezh-aria-bridge-smoke-failed"""
 }
 
+& powershell -ExecutionPolicy Bypass -File ".\scripts\Test-MelezhWriteHandlers.ps1" -MelezhRoot ".\installer\melezh\bundle"
+if ($LASTEXITCODE -ne 0) {
+    throw "[release-gate][step-fail] operation=""test-melezh-write-handlers"" reason=""melezh-post-put-delete-handlers-failed"""
+}
+
 Write-Host "[release-gate][check] validating host dependencies"
 $requiredCommands = @("powershell.exe", "sc.exe", "taskkill.exe")
 foreach ($cmd in $requiredCommands) {

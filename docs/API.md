@@ -107,7 +107,8 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
 - Управление: `melezhSync*` в разделе 3.2; Quartz job `melezh-sync-job` в `AriaSignatureService`.
 - URL: `http://127.0.0.1:{melezhPort}/{melezhSyncHandler}` (handler по умолчанию `aria_sync`, health `aria_ping`).
 - Схема тела: как в разделе 3.5 (исходящий POST на коллектор).
-- **Опрос API через Melezh (pull):** планировщик Melezh по cron вызывает только outbound GET handlers (`aria_get_*`) без `{id}` в пути — см. [`docs/MELEZH_HANDLER_CATALOG.md`](MELEZH_HANDLER_CATALOG.md). Контракт REST API агента не дублируется: handlers проксируют на `GET http://127.0.0.1:{apiPort}/api/v1/...`. `POST /api/v1/melezh/push` остаётся endpoint агента, не отдельным outbound handler Melezh.
+- **Push в шлюз обязателен** для доставки снимка на `:7788` (Quartz + `POST /api/v1/melezh/push` → тот же handler `aria_sync`).
+- **Опрос через Melezh (pull):** планировщик Melezh по cron вызывает outbound GET handlers (`aria_get_*`); прямой `GET :5160/api/v1/*` допустим для UI/диагностики, но внешние интеграции ориентируются на `:7788`. См. [`docs/MELEZH_HANDLER_CATALOG.md`](MELEZH_HANDLER_CATALOG.md).
 
 ### 3.5 Исходящая синхронизация (POST на коллектор)
 

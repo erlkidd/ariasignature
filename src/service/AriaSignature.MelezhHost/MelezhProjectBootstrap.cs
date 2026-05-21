@@ -19,10 +19,13 @@ public static class MelezhProjectBootstrap
         var pullCron = Environment.GetEnvironmentVariable("ARIASIGNATURE_MELEZH_PULL_CRON")
             ?? MelezhAriaApiHandlerCatalog.DefaultPullCron;
 
+        var storedVersion = await GetBootstrapVersionAsync(options.ProjectPath, cancellationToken);
+        var forceRepair = storedVersion < MelezhBootstrapSchema.CurrentVersion;
+
         foreach (var def in MelezhAriaApiHandlerCatalog.All)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await EnsureHandlerAsync(options, runCliAsync, def, api, logger, cancellationToken);
+            await EnsureHandlerAsync(options, runCliAsync, def, api, forceRepair, logger, cancellationToken);
         }
 
         foreach (var def in MelezhAriaApiHandlerCatalog.All.Where(d => d.ScheduleByDefault))
@@ -30,6 +33,8 @@ public static class MelezhProjectBootstrap
             cancellationToken.ThrowIfCancellationRequested();
             await EnsureScheduledTaskAsync(options, runCliAsync, def.Key, pullCron, logger, cancellationToken);
         }
+
+        await SetBootstrapVersionAsync(options.ProjectPath, MelezhBootstrapSchema.CurrentVersion, cancellationToken);
     }
 
     private static async Task EnsureHandlerAsync(
@@ -37,12 +42,27 @@ public static class MelezhProjectBootstrap
         Func<string, CancellationToken, Task<int>> runCliAsync,
         MelezhHandlerDefinition def,
         MelezhAgentApiSettings api,
+        bool forceRepair,
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        if (await HandlerExistsAsync(options.ProjectPath, def.Key, cancellationToken))
+        var existing = await TryGetHandlerRowAsync(options.ProjectPath, def.Key, cancellationToken);
+        if (existing is not null && !forceRepair && HandlerRowMatches(existing.Value, def))
         {
+            await ApplyOutboundArgsAsync(options, runCliAsync, def, api, logger, cancellationToken);
+            await ApplyInboundArgsAsync(options, runCliAsync, def, api, logger, cancellationToken);
             return;
+        }
+
+        if (existing is not null)
+        {
+            await DeleteHandlerAsync(options.ProjectPath, def.Key, cancellationToken);
+            logger.LogInformation(
+                "Melezh bootstrap: repairing handler {Key} (library={Lib} func={Func} method={Method})",
+                def.Key,
+                def.OintLibrary,
+                def.OintFunction,
+                def.OintMethod);
         }
 
         var addArgs =
@@ -66,38 +86,75 @@ public static class MelezhProjectBootstrap
             def.Key,
             cancellationToken);
 
-        if (def.Direction == MelezhHandlerDirection.OutboundToAria && def.ApiPathTemplate is not null)
-        {
-            var url = BuildAriaUrl(api, def);
-            await SetHandlerArgumentAsync(options, runCliAsync, def.Key, "url", url, logger, cancellationToken);
-
-            if (!string.IsNullOrWhiteSpace(api.SharedSecret))
-            {
-                await SetHandlerArgumentAsync(
-                    options,
-                    runCliAsync,
-                    def.Key,
-                    "headers",
-                    $"Authorization: Bearer {api.SharedSecret}",
-                    logger,
-                    cancellationToken);
-            }
-
-            if (!string.IsNullOrWhiteSpace(def.DefaultBodyJson))
-            {
-                await SetHandlerArgumentAsync(
-                    options,
-                    runCliAsync,
-                    def.Key,
-                    "data",
-                    def.DefaultBodyJson,
-                    logger,
-                    cancellationToken);
-            }
-        }
-
+        await ApplyOutboundArgsAsync(options, runCliAsync, def, api, logger, cancellationToken);
+        await ApplyInboundArgsAsync(options, runCliAsync, def, api, logger, cancellationToken);
         logger.LogInformation("Melezh bootstrap: handler {Key} ready", def.Key);
     }
+
+    private static async Task ApplyInboundArgsAsync(
+        MelezhHostOptions options,
+        Func<string, CancellationToken, Task<int>> runCliAsync,
+        MelezhHandlerDefinition def,
+        MelezhAgentApiSettings api,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        if (def.Direction != MelezhHandlerDirection.Inbound || def.Key != "aria_sync")
+        {
+            return;
+        }
+
+        var ingestUrl = $"{api.BaseUrl.TrimEnd('/')}/melezh/ingest";
+        await SetHandlerArgumentAsync(options, runCliAsync, def.Key, "url", ingestUrl, logger, cancellationToken);
+    }
+
+    private static async Task ApplyOutboundArgsAsync(
+        MelezhHostOptions options,
+        Func<string, CancellationToken, Task<int>> runCliAsync,
+        MelezhHandlerDefinition def,
+        MelezhAgentApiSettings api,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        if (def.Direction != MelezhHandlerDirection.OutboundToAria || def.ApiPathTemplate is null)
+        {
+            return;
+        }
+
+        var url = BuildAriaUrl(api, def);
+        await SetHandlerArgumentAsync(options, runCliAsync, def.Key, "url", url, logger, cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(api.SharedSecret))
+        {
+            await SetHandlerArgumentAsync(
+                options,
+                runCliAsync,
+                def.Key,
+                "headers",
+                $"Authorization: Bearer {api.SharedSecret}",
+                logger,
+                cancellationToken);
+        }
+
+        if (!string.IsNullOrWhiteSpace(def.DefaultBodyJson))
+        {
+            await SetHandlerArgumentAsync(
+                options,
+                runCliAsync,
+                def.Key,
+                "data",
+                def.DefaultBodyJson,
+                logger,
+                cancellationToken);
+        }
+    }
+
+    private static bool HandlerRowMatches(
+        (string Library, string Function, string Method) row,
+        MelezhHandlerDefinition def) =>
+        string.Equals(row.Library, def.OintLibrary, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(row.Function, def.OintFunction, StringComparison.Ordinal)
+        && string.Equals(row.Method, def.OintMethod, StringComparison.OrdinalIgnoreCase);
 
     private static string BuildAriaUrl(MelezhAgentApiSettings api, MelezhHandlerDefinition def)
     {
@@ -158,13 +215,56 @@ public static class MelezhProjectBootstrap
         logger.LogInformation("Melezh bootstrap: scheduled task for {Key} cron={Cron}", handlerKey, cron);
     }
 
-    private static async Task<bool> HandlerExistsAsync(string projectPath, string key, CancellationToken cancellationToken)
+    private static async Task<(string Library, string Function, string Method)?> TryGetHandlerRowAsync(
+        string projectPath,
+        string key,
+        CancellationToken cancellationToken)
     {
         await using var connection = OpenProject(projectPath);
         await using var cmd = connection.CreateCommand();
-        cmd.CommandText = "SELECT 1 FROM handlers WHERE key = $key LIMIT 1";
+        cmd.CommandText = "SELECT library, function, method FROM handlers WHERE key = $key LIMIT 1";
         cmd.Parameters.AddWithValue("$key", key);
-        return await cmd.ExecuteScalarAsync(cancellationToken) is not null;
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return (
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetString(2));
+    }
+
+    private static async Task DeleteHandlerAsync(string projectPath, string key, CancellationToken cancellationToken)
+    {
+        await using var connection = OpenProject(projectPath);
+        await using var tx = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        await using (var cmd = connection.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM arguments WHERE key = $key";
+            cmd.Parameters.AddWithValue("$key", key);
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var cmd = connection.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM scheduler_tasks WHERE handler = $handler";
+            cmd.Parameters.AddWithValue("$handler", key);
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var cmd = connection.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM handlers WHERE key = $key";
+            cmd.Parameters.AddWithValue("$key", key);
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await tx.CommitAsync(cancellationToken);
     }
 
     private static async Task<bool> SchedulerTaskExistsAsync(
@@ -211,6 +311,30 @@ public static class MelezhProjectBootstrap
         updateArgs.Parameters.AddWithValue("$newKey", desiredKey);
         updateArgs.Parameters.AddWithValue("$oldKey", oldKey);
         await updateArgs.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<int> GetBootstrapVersionAsync(string projectPath, CancellationToken cancellationToken)
+    {
+        await using var connection = OpenProject(projectPath);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT value FROM settings WHERE name = $name LIMIT 1";
+        cmd.Parameters.AddWithValue("$name", MelezhBootstrapSchema.VersionSettingKey);
+        var raw = await cmd.ExecuteScalarAsync(cancellationToken) as string;
+        return int.TryParse(raw, out var version) ? version : 0;
+    }
+
+    private static async Task SetBootstrapVersionAsync(
+        string projectPath,
+        int version,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = OpenProject(projectPath);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText =
+            "INSERT INTO settings(name, value) VALUES ($name, $value) ON CONFLICT(name) DO UPDATE SET value = excluded.value";
+        cmd.Parameters.AddWithValue("$name", MelezhBootstrapSchema.VersionSettingKey);
+        cmd.Parameters.AddWithValue("$value", version.ToString());
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static SqliteConnection OpenProject(string projectPath)

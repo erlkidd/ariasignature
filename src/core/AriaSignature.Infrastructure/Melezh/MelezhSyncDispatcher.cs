@@ -105,7 +105,11 @@ public sealed class MelezhSyncDispatcher : IMelezhSyncDispatcher
             {
                 var body = await response.Content.ReadAsStringAsync(cancellationToken);
                 var err = $"Melezh POST {(int)response.StatusCode}: {(body.Length > 200 ? body[..200] + "…" : body)}";
-                await RecordFailureAsync(err, cancellationToken);
+                if (!ShouldSuppressWarmupSyncError(err, melezh.ServiceStatus))
+                {
+                    await RecordFailureAsync(err, cancellationToken);
+                }
+
                 RuntimeObservability.RecordMelezhSync(success: false);
                 return new MelezhSyncResult(false, err, targetUrl);
             }
@@ -118,7 +122,15 @@ public sealed class MelezhSyncDispatcher : IMelezhSyncDispatcher
         catch (Exception ex)
         {
             var err = ex.Message;
-            await RecordFailureAsync(err, cancellationToken);
+            if (!ShouldSuppressWarmupSyncError(err, melezh.ServiceStatus))
+            {
+                await RecordFailureAsync(err, cancellationToken);
+            }
+            else
+            {
+                _logger.LogDebug("Melezh sync skipped persisting error while gateway is warming up: {Error}", err);
+            }
+
             RuntimeObservability.RecordMelezhSync(success: false);
             _logger.LogWarning(ex, "Melezh sync failed for {Url}", targetUrl);
             return new MelezhSyncResult(false, err, targetUrl);
@@ -138,4 +150,13 @@ public sealed class MelezhSyncDispatcher : IMelezhSyncDispatcher
 
     private static bool ParseBool(string? value, bool defaultValue) =>
         value is null ? defaultValue : bool.TryParse(value, out var b) && b;
+
+    private static bool ShouldSuppressWarmupSyncError(string error, string? melezhServiceStatus) =>
+        !string.Equals(melezhServiceStatus, "Running", StringComparison.OrdinalIgnoreCase)
+        && IsConnectionRefusedLike(error);
+
+    private static bool IsConnectionRefusedLike(string error) =>
+        error.Contains("connection refused", StringComparison.OrdinalIgnoreCase)
+        || error.Contains("actively refused", StringComparison.OrdinalIgnoreCase)
+        || error.Contains("No connection could be made", StringComparison.OrdinalIgnoreCase);
 }

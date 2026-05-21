@@ -7,7 +7,7 @@
 
 **Melezh** — HTTP-шлюз над **OpenIntegrations (OInt)** для внешних интеграций: Telegram, HTTP, почта, БД и др.
 
-**Важно:** сбор телеметрии AriaSignature для 1С выполняется **напрямую** через API агента (`http://<host>:5160/api/v1/...`), без Melezh. Melezh нужен для исходящих интеграций (см. ЛТ-13 в `docs/TZ_1C_EXTENSION_AriaSignature_LT.md`).
+**Источник данных** — API агента (`AriaSignatureService`, `:5160`). **Обязательный push** снимка в шлюз: Quartz `melezh-sync-job` / `POST :7788/aria_sync`. **Внешние потребители** (1С, OInt) читают агент **через Melezh** (`GET :7788/aria_get_*`); прямой `GET :5160/api/v1/*` допустим для UI и диагностики, но не заменяет шлюз. См. [`docs/API.md`](API.md) § 3.4 и [`docs/MELEZH_HANDLER_CATALOG.md`](MELEZH_HANDLER_CATALOG.md).
 
 ## Компоненты на ПК клиента
 
@@ -75,6 +75,7 @@ Cron pull по умолчанию: `0 */5 * * * * *` — env `ARIASIGNATURE_MELE
 |---------|----------|
 | Web UI недоступен, служба Running | `.\scripts\diagnose-melezh.ps1` (admin); лог `melezh-host-*.log` |
 | В логе `CreateProject` / `code=99` / «неизвестный параметр --path» | Обновить `melezh-host\AriaSignature.MelezhHost.exe` (1.1.0+ с русскими CLI) и перезапустить службу |
+| `GET :7788/aria_ping` → `result:false`, «Некорректное имя команды: http» | Пересобрать bundle (`prepare-melezh` + патч `oint-http-index`), `repair-melezh.ps1` или `MelezhHost --bootstrap-only` (bootstrap v2 пересоздаёт handlers) |
 | Web UI недоступен | `services.msc` → `AriaSignatureMelezhService` → перезапуск |
 | Служба не стартует | `%ProgramData%\AriaSignature\logs\melezh-host-*.log` |
 | Нет `bin\melezh.bat` | Переустановить сборку с полным OInt bundle (`prepare-melezh`) |
@@ -95,11 +96,18 @@ Cron pull по умолчанию: `0 */5 * * * * *` — env `ARIASIGNATURE_MELE
 
 ## Проверка моста
 
-1. `GET http://127.0.0.1:7788/aria_get_disks` — после срабатывания планировщика или ручного trigger в Web UI.
-2. `POST http://127.0.0.1:7788/aria_sync` — тело как у `POST /api/v1/melezh/push`.
-3. `GET http://127.0.0.1:7788/aria_ping` — health Melezh.
+| Вызов | Метод на :7788 | Назначение |
+|-------|----------------|------------|
+| `/aria_get_*` | **GET** | Прокси GET к `:5160` |
+| `/aria_post_*`, `/aria_sync` | **POST** + JSON | Прокси POST (и PUT/DELETE через OInt) к `:5160` |
+| `/aria_ping` | **GET** | Health |
 
-Автоматизация: `scripts/Test-MelezhHandlerBootstrap.ps1`, `scripts/Test-MelezhAriaBridge.ps1` (release-gate).
+1. `GET http://127.0.0.1:7788/aria_get_disks`
+2. `POST http://127.0.0.1:7788/aria_post_disks_refresh` с телом `{}`
+3. `POST http://127.0.0.1:7788/aria_sync` — тело как у `POST /api/v1/melezh/push`
+4. `POST http://127.0.0.1:7788/aria_delete_backups_logs` с телом `{}`
+
+Автоматизация: `scripts/Test-MelezhHandlerBootstrap.ps1`, `scripts/Test-MelezhAriaBridge.ps1`, `scripts/Test-MelezhWriteHandlers.ps1` (release-gate).
 
 ## Дополнительная документация
 

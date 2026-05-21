@@ -469,6 +469,15 @@ public static class AriaApiExtensions
             return o;
         });
 
+        api.MapPost("/melezh/ingest", static () => Results.Ok(new { result = true, ok = true }))
+        .WithName("MelezhIngestAck")
+        .WithTags("Melezh")
+        .WithOpenApi(o =>
+        {
+            o.Description = "ACK sink для inbound handler Melezh aria_sync (PostСТелом → url).";
+            return o;
+        });
+
         api.MapPost("/backups/test-mssql", async (MsSqlConnectionPayload payload, CancellationToken cancellationToken) =>
         {
             var payloadErrors = MsSqlConnectionStringBuilder.ValidatePayload(payload);

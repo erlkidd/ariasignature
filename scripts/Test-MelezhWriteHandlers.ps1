@@ -1,9 +1,9 @@
-# Integration: Aria API + Melezh bootstrap + handler proxy smoke (requires bundle).
+# Smoke: POST JSON handlers on :7788 (POST/PUT/DELETE outbound to Aria API).
 param(
     [string]$MelezhRoot = "",
     [string]$RepoRoot = "",
-    [int]$ApiPort = 18767,
-    [int]$MelezhPort = 18768
+    [int]$ApiPort = 18775,
+    [int]$MelezhPort = 18776
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,9 +17,11 @@ if ([string]::IsNullOrWhiteSpace($MelezhRoot)) {
 $MelezhRoot = [System.IO.Path]::GetFullPath($MelezhRoot)
 $oscript = Join-Path $MelezhRoot "lib\oint\bin\oscript.exe"
 if (-not (Test-Path $oscript)) {
-    Write-Host "[Test-MelezhAriaBridge] SKIP: bundle missing"
+    Write-Host "[Test-MelezhWriteHandlers] SKIP: bundle missing"
     exit 0
 }
+
+. (Join-Path $PSScriptRoot "Test-MelezhAssert.ps1")
 
 $MethodRunProject = -join @(
     [char]0x0417, [char]0x0430, [char]0x043F, [char]0x0443, [char]0x0441, [char]0x0442, [char]0x0438, [char]0x0442, [char]0x044C,
@@ -28,14 +30,14 @@ $MethodRunProject = -join @(
 
 $apiUrl = "http://127.0.0.1:$ApiPort"
 $apiProj = Join-Path $RepoRoot "src\api\AriaSignature.Api\AriaSignature.Api.csproj"
-$db = Join-Path $env:TEMP ("aria_bridge_api_" + [guid]::NewGuid().ToString("N") + ".db")
+$db = Join-Path $env:TEMP ("aria_write_api_" + [guid]::NewGuid().ToString("N") + ".db")
 $env:ConnectionStrings__AriaSignature = "Data Source=$db"
 
-Write-Host "[Test-MelezhAriaBridge] building API"
+Write-Host "[Test-MelezhWriteHandlers] building API"
 dotnet build $apiProj -c Release -v q | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "API build failed" }
 
-Write-Host "[Test-MelezhAriaBridge] starting API on $apiUrl"
+Write-Host "[Test-MelezhWriteHandlers] starting API on $apiUrl"
 $apiProc = Start-Process -FilePath "dotnet" -WorkingDirectory $RepoRoot -ArgumentList @(
     "run", "-c", "Release", "--no-build", "--project", $apiProj,
     "--urls", $apiUrl, "--no-launch-profile"
@@ -52,7 +54,7 @@ try {
     }
     if (-not $ready) { throw "API not ready on $apiUrl" }
 
-    $proj = Join-Path $env:TEMP ("aria_bridge_melezh_" + [guid]::NewGuid().ToString("N").Substring(0, 8) + ".melezh")
+    $proj = Join-Path $env:TEMP ("aria_write_melezh_" + [guid]::NewGuid().ToString("N").Substring(0, 8) + ".melezh")
     $env:ARIASIGNATURE_MELEZH_ROOT = $MelezhRoot
     $env:ARIASIGNATURE_MELEZH_PROJECT = $proj
     $env:ARIASIGNATURE_API_PORT = "$ApiPort"
@@ -71,7 +73,6 @@ try {
     ) -WorkingDirectory (Split-Path $oscript) -PassThru -WindowStyle Hidden
     try {
         $mzReady = $false
-        . (Join-Path $PSScriptRoot "Test-MelezhAssert.ps1")
         for ($i = 0; $i -lt 80; $i++) {
             try {
                 Assert-MelezhHandlerJson -Uri "http://127.0.0.1:${MelezhPort}/aria_ping" -Label "aria_ping" -TimeoutSec 5 | Out-Null
@@ -82,12 +83,11 @@ try {
         }
         if (-not $mzReady) { throw "Melezh not ready on port $MelezhPort" }
 
-        $direct = Invoke-WebRequest -Uri "$apiUrl/api/v1/status" -UseBasicParsing
-        $viaJson = Assert-MelezhHandlerJson -Uri "http://127.0.0.1:${MelezhPort}/aria_get_status" -Label "aria_get_status"
-        Write-Host "[Test-MelezhAriaBridge] GET aria_get_status ok; direct status $($direct.StatusCode)"
+        Assert-MelezhHandlerJson -Uri "http://127.0.0.1:${MelezhPort}/aria_post_disks_refresh" -Label "aria_post_disks_refresh" -Method POST -Body "{}" | Out-Null
+        Write-Host "[Test-MelezhWriteHandlers] POST aria_post_disks_refresh ok"
 
-        $payload = '{"timestampUtc":"2026-05-20T12:00:00Z","agentVersion":"test","system":{},"disks":[],"backups":{"jobs":[],"recentLogs":[]}}'
-        $sync = Invoke-WebRequest -Uri "http://127.0.0.1:${MelezhPort}/aria_sync" -Method POST -Body $payload -ContentType "application/json" -UseBasicParsing -TimeoutSec 60
+        $syncPayload = '{"timestampUtc":"2026-05-20T12:00:00Z","agentVersion":"test","system":{},"disks":[],"backups":{"jobs":[],"recentLogs":[]}}'
+        $sync = Invoke-WebRequest -Uri "http://127.0.0.1:${MelezhPort}/aria_sync" -Method POST -Body $syncPayload -ContentType "application/json" -UseBasicParsing -TimeoutSec 60
         if ($sync.StatusCode -lt 200 -or $sync.StatusCode -ge 300) {
             throw "aria_sync POST returned $($sync.StatusCode)"
         }
@@ -95,7 +95,10 @@ try {
         if ($null -ne $syncJson.PSObject.Properties['result'] -and $syncJson.result -eq $false) {
             throw "aria_sync result=false error=$($syncJson.error)"
         }
-        Write-Host "[Test-MelezhAriaBridge] POST aria_sync ok"
+        Write-Host "[Test-MelezhWriteHandlers] POST aria_sync ok"
+
+        Assert-MelezhHandlerJson -Uri "http://127.0.0.1:${MelezhPort}/aria_delete_backups_logs" -Label "aria_delete_backups_logs" -Method POST -Body "{}" | Out-Null
+        Write-Host "[Test-MelezhWriteHandlers] POST aria_delete_backups_logs ok (DELETE to API)"
     }
     finally {
         if ($melezhProc -and -not $melezhProc.HasExited) {
@@ -110,5 +113,5 @@ finally {
     }
 }
 
-Write-Host "[Test-MelezhAriaBridge] ok"
+Write-Host "[Test-MelezhWriteHandlers] ok"
 exit 0

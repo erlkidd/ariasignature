@@ -3,7 +3,7 @@
 Версия документа: 1.1.1
 
 Источник правды в коде: `src/service/AriaSignature.MelezhHost/MelezhAriaApiHandlerCatalog.cs`.  
-При старте `AriaSignatureMelezhService` выполняется идемпотентный bootstrap (`MelezhProjectBootstrap`).
+При старте `AriaSignatureMelezhService` выполняется идемпотентный bootstrap (`MelezhProjectBootstrap`, schema v2: пересоздание handler при несовпадении `library`/`function`/`method` или устаревшей версии в SQLite).
 
 ## Инварианты
 
@@ -13,7 +13,7 @@
 | Inbound push | Только `aria_sync` принимает JSON от агента (`MelezhSyncJob` → `POST :7788/aria_sync`). Outbound handler на `POST /api/v1/melezh/push` **не** создаётся |
 | Планировщик Melezh | Только **GET** без `{id}` в пути; cron по умолчанию `0 */5 * * * * *` (`ARIASIGNATURE_MELEZH_PULL_CRON`) |
 | POST/PUT/DELETE outbound | Handlers есть, cron **нет** — вызов вручную или из 1С через `:7788/<key>` |
-| OInt `http` | Поддерживаются **GET** и **POST**; `Put`/`Delete` в библиотеке **не работают** — PUT/DELETE handlers зарегистрированы с `Post`/`json` (см. ограничение ниже) |
+| OInt `http` | CLI-индекс `http`/`Get`/`PostСТелом`/`PutСТелом`/`DeleteСТелом`; tokens **GET** / **JSON** на шлюзе |
 
 Базовый URL в аргументах handler: `http://127.0.0.1:{port}/api/v1` (`ARIASIGNATURE_API_PORT` или `Api:Port` из `%ProgramData%\AriaSignature\ariasignature.db`). При заданном `Api:SharedSecret` bootstrap добавляет заголовки `Authorization` / `X-Aria-Api-Key`.
 
@@ -22,7 +22,7 @@
 | Handler key | Melezh method | Назначение |
 |-------------|---------------|------------|
 | `aria_ping` | GET | Health / диагностика |
-| `aria_sync` | POST (JSON) | Снимок телеметрии от `AriaSignatureService` и внешних POST |
+| `aria_sync` | POST (JSON) | Снимок телеметрии от `AriaSignatureService` (`http` / `PostСТелом` → `POST :5160/api/v1/melezh/ingest` ACK) |
 
 ## Outbound GET (опрос :5160)
 
@@ -56,7 +56,7 @@
 | `aria_delete_backup` | `DELETE /backups/{backupId}` | нет |
 | `aria_delete_backups_logs` | `DELETE /backups/logs` | нет |
 
-**Ограничение OInt:** для `PUT`/`DELETE` маршрутов Aria API handler вызывает `http`/`Post`/`json`; настоящий REST PUT/DELETE к `:5160` через стандартную библиотеку `http` недоступен. Для критичных изменений используйте прямой вызов API агента или доработку OInt-скрипта.
+**HTTP на :7788 vs :5160:** клиент вызывает handler на Melezh методом **POST** + `Content-Type: application/json` (тип handler `JSON`). Melezh выполняет OInt `http` с нужным глаголом к API: `PostСТелом` / `PutСТелом` / `DeleteСТелом` → `POST` / `PUT` / `DELETE` на `:5160`. Ошибка `"Method Not Allowed"` обычно означает неверный глагол к API (устаревший bootstrap) — repair через bootstrap v4+.
 
 ## Переменные окружения (bootstrap / host)
 

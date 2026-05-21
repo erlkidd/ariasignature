@@ -256,6 +256,29 @@ public class MelezhAriaApiHandlerCatalogTests
         Assert.DoesNotContain(MelezhAriaApiHandlerCatalog.All, d =>
             d.ApiPathTemplate?.Contains("melezh/push", StringComparison.OrdinalIgnoreCase) == true);
     }
+
+    [Fact]
+    public void Catalog_UsesOintHttpTokens()
+    {
+        var ping = MelezhAriaApiHandlerCatalog.All.Single(d => d.Key == "aria_ping");
+        Assert.Equal(MelezhOintHttp.Library, ping.OintLibrary);
+        Assert.Equal(MelezhOintHttp.FuncGet, ping.OintFunction);
+        Assert.Equal(MelezhOintHttp.MethodGet, ping.OintMethod);
+
+        var sync = MelezhAriaApiHandlerCatalog.All.Single(d => d.Key == "aria_sync");
+        Assert.Equal(MelezhOintHttp.Library, sync.OintLibrary);
+        Assert.Equal(MelezhOintHttp.FuncPostWithBody, sync.OintFunction);
+        Assert.Equal(MelezhOintHttp.MethodJson, sync.OintMethod);
+
+        var deleteSmart = MelezhAriaApiHandlerCatalog.All.Single(d => d.Key == "aria_delete_disk_smart");
+        Assert.Equal(MelezhOintHttp.FuncDeleteWithBody, deleteSmart.OintFunction);
+
+        var putSettings = MelezhAriaApiHandlerCatalog.All.Single(d => d.Key == "aria_put_settings");
+        Assert.Equal(MelezhOintHttp.FuncPutWithBody, putSettings.OintFunction);
+
+        var postRefresh = MelezhAriaApiHandlerCatalog.All.Single(d => d.Key == "aria_post_disks_refresh");
+        Assert.Equal(MelezhOintHttp.FuncPostWithBody, postRefresh.OintFunction);
+    }
 }
 
 public class MelezhSyncDispatcherTests

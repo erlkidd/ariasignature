@@ -77,7 +77,7 @@ const
   TrayTaskName = 'AriaSignatureTrayLogon';
   ServiceName = 'AriaSignatureService';
   MelezhServiceName = 'AriaSignatureMelezhService';
-  PostInstallTimeoutSeconds = 90;
+  PostInstallTimeoutSeconds = 120;
   SC_ACCEPTABLE_NOT_FOUND = 1060;
   SC_ACCEPTABLE_NOT_ACTIVE = 1062;
   SC_ACCEPTABLE_ALREADY_RUNNING = 1056;
@@ -918,14 +918,7 @@ begin
     InstallHealthStatus := 'install-health:degraded-service-create-failed';
     Log('marker=install-health status=' + InstallHealthStatus + ' stage=create-service');
     Log('Warning: service create did not succeed; installer continues in degraded mode.');
-    SuppressibleMsgBox(
-      'Служба AriaSignature не зарегистрировалась автоматически (sc create код ' +
-      IntToStr(LastScExitCode) + ').' #13#10 +
-      'Установка приложения завершена, но служба будет донастроена при первом запуске UI.' #13#10 +
-      'Логи: %ProgramData%\AriaSignature\logs\.',
-      mbInformation,
-      MB_OK,
-      IDOK);
+    Log('marker=install-user-notice status=degraded-service-create skipped=msgbox');
     Exit;
   end;
 
@@ -983,14 +976,7 @@ begin
       InstallHealthStatus := 'install-health:degraded-service-not-running';
       Log('marker=install-health status=' + InstallHealthStatus + ' stage=start-service');
       Log('Warning: service did not start after auto-repair; installer will continue with degraded startup path.');
-      SuppressibleMsgBox(
-        'Служба AriaSignature не была запущена автоматически после установки.'#13#10 +
-        BuildBootstrapFailureHint() + #13#10 +
-        'Приложение всё равно установлено. Запустите AriaSignature.UI (лучше один раз от администратора) — UI выполнит повторный recovery.'#13#10 +
-        'Логи: %ProgramData%\AriaSignature\logs\; проверка службы: services.msc.',
-        mbInformation,
-        MB_OK,
-        IDOK);
+      Log('marker=install-user-notice status=degraded-service-not-running skipped=msgbox');
       Exit;
     end;
   end;
@@ -1026,14 +1012,7 @@ begin
       InstallHealthStatus := 'install-health:degraded-api-not-ready';
       Log('marker=install-health status=' + InstallHealthStatus + ' stage=api-health');
       Log('Warning: API health check failed and bootstrap repair also failed; installer will continue with degraded startup path.');
-      SuppressibleMsgBox(
-        BuildBootstrapFailureHint() + #13#10 +
-        'Служба запущена, но API пока не прошёл локальную проверку /api/v1/status.'#13#10 +
-        'Установка продолжена: UI подождёт прогрев API и повторит запуск.'#13#10 +
-        'Проверьте %ProgramData%\AriaSignature\logs\service-*.log при повторении проблемы.',
-        mbInformation,
-        MB_OK,
-        IDOK);
+      Log('marker=install-user-notice status=degraded-api-not-ready skipped=msgbox');
       Exit;
     end;
 
@@ -1042,14 +1021,8 @@ begin
     begin
       InstallHealthStatus := 'install-health:degraded-api-warmup';
       Log('marker=install-health status=' + InstallHealthStatus + ' stage=api-health');
-      Log('Warning: API still not ready after auto-repair; installer continues and delegates warmup/retry to UI.');
-      SuppressibleMsgBox(
-        'API ещё не отвечает после автоматического восстановления, но установка завершена.'#13#10 +
-        'Откройте AriaSignature.UI — приложение продолжит ожидание/восстановление автоматически.'#13#10 +
-        'Логи: %ProgramData%\AriaSignature\logs\.',
-        mbInformation,
-        MB_OK,
-        IDOK);
+      Log('Warning: API still not ready after auto-repair; installer continues; UI will retry automatically.');
+      Log('marker=install-user-notice status=degraded-api-warmup skipped=msgbox');
       Exit;
     end;
   end;
@@ -1380,26 +1353,9 @@ begin
     RegisterTrayLogonTaskBestEffort();
     RemoveLegacyCommonStartupShortcutBestEffort();
     if Pos('install-health:degraded', InstallHealthStatus) = 1 then
-    begin
-      SuppressibleMsgBox(
-        'Установка завершена в режиме ограниченной готовности.'#13#10 +
-        'Служба/локальный API могут прогреваться после закрытия мастера.'#13#10 +
-        'При необходимости запустите AriaSignature.UI от администратора.'#13#10 +
-        'Логи: %ProgramData%\AriaSignature\logs\.',
-        mbInformation,
-        MB_OK,
-        IDOK);
-    end
+      Log('marker=install-user-notice status=' + InstallHealthStatus + ' skipped=msgbox')
     else if InstallHealthStatus = 'install-health:timeout' then
-    begin
-      SuppressibleMsgBox(
-        'Установка завершена по таймауту настройки службы.'#13#10 +
-        'Приложение установлено, служба догревается в фоне.'#13#10 +
-        'Логи: %ProgramData%\AriaSignature\logs\.',
-        mbInformation,
-        MB_OK,
-        IDOK);
-    end;
+      Log('marker=install-user-notice status=' + InstallHealthStatus + ' skipped=msgbox');
   end;
 end;
 

@@ -80,8 +80,8 @@ try
     builder.Services.AddSerilog();
     builder.Services.AddApplication();
     builder.Services.AddInfrastructure();
-    builder.Services.AddHostedService<LocalApiHostedService>();
     builder.Services.AddHostedService<DatabaseInitializationHostedService>();
+    builder.Services.AddHostedService<LocalApiHostedService>();
     builder.Services.AddHostedService<Worker>();
     builder.Services.AddHostedService<BackupSchedulerHostedService>();
     builder.Services.AddSingleton<ISmartRefreshCronApplier, QuartzSmartRefreshCronApplier>();

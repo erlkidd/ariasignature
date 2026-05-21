@@ -39,6 +39,26 @@ function Get-InstallerFingerprint {
     return (Get-FileHash -Path $InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Apply-OintHttpIndexPatch {
+    param([string]$BundleRoot)
+    $patchSource = Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..\installer\melezh\oint-http-index")) "http.json"
+    if (-not (Test-Path $patchSource)) {
+        throw "[prepare-melezh] Missing OInt HTTP index patch: $patchSource"
+    }
+    $indexDir = Join-Path $BundleRoot "share\oint\lib\oint-cli\data\Classes\index"
+    if (-not (Test-Path $indexDir)) {
+        throw "[prepare-melezh] OInt CLI index dir missing: $indexDir"
+    }
+    Copy-Item -LiteralPath $patchSource -Destination (Join-Path $indexDir "http.json") -Force
+    $libPath = Join-Path $indexDir "lib.json"
+    $libText = Get-Content -LiteralPath $libPath -Raw -Encoding UTF8
+    if ($libText -notmatch '"http"\s*:') {
+        $libText = $libText -replace '("tools"\s*:\s*"Utils",)', "`$1`r`n  `"http`": `"OPI_ЗапросыHTTP`","
+        Set-Content -LiteralPath $libPath -Value $libText -Encoding UTF8 -NoNewline
+    }
+    Write-PrepareLog "Applied OInt http CLI index patch"
+}
+
 New-Item -Path $TargetDir -ItemType Directory -Force | Out-Null
 $bundleDir = Join-Path $TargetDir "bundle"
 $stampFile = Join-Path $bundleDir ".oint-installer.sha256"
@@ -50,12 +70,14 @@ if ((Test-OintBundleReady -BundleDir $bundleDir) -and -not $Force) {
         $current = (Get-Content -Path $stampFile -Raw).Trim().ToLowerInvariant()
         if ($current -eq $expected) {
             Write-PrepareLog "OInt/Melezh bundle already prepared ($bundleDir)"
+            Apply-OintHttpIndexPatch -BundleRoot $bundleDir
             exit 0
         }
         Write-PrepareLog "Installer changed; rebuilding bundle"
     }
     elseif (-not $installerPath) {
         Write-PrepareLog "OInt/Melezh bundle already prepared ($bundleDir)"
+        Apply-OintHttpIndexPatch -BundleRoot $bundleDir
         exit 0
     }
 }
@@ -76,6 +98,7 @@ if (-not [string]::IsNullOrWhiteSpace($externalDir) -and (Test-Path $externalDir
         if (Test-Path $bundleTest) {
             & $bundleTest -RootPath $bundleDir
         }
+        Apply-OintHttpIndexPatch -BundleRoot $bundleDir
         Write-PrepareLog "Bundle copied from external directory"
         exit 0
     }
@@ -121,6 +144,8 @@ if (Test-Path $uninstaller) {
 if (-not (Test-OintBundleReady -BundleDir $bundleDir)) {
     throw "[prepare-melezh] Bundle validation failed after extract"
 }
+
+Apply-OintHttpIndexPatch -BundleRoot $bundleDir
 
 Get-InstallerFingerprint -InstallerPath $installerExe | Out-File -FilePath $stampFile -Encoding ascii -NoNewline
 Write-PrepareLog "OInt/Melezh bundle ready at $bundleDir"
