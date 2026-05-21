@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Text.Json;
+using AriaSignature.Application.Telemetry;
 using Microsoft.Extensions.Logging;
 
 namespace AriaSignature.Infrastructure.Monitoring;
@@ -321,7 +322,13 @@ public sealed class SmartCtlLowLevelReader
             var percentageUsed = GetInt(nvme, "percentage_used");
             if (percentageUsed is >= 0 and <= 100)
             {
-                snap.SsdLifeRemainingPercent = Math.Clamp(100 - percentageUsed.Value, 0, 100);
+                var remaining = Math.Clamp(100 - percentageUsed.Value, 0, 100);
+                if (percentageUsed.Value >= 100)
+                {
+                    snap.SsdLifeEndOfLife = true;
+                }
+
+                snap.SsdLifeRemainingPercent = MergeSsdLifeSnapshot(snap.SsdLifeRemainingPercent, remaining, snap.SsdLifeEndOfLife);
             }
 
             var mediaErrors = GetLong(nvme, "media_errors") ?? 0;
@@ -499,28 +506,26 @@ public sealed class SmartCtlLowLevelReader
     private static void TryApplySsdLifeFromAtaAttribute(Snapshot snap, JsonElement row, long raw, string attrName)
     {
         int? candidate = null;
+        var endOfLife = false;
         var normalizedValue = GetInt(row, "value");
         if (normalizedValue is >= 0 and <= 100)
         {
             candidate = NormalizeLifePercent(normalizedValue.Value, attrName);
+            if (candidate == 0 && IsRemainingLifeAttribute(attrName))
+            {
+                endOfLife = true;
+            }
         }
         else if (raw is >= 0 and <= 100)
         {
             candidate = NormalizeLifePercent((int)raw, attrName);
         }
-        else if (raw > 0)
+        else if (raw > 0 && normalizedValue is null)
         {
-            var lowByte = (int)(raw & 0xFF);
-            if (lowByte is >= 0 and <= 100)
-            {
-                candidate = NormalizeLifePercent(lowByte, attrName);
-            }
-
             var highByte = (int)((raw >> 16) & 0xFF);
-            if (highByte is >= 0 and <= 100)
+            if (highByte is > 0 and <= 100)
             {
-                var fromHigh = NormalizeLifePercent(highByte, attrName);
-                candidate = candidate is int prev ? Math.Min(prev, fromHigh) : fromHigh;
+                candidate = NormalizeLifePercent(highByte, attrName);
             }
         }
 
@@ -529,10 +534,24 @@ public sealed class SmartCtlLowLevelReader
             return;
         }
 
-        snap.SsdLifeRemainingPercent = snap.SsdLifeRemainingPercent is int existing
-            ? Math.Min(existing, life)
-            : life;
+        if (endOfLife)
+        {
+            snap.SsdLifeEndOfLife = true;
+        }
+
+        snap.SsdLifeRemainingPercent = MergeSsdLifeSnapshot(snap.SsdLifeRemainingPercent, life, snap.SsdLifeEndOfLife);
     }
+
+    private static bool IsRemainingLifeAttribute(string attrName)
+    {
+        var n = attrName.Trim().ToUpperInvariant();
+        return n.Contains("LIFE_LEFT", StringComparison.Ordinal) ||
+               n.Contains("MEDIA_WEAROUT", StringComparison.Ordinal) ||
+               n.Contains("WEAROUT", StringComparison.Ordinal);
+    }
+
+    private static int? MergeSsdLifeSnapshot(int? current, int incoming, bool incomingEndOfLife) =>
+        DiskTelemetryRules.MergeSsdLifeRemainingPercent(current, incoming, incomingEndOfLife);
 
     private static int NormalizeLifePercent(int rawPercent, string attrName)
     {
@@ -576,6 +595,8 @@ public sealed class SmartCtlLowLevelReader
         public int PendingSectors { get; set; }
         public int UncorrectableErrors { get; set; }
         public int? SsdLifeRemainingPercent { get; set; }
+
+        public bool SsdLifeEndOfLife { get; set; }
     }
 
     public sealed record ReadResult(

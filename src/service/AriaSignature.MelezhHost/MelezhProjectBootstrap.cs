@@ -4,7 +4,7 @@ namespace AriaSignature.MelezhHost;
 
 public static class MelezhProjectBootstrap
 {
-    public static async Task EnsureAsync(
+    public static async Task<MelezhBootstrapEnsureResult> EnsureAsync(
         MelezhHostOptions options,
         Func<string, CancellationToken, Task<int>> runCliAsync,
         ILogger logger,
@@ -12,15 +12,37 @@ public static class MelezhProjectBootstrap
     {
         if (!File.Exists(options.ProjectPath))
         {
-            return;
+            return new MelezhBootstrapEnsureResult(false, 0, 0);
         }
 
         var api = MelezhAgentApiSettingsReader.Read(options);
-        var pullCron = Environment.GetEnvironmentVariable("ARIASIGNATURE_MELEZH_PULL_CRON")
-            ?? MelezhAriaApiHandlerCatalog.DefaultPullCron;
+        var pullSchedule = new Dictionary<string, string>(
+            MelezhPullCronSchedule.BuildForScheduledHandlers(),
+            StringComparer.Ordinal);
+        var envPullCron = Environment.GetEnvironmentVariable("ARIASIGNATURE_MELEZH_PULL_CRON");
+        if (!string.IsNullOrWhiteSpace(envPullCron))
+        {
+            foreach (var key in pullSchedule.Keys.ToList())
+            {
+                pullSchedule[key] = envPullCron;
+            }
+        }
 
         var storedVersion = await GetBootstrapVersionAsync(options.ProjectPath, cancellationToken);
         var forceRepair = storedVersion < MelezhBootstrapSchema.CurrentVersion;
+
+        if (forceRepair)
+        {
+            var pruned = await PruneOrphanHandlersAsync(options.ProjectPath, logger, cancellationToken);
+            if (pruned > 0)
+            {
+                logger.LogInformation("Melezh bootstrap: pruned {Count} orphan handler(s)", pruned);
+            }
+
+            await ClearScheduledTasksForCatalogAsync(options.ProjectPath, cancellationToken);
+            logger.LogInformation("Melezh bootstrap: cleared scheduled pull tasks for repair to v{Version}",
+                MelezhBootstrapSchema.CurrentVersion);
+        }
 
         foreach (var def in MelezhAriaApiHandlerCatalog.All)
         {
@@ -31,10 +53,32 @@ public static class MelezhProjectBootstrap
         foreach (var def in MelezhAriaApiHandlerCatalog.All.Where(d => d.ScheduleByDefault))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await EnsureScheduledTaskAsync(options, runCliAsync, def.Key, pullCron, logger, cancellationToken);
+            var cron = pullSchedule[def.Key];
+            await EnsureScheduledTaskAsync(
+                options,
+                runCliAsync,
+                def.Key,
+                cron,
+                forceReschedule: forceRepair,
+                logger,
+                cancellationToken);
         }
 
         await SetBootstrapVersionAsync(options.ProjectPath, MelezhBootstrapSchema.CurrentVersion, cancellationToken);
+
+        var upgraded = storedVersion > 0 && storedVersion < MelezhBootstrapSchema.CurrentVersion;
+        if (upgraded)
+        {
+            logger.LogInformation(
+                "Melezh bootstrap: upgraded project schema {From} -> {To}",
+                storedVersion,
+                MelezhBootstrapSchema.CurrentVersion);
+        }
+
+        return new MelezhBootstrapEnsureResult(
+            upgraded,
+            storedVersion,
+            MelezhBootstrapSchema.CurrentVersion);
     }
 
     private static async Task EnsureHandlerAsync(
@@ -192,12 +236,26 @@ public static class MelezhProjectBootstrap
         Func<string, CancellationToken, Task<int>> runCliAsync,
         string handlerKey,
         string cron,
+        bool forceReschedule,
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        if (await SchedulerTaskExistsAsync(options.ProjectPath, handlerKey, cancellationToken))
+        var existingCron = await TryGetSchedulerCronAsync(options.ProjectPath, handlerKey, cancellationToken);
+        if (!forceReschedule
+            && existingCron is not null
+            && string.Equals(existingCron, cron, StringComparison.Ordinal))
         {
             return;
+        }
+
+        if (existingCron is not null)
+        {
+            await DeleteSchedulerTaskAsync(options.ProjectPath, handlerKey, cancellationToken);
+            logger.LogInformation(
+                "Melezh bootstrap: rescheduling {Key} (was cron={OldCron}, new cron={Cron})",
+                handlerKey,
+                existingCron,
+                cron);
         }
 
         var args =
@@ -213,6 +271,63 @@ public static class MelezhProjectBootstrap
         }
 
         logger.LogInformation("Melezh bootstrap: scheduled task for {Key} cron={Cron}", handlerKey, cron);
+    }
+
+    private static async Task<int> PruneOrphanHandlersAsync(
+        string projectPath,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        var catalogKeys = MelezhAriaApiHandlerCatalog.All
+            .Select(d => d.Key)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var orphanKeys = new List<string>();
+        await using (var connection = OpenProject(projectPath))
+        await using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "SELECT key FROM handlers";
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var key = reader.GetString(0);
+                if (!catalogKeys.Contains(key))
+                {
+                    orphanKeys.Add(key);
+                }
+            }
+        }
+
+        foreach (var key in orphanKeys)
+        {
+            await DeleteHandlerAsync(projectPath, key, cancellationToken);
+            logger.LogDebug("Melezh bootstrap: pruned orphan handler {Key}", key);
+        }
+
+        return orphanKeys.Count;
+    }
+
+    private static async Task ClearScheduledTasksForCatalogAsync(
+        string projectPath,
+        CancellationToken cancellationToken)
+    {
+        var scheduledKeys = MelezhAriaApiHandlerCatalog.All
+            .Where(d => d.ScheduleByDefault)
+            .Select(d => d.Key)
+            .ToList();
+
+        await using var connection = OpenProject(projectPath);
+        await using var tx = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        foreach (var key in scheduledKeys)
+        {
+            await using var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM scheduler_tasks WHERE handler = $handler";
+            cmd.Parameters.AddWithValue("$handler", key);
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await tx.CommitAsync(cancellationToken);
     }
 
     private static async Task<(string Library, string Function, string Method)?> TryGetHandlerRowAsync(
@@ -234,6 +349,31 @@ public static class MelezhProjectBootstrap
             reader.GetString(0),
             reader.GetString(1),
             reader.GetString(2));
+    }
+
+    private static async Task<string?> TryGetSchedulerCronAsync(
+        string projectPath,
+        string handlerKey,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = OpenProject(projectPath);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT cron FROM scheduler_tasks WHERE handler = $handler LIMIT 1";
+        cmd.Parameters.AddWithValue("$handler", handlerKey);
+        var raw = await cmd.ExecuteScalarAsync(cancellationToken) as string;
+        return string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
+    }
+
+    private static async Task DeleteSchedulerTaskAsync(
+        string projectPath,
+        string handlerKey,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = OpenProject(projectPath);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "DELETE FROM scheduler_tasks WHERE handler = $handler";
+        cmd.Parameters.AddWithValue("$handler", handlerKey);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task DeleteHandlerAsync(string projectPath, string key, CancellationToken cancellationToken)
@@ -265,18 +405,6 @@ public static class MelezhProjectBootstrap
         }
 
         await tx.CommitAsync(cancellationToken);
-    }
-
-    private static async Task<bool> SchedulerTaskExistsAsync(
-        string projectPath,
-        string handlerKey,
-        CancellationToken cancellationToken)
-    {
-        await using var connection = OpenProject(projectPath);
-        await using var cmd = connection.CreateCommand();
-        cmd.CommandText = "SELECT 1 FROM scheduler_tasks WHERE handler = $handler LIMIT 1";
-        cmd.Parameters.AddWithValue("$handler", handlerKey);
-        return await cmd.ExecuteScalarAsync(cancellationToken) is not null;
     }
 
     private static async Task RenameLatestHandlerKeyAsync(

@@ -199,9 +199,7 @@ public partial class MainWindow : Window
                 && !ShouldShowHardStartupFailure(
                     elapsedSinceUiLoad,
                     status,
-                    TryGetMelezhServiceControllerStatus(),
                     serviceEnsureCompleted: true,
-                    melezhRequired: false,
                     apiReady: true))
             {
                 _awaitingAppReady = false;
@@ -297,8 +295,30 @@ public partial class MainWindow : Window
 
     private void ScheduleAppReadyFallbackHide()
     {
-        // Overlay stays until WebView posts action=appReady (see OnWebMessage).
         CancelAppReadyFallback();
+        _appReadyFallbackCts = new CancellationTokenSource();
+        var token = _appReadyFallbackCts.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(45), token).ConfigureAwait(false);
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    if (!_awaitingAppReady)
+                    {
+                        return;
+                    }
+
+                    _awaitingAppReady = false;
+                    HideLoadingOverlay();
+                }, DispatcherPriority.Background);
+            }
+            catch (OperationCanceledException)
+            {
+                // expected on navigation or appReady
+            }
+        }, token);
     }
 
     private void CancelAppReadyFallback()
@@ -339,7 +359,7 @@ public partial class MainWindow : Window
                     }
                 }
 
-                if (apiReady && melezhReady)
+                if (apiReady)
                 {
                     await NavigateToPanelAsync(baseUrl).ConfigureAwait(false);
                     return;
@@ -408,7 +428,7 @@ public partial class MainWindow : Window
                 }
             }
 
-            if (apiReady && melezhReady)
+            if (apiReady)
             {
                 await NavigateToPanelAsync(baseUrl).ConfigureAwait(false);
                 return;
@@ -425,7 +445,7 @@ public partial class MainWindow : Window
             var ensureDone = ensureTask.IsCompleted;
             var requireMelezh = melezhRequired == true;
 
-            if (ShouldShowHardStartupFailure(elapsed, cachedAriaStatus, cachedMelezhStatus, ensureDone, requireMelezh, apiReady))
+            if (ShouldShowHardStartupFailure(elapsed, cachedAriaStatus, ensureDone, apiReady))
             {
                 await Dispatcher.InvokeAsync(() =>
                 {
@@ -441,20 +461,13 @@ public partial class MainWindow : Window
                         ensureDone,
                         requireMelezh,
                         _deferredServiceStartWarning);
-                    var detail = !apiReady
-                        ? apiDetail
-                        : melezhDetail;
                     RenderFallbackPage(
-                        requireMelezh
-                            ? "Службы AriaSignature или Melezh не готовы"
-                            : "Локальный сервис не отвечает",
-                        (requireMelezh
-                            ? "Ожидаются AriaSignatureService (API :5160) и AriaSignatureMelezhService (шлюз :7788). "
-                            : "Служба Windows или API на localhost не готовы дольше обычного. ") +
-                        "После запуска служб интерфейс откроется сам." + warn,
+                        "Локальный сервис не отвечает",
+                        "Ожидается AriaSignatureService (API :5160). Melezh (:7788) не блокирует панель — его можно восстановить в настройках. " +
+                        "После запуска службы интерфейс откроется сам." + warn,
                         baseUrl,
                         null,
-                        detail,
+                        apiDetail,
                         stage);
                     StartApiRecoveryLoop(baseUrl);
                 }, DispatcherPriority.Background);
@@ -560,23 +573,9 @@ public partial class MainWindow : Window
     private static bool ShouldShowHardStartupFailure(
         TimeSpan elapsed,
         ServiceControllerStatus? ariaStatus,
-        ServiceControllerStatus? melezhStatus,
         bool serviceEnsureCompleted,
-        bool melezhRequired,
-        bool apiReady)
-    {
-        if (ShouldShowHardStartupFailureForService(elapsed, ariaStatus, serviceEnsureCompleted, apiReady))
-        {
-            return true;
-        }
-
-        if (!melezhRequired)
-        {
-            return false;
-        }
-
-        return ShouldShowHardStartupFailureForService(elapsed, melezhStatus, serviceEnsureCompleted: true, httpReady: false);
-    }
+        bool apiReady) =>
+        ShouldShowHardStartupFailureForService(elapsed, ariaStatus, serviceEnsureCompleted, apiReady);
 
     private static bool ShouldShowHardStartupFailureForService(
         TimeSpan elapsed,
@@ -592,7 +591,7 @@ public partial class MainWindow : Window
             return elapsed >= TimeSpan.FromMinutes(4);
         }
 
-        if (status == ServiceControllerStatus.Running && !httpReady && elapsed >= TimeSpan.FromMinutes(3))
+        if (status == ServiceControllerStatus.Running && !httpReady && elapsed >= TimeSpan.FromSeconds(90))
         {
             return true;
         }

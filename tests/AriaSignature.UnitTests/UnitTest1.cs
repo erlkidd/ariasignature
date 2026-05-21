@@ -204,11 +204,28 @@ public class DiskTelemetryRulesTests
     }
 
     [Fact]
-    public void NormalizeSsdLife_ReturnsNull_WhenZeroWithoutWearConfirmation()
+    public void NormalizeSsdLife_ReturnsNull_WhenZeroWithoutExplicitEndOfLife()
     {
-        Assert.Null(DiskTelemetryRules.NormalizeSsdLifeRemainingPercent(0, wearConfirmed: false));
-        Assert.Equal(42, DiskTelemetryRules.NormalizeSsdLifeRemainingPercent(42, wearConfirmed: false));
-        Assert.Equal(5, DiskTelemetryRules.NormalizeSsdLifeRemainingPercent(5, wearConfirmed: true));
+        Assert.Null(DiskTelemetryRules.NormalizeSsdLifeRemainingPercent(0, explicitEndOfLife: false));
+        Assert.Equal(42, DiskTelemetryRules.NormalizeSsdLifeRemainingPercent(42, explicitEndOfLife: false));
+        Assert.Equal(0, DiskTelemetryRules.NormalizeSsdLifeRemainingPercent(0, explicitEndOfLife: true));
+        Assert.Equal(5, DiskTelemetryRules.NormalizeSsdLifeRemainingPercent(5, explicitEndOfLife: true));
+    }
+
+    [Fact]
+    public void MergeSsdLife_PrefersHighestTrustedRemaining_IgnoresStrayZero()
+    {
+        Assert.Equal(95, DiskTelemetryRules.MergeSsdLifeRemainingPercent(95, 0, incomingEndOfLife: false));
+        Assert.Equal(95, DiskTelemetryRules.MergeSsdLifeRemainingPercent(80, 95, incomingEndOfLife: false));
+        Assert.Equal(0, DiskTelemetryRules.MergeSsdLifeRemainingPercent(80, 0, incomingEndOfLife: true));
+    }
+
+    [Fact]
+    public void ShouldPublishHealthPercent_RequiresSectorSignal()
+    {
+        Assert.False(DiskTelemetryRules.ShouldPublishHealthPercent(60, hasSectorSignal: false, predictFailure: false));
+        Assert.True(DiskTelemetryRules.ShouldPublishHealthPercent(60, hasSectorSignal: true, predictFailure: false));
+        Assert.True(DiskTelemetryRules.ShouldPublishHealthPercent(40, hasSectorSignal: false, predictFailure: true));
     }
 
     [Fact]
@@ -281,6 +298,33 @@ public class MelezhAriaApiHandlerCatalogTests
     }
 }
 
+public class MelezhPullCronScheduleTests
+{
+    [Fact]
+    public void BuildStaggered_UsesDistinctSeconds_ForTenHandlers()
+    {
+        var scheduled = MelezhAriaApiHandlerCatalog.All.Where(d => d.ScheduleByDefault).ToList();
+        Assert.Equal(10, scheduled.Count);
+
+        var crons = scheduled.Select((_, i) => MelezhPullCronSchedule.BuildStaggered(i)).ToList();
+        var seconds = crons.Select(c => int.Parse(c.Split(' ')[0], System.Globalization.CultureInfo.InvariantCulture)).ToList();
+        Assert.Equal(10, seconds.Distinct().Count());
+        Assert.All(crons, c => Assert.Contains("*/5", c, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void BuildForScheduledHandlers_MapsEveryScheduledKey()
+    {
+        var map = MelezhPullCronSchedule.BuildForScheduledHandlers();
+        var scheduled = MelezhAriaApiHandlerCatalog.All
+            .Where(d => d.ScheduleByDefault)
+            .Select(d => d.Key)
+            .ToHashSet(StringComparer.Ordinal);
+        Assert.Equal(scheduled, map.Keys.ToHashSet(StringComparer.Ordinal));
+        Assert.Equal(10, map.Count);
+    }
+}
+
 public class MelezhSyncDispatcherTests
 {
     [Fact]
@@ -288,5 +332,14 @@ public class MelezhSyncDispatcherTests
     {
         var url = $"http://127.0.0.1:{7788}/{"aria_sync".TrimStart('/')}";
         Assert.Equal("http://127.0.0.1:7788/aria_sync", url);
+    }
+
+    [Theory]
+    [InlineData("Melezh POST 500: InvalidOperationException", true)]
+    [InlineData("non-concurrent collections", true)]
+    [InlineData("Melezh POST 404: not found", false)]
+    public void IsTransientMelezhRace_DetectsOintHttpRace(string error, bool expected)
+    {
+        Assert.Equal(expected, MelezhSyncDispatcher.IsTransientMelezhRace(error));
     }
 }

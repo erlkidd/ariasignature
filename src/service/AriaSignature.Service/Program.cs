@@ -119,7 +119,7 @@ try
             .WithCronSchedule(outboundCron));
 
         var melezhJobKey = new JobKey("melezh-sync-job");
-        var melezhCron = builder.Configuration.GetValue<string>("MelezhSync:Cron") ?? "0 0/15 * * * ?";
+        var melezhCron = builder.Configuration.GetValue<string>("MelezhSync:Cron") ?? "20 2/15 * * * ?";
 
         options.AddJob<MelezhSyncJob>(configure => configure.WithIdentity(melezhJobKey));
         options.AddTrigger(configure => configure

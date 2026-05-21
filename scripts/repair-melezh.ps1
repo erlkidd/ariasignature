@@ -13,6 +13,45 @@ function Write-RepairLog {
     Write-Host "[repair-melezh] $Message"
 }
 
+function Invoke-MelezhHandlerSmoke {
+    param(
+        [string]$Uri,
+        [string]$Method = "GET",
+        [string]$Body = $null,
+        [string]$Label,
+        [int]$MaxAttempts = 5
+    )
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            $params = @{
+                Uri             = $Uri
+                Method          = $Method
+                TimeoutSec      = 30
+                UseBasicParsing = $true
+            }
+            if ($Method -eq "POST") {
+                $params["Body"] = $Body
+                $params["ContentType"] = "application/json"
+            }
+            $r = Invoke-WebRequest @params
+            if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 300) {
+                $json = $r.Content | ConvertFrom-Json -ErrorAction SilentlyContinue
+                if ($null -ne $json -and $json.PSObject.Properties.Name -contains "result" -and $json.result -eq $false) {
+                    throw "$Label returned result=false: $($r.Content)"
+                }
+                Write-RepairLog "$Label OK"
+                return
+            }
+            throw "$Label HTTP $($r.StatusCode)"
+        }
+        catch {
+            if ($attempt -eq $MaxAttempts) { throw }
+            Write-RepairLog "$Label attempt $attempt failed, retrying: $($_.Exception.Message)"
+            Start-Sleep -Seconds 2
+        }
+    }
+}
+
 $hostExe = Join-Path $InstallRoot "melezh-host\AriaSignature.MelezhHost.exe"
 $melezhBat = Join-Path $InstallRoot "melezh\bin\melezh.bat"
 $oscriptExe = Join-Path $InstallRoot "melezh\lib\oint\bin\oscript.exe"
@@ -54,9 +93,24 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-RepairLog "Rebuilding Melezh handler catalog (bootstrap-only)"
-& $hostExe --bootstrap-only 2>&1 | ForEach-Object { Write-RepairLog $_ }
+$bootstrapOut = & $hostExe --bootstrap-only 2>&1
+$bootstrapOut | ForEach-Object { Write-RepairLog $_ }
 if ($LASTEXITCODE -ne 0) {
     throw "[repair-melezh] MelezhHost --bootstrap-only failed with exit code $LASTEXITCODE"
+}
+
+$needsRestart = $false
+foreach ($line in $bootstrapOut) {
+    if ($line -match "marker=melezh-bootstrap-upgraded") {
+        $needsRestart = $true
+        break
+    }
+}
+
+if ($needsRestart -or ($bootstrapOut -match "restart-recommended=true")) {
+    Write-RepairLog "Bootstrap upgraded project; restarting $ServiceName to reset OInt HTTP client"
+    Restart-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 3
 }
 
 $deadline = (Get-Date).AddSeconds(90)
@@ -86,6 +140,9 @@ if (Test-Path $assertScript) {
     Assert-MelezhHandlerJson -Uri "http://127.0.0.1:$Port/aria_ping" -Label "aria_ping" | Out-Null
     Write-RepairLog "aria_ping handler OK (result != false)"
 }
+
+Invoke-MelezhHandlerSmoke -Uri "http://127.0.0.1:$Port/aria_ping" -Label "aria_ping smoke"
+Invoke-MelezhHandlerSmoke -Uri "http://127.0.0.1:$Port/aria_sync" -Method POST -Body "{}" -Label "aria_sync smoke"
 
 if ($RestartMainService) {
     $main = Get-Service -Name "AriaSignatureService" -ErrorAction SilentlyContinue

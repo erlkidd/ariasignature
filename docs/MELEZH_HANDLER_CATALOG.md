@@ -56,7 +56,9 @@
 | `aria_delete_backup` | `DELETE /backups/{backupId}` | нет |
 | `aria_delete_backups_logs` | `DELETE /backups/logs` | нет |
 
-**HTTP на :7788 vs :5160:** клиент вызывает handler на Melezh методом **POST** + `Content-Type: application/json` (тип handler `JSON`). Melezh выполняет OInt `http` с нужным глаголом к API: `PostСТелом` / `PutСТелом` / `DeleteСТелом` → `POST` / `PUT` / `DELETE` на `:5160`. Ошибка `"Method Not Allowed"` обычно означает неверный глагол к API (устаревший bootstrap) — repair через bootstrap v4+.
+**HTTP на :7788 vs :5160:** клиент вызывает handler на Melezh методом **POST** + `Content-Type: application/json` (тип handler `JSON`). Melezh выполняет OInt `http` с нужным глаголом к API: `PostСТелом` / `PutСТелом` / `DeleteСТелом` → `POST` / `PUT` / `DELETE` на `:5160`. Ошибка `"Method Not Allowed"` у `aria_sync` в Web UI — вызов **GET** вместо POST; у outbound write — устаревший bootstrap (repair v4+).
+
+**Pull cron (bootstrap v5+):** каждый scheduled `aria_get_*` — отдельная секунда (`0`, `4`, `8`, … `36` в шаблоне `N */5 * * * * *`). Repair: `repair-melezh.ps1` или `MelezhHost --bootstrap-only` при `BootstrapVersion` &lt; 5.
 
 ## Переменные окружения (bootstrap / host)
 

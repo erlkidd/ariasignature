@@ -40,12 +40,15 @@ public static class WindowsServiceEnsure
         TryStartOrFallbackCore(serviceExePath, wait, bootstrapExePath, allowElevatedRecovery: true, out warningMessage);
     }
 
-    public static bool TryStopServiceWithElevation(TimeSpan wait, out string? warningMessage)
+    public static bool TryStopServiceWithElevation(TimeSpan wait, out string? warningMessage) =>
+        TryStopServiceWithElevation(ServiceName, wait, out warningMessage);
+
+    public static bool TryStopServiceWithElevation(string serviceName, TimeSpan wait, out string? warningMessage)
     {
         warningMessage = null;
         try
         {
-            using var sc = new ServiceController(ServiceName);
+            using var sc = new ServiceController(serviceName);
             sc.Refresh();
             if (sc.Status == ServiceControllerStatus.Stopped)
             {
@@ -60,13 +63,13 @@ public static class WindowsServiceEnsure
             }
             catch (InvalidOperationException ex) when (TryFindNativeError(ex, out var code) && code == ErrorAccessDenied)
             {
-                if (!TryRunElevatedScCommand($"stop {ServiceName}", out var elevatedErr))
+                if (!TryRunElevatedScCommand($"stop {serviceName}", out var elevatedErr))
                 {
                     warningMessage = elevatedErr;
                     return false;
                 }
 
-                using var check = new ServiceController(ServiceName);
+                using var check = new ServiceController(serviceName);
                 check.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(60));
                 return true;
             }
@@ -83,22 +86,29 @@ public static class WindowsServiceEnsure
         }
     }
 
-    public static bool TryRestartServiceWithElevation(TimeSpan stopWait, TimeSpan startWait, out string? warningMessage)
+    public static bool TryRestartServiceWithElevation(TimeSpan stopWait, TimeSpan startWait, out string? warningMessage) =>
+        TryRestartServiceWithElevation(ServiceName, stopWait, startWait, out warningMessage);
+
+    public static bool TryRestartServiceWithElevation(
+        string serviceName,
+        TimeSpan stopWait,
+        TimeSpan startWait,
+        out string? warningMessage)
     {
         warningMessage = null;
         try
         {
-            using var sc = new ServiceController(ServiceName);
+            using var sc = new ServiceController(serviceName);
             sc.Refresh();
             if (sc.Status != ServiceControllerStatus.Stopped)
             {
-                if (!TryStopServiceWithElevation(stopWait, out warningMessage))
+                if (!TryStopServiceWithElevation(serviceName, stopWait, out warningMessage))
                 {
                     return false;
                 }
             }
 
-            using var startSc = new ServiceController(ServiceName);
+            using var startSc = new ServiceController(serviceName);
             try
             {
                 StartServiceAllowingScmTimeout1053(startSc, startWait);
@@ -106,20 +116,20 @@ public static class WindowsServiceEnsure
             }
             catch (InvalidOperationException ex) when (TryFindNativeError(ex, out var code) && code == ErrorAccessDenied)
             {
-                if (!TryRunElevatedScCommand($"start {ServiceName}", out var elevatedErr))
+                if (!TryRunElevatedScCommand($"start {serviceName}", out var elevatedErr))
                 {
                     warningMessage = elevatedErr;
                     return false;
                 }
 
-                using var check = new ServiceController(ServiceName);
+                using var check = new ServiceController(serviceName);
                 check.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(120));
                 return true;
             }
         }
         catch (InvalidOperationException ex) when (TryFindNativeError(ex, out var code) && code == ErrorServiceDoesNotExist)
         {
-            warningMessage = "Служба AriaSignatureService не найдена в SCM.";
+            warningMessage = $"Служба {serviceName} не найдена в SCM.";
             return false;
         }
         catch (Exception ex)

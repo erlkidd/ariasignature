@@ -1,8 +1,10 @@
 namespace AriaSignature.Application.Telemetry;
 
-/// <summary>Shared disk telemetry normalization for collector and tests.</summary>
+/// <summary>Shared disk telemetry normalization for collector and tests (HDS-style: no synthetic metrics).</summary>
 public static class DiskTelemetryRules
 {
+    public const int MinHealthPublishConfidence = 50;
+
     public static string NormalizeMediaType(
         string? sourceMediaType,
         int? physicalIndex,
@@ -70,20 +72,47 @@ public static class DiskTelemetryRules
         return "Не определён";
     }
 
-    public static int? NormalizeSsdLifeRemainingPercent(int? ssdLife, bool wearConfirmed)
+    /// <summary>Publish remaining SSD life; 0% only when <paramref name="explicitEndOfLife"/>.</summary>
+    public static int? NormalizeSsdLifeRemainingPercent(int? ssdLife, bool explicitEndOfLife)
     {
         if (ssdLife is not int life)
         {
             return null;
         }
 
-        if (life <= 0 && !wearConfirmed)
+        if (life <= 0 && !explicitEndOfLife)
         {
             return null;
         }
 
         return Math.Clamp(life, 0, 100);
     }
+
+    /// <summary>Prefer the highest trusted remaining %; ignore stray zeros unless EOL.</summary>
+    public static int? MergeSsdLifeRemainingPercent(int? current, int? incoming, bool incomingEndOfLife)
+    {
+        if (incomingEndOfLife && incoming is 0)
+        {
+            return 0;
+        }
+
+        if (incoming is int life && life > 0)
+        {
+            return current is int cur && cur > 0 ? Math.Max(cur, life) : life;
+        }
+
+        return current;
+    }
+
+    public static bool HasSectorSmartSignal(int reallocated, int pending, int uncorrectable, bool predictFailure) =>
+        predictFailure || reallocated > 0 || pending > 0 || uncorrectable > 0;
+
+    public static bool ShouldPublishHealthPercent(
+        int telemetryConfidence,
+        bool hasSectorSignal,
+        bool predictFailure) =>
+        predictFailure ||
+        (hasSectorSignal && telemetryConfidence >= MinHealthPublishConfidence);
 
     public static bool HasMeaningfulTelemetrySignal(
         int? temperatureCelsius,
@@ -105,5 +134,17 @@ public static class DiskTelemetryRules
         }
 
         return reallocated > 0 || pending > 0 || uncorrectable > 0;
+    }
+
+    public static int EstimateHealthFromSectorCounters(int reallocated, int pending, int uncorrectable, int? ssdLife)
+    {
+        var penalty = Math.Min(reallocated, 20) + (pending * 4) + (uncorrectable * 10);
+        var baseHealth = Math.Clamp(100 - penalty, 0, 100);
+        if (ssdLife is int life)
+        {
+            baseHealth = Math.Min(baseHealth, life);
+        }
+
+        return baseHealth;
     }
 }

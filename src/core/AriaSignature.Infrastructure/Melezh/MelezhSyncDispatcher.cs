@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -15,6 +16,9 @@ namespace AriaSignature.Infrastructure.Melezh;
 public sealed class MelezhSyncDispatcher : IMelezhSyncDispatcher
 {
     public const string HttpClientName = "AriaMelezhSync";
+
+    private const int MaxSyncAttempts = 3;
+    private static readonly TimeSpan[] RetryDelays = [TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4)];
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IAppSettingsService _settings;
@@ -100,26 +104,47 @@ public sealed class MelezhSyncDispatcher : IMelezhSyncDispatcher
             };
 
             var client = _httpClientFactory.CreateClient(HttpClientName);
-            using var response = await client.PostAsJsonAsync(targetUrl, payload, JsonOptions, cancellationToken);
-            if (!response.IsSuccessStatusCode)
+            string? lastErr = null;
+
+            for (var attempt = 1; attempt <= MaxSyncAttempts; attempt++)
             {
-                var body = await response.Content.ReadAsStringAsync(cancellationToken);
-                var err = $"Melezh POST {(int)response.StatusCode}: {(body.Length > 200 ? body[..200] + "…" : body)}";
-                if (!ShouldSuppressWarmupSyncError(err, melezh.ServiceStatus))
+                using var response = await client.PostAsJsonAsync(targetUrl, payload, JsonOptions, cancellationToken);
+                if (response.IsSuccessStatusCode)
                 {
-                    await RecordFailureAsync(err, cancellationToken);
+                    await RecordSuccessAsync(cancellationToken);
+                    RuntimeObservability.RecordMelezhSync(success: true);
+                    _logger.LogInformation("Melezh sync OK: POST {Url}", targetUrl);
+                    return new MelezhSyncResult(true, null, targetUrl);
                 }
 
-                RuntimeObservability.RecordMelezhSync(success: false);
-                return new MelezhSyncResult(false, err, targetUrl);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                lastErr = FormatHttpError(response.StatusCode, body);
+                if (attempt < MaxSyncAttempts && IsTransientMelezhRace(lastErr, body))
+                {
+                    var delay = RetryDelays[attempt - 1];
+                    _logger.LogDebug(
+                        "Melezh sync transient failure attempt {Attempt}/{Max}, retry in {Delay}s: {Error}",
+                        attempt,
+                        MaxSyncAttempts,
+                        delay.TotalSeconds,
+                        lastErr);
+                    await Task.Delay(delay, cancellationToken);
+                    continue;
+                }
+
+                break;
             }
 
-            await RecordSuccessAsync(cancellationToken);
-            RuntimeObservability.RecordMelezhSync(success: true);
-            _logger.LogInformation("Melezh sync OK: POST {Url}", targetUrl);
-            return new MelezhSyncResult(true, null, targetUrl);
+            var err = lastErr ?? "Melezh sync failed.";
+            if (!ShouldSuppressWarmupSyncError(err, melezh.ServiceStatus))
+            {
+                await RecordFailureAsync(err, cancellationToken);
+            }
+
+            RuntimeObservability.RecordMelezhSync(success: false);
+            return new MelezhSyncResult(false, err, targetUrl);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var err = ex.Message;
             if (!ShouldSuppressWarmupSyncError(err, melezh.ServiceStatus))
@@ -135,6 +160,20 @@ public sealed class MelezhSyncDispatcher : IMelezhSyncDispatcher
             _logger.LogWarning(ex, "Melezh sync failed for {Url}", targetUrl);
             return new MelezhSyncResult(false, err, targetUrl);
         }
+    }
+
+    private static string FormatHttpError(HttpStatusCode statusCode, string body)
+    {
+        var snippet = body.Length > 200 ? body[..200] + "…" : body;
+        return $"Melezh POST {(int)statusCode}: {snippet}";
+    }
+
+    public static bool IsTransientMelezhRace(string error, string? responseBody = null)
+    {
+        var combined = string.Concat(error, responseBody ?? string.Empty);
+        return combined.Contains("InvalidOperationException", StringComparison.OrdinalIgnoreCase)
+            || combined.Contains("non-concurrent collections", StringComparison.OrdinalIgnoreCase)
+            || combined.Contains("concurrent update was performed", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task RecordSuccessAsync(CancellationToken cancellationToken)

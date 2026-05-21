@@ -64,10 +64,14 @@ static async Task RunBootstrapOnlyAsync()
 
     using var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
     var logger = loggerFactory.CreateLogger("MelezhBootstrapOnly");
-    await MelezhProjectBootstrap.EnsureAsync(
+    var bootstrapResult = await MelezhProjectBootstrap.EnsureAsync(
         options,
         (args, ct) => MelezhBootstrapCli.RunAsync(options, args, ct),
         logger,
         CancellationToken.None);
     Console.WriteLine($"marker=melezh-bootstrap-only ok project={options.ProjectPath}");
+    if (bootstrapResult.Upgraded)
+    {
+        Console.WriteLine("marker=melezh-bootstrap-upgraded restart-recommended=true");
+    }
 }

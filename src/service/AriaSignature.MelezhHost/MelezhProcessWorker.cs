@@ -7,6 +7,7 @@ public sealed class MelezhProcessWorker : BackgroundService
 {
     private readonly MelezhHostOptions _options;
     private readonly ILogger<MelezhProcessWorker> _logger;
+    private volatile bool _requestMelezhProcessRecycle;
 
     public MelezhProcessWorker(MelezhHostOptions options, ILogger<MelezhProcessWorker> logger)
     {
@@ -58,6 +59,13 @@ public sealed class MelezhProcessWorker : BackgroundService
             {
                 TryStopProcess(process);
                 break;
+            }
+
+            if (_requestMelezhProcessRecycle)
+            {
+                _requestMelezhProcessRecycle = false;
+                _logger.LogInformation("Recycling melezh process after bootstrap upgrade");
+                continue;
             }
 
             if (!stoppingToken.IsCancellationRequested)
@@ -113,11 +121,20 @@ public sealed class MelezhProcessWorker : BackgroundService
             }
         }
 
-        await MelezhProjectBootstrap.EnsureAsync(
+        var bootstrapResult = await MelezhProjectBootstrap.EnsureAsync(
             _options,
             RunMelezhCliAsync,
             _logger,
             cancellationToken);
+
+        if (bootstrapResult.Upgraded)
+        {
+            _requestMelezhProcessRecycle = true;
+            _logger.LogInformation(
+                "Melezh bootstrap upgraded {From} -> {To}; melezh process will recycle to reset OInt HTTP client",
+                bootstrapResult.PreviousVersion,
+                bootstrapResult.CurrentVersion);
+        }
     }
 
     private string? ResolveBundledTemplatePath()

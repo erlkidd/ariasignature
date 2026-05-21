@@ -71,15 +71,26 @@ try {
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 rows = c.execute("select key from handlers").fetchall()
-sched = c.execute("select handler from scheduler_tasks").fetchall()
+sched = c.execute("select handler, cron from scheduler_tasks").fetchall()
 print("handlers", len(rows))
 print("scheduled", len(sched))
 for k in ["aria_sync","aria_get_status","aria_get_disks","aria_put_settings"]:
     if (k,) not in rows:
         raise SystemExit("missing handler " + k)
-for k in sched:
-    if k[0] and not str(k[0]).startswith("aria_get_"):
-        raise SystemExit("scheduled non-get handler " + k[0])
+for h, cron in sched:
+    if h and not str(h).startswith("aria_get_"):
+        raise SystemExit("scheduled non-get handler " + h)
+secs = []
+for h, cron in sched:
+    parts = str(cron).split()
+    if len(parts) < 1:
+        raise SystemExit("bad cron for " + h)
+    secs.append(int(parts[0]))
+if len(secs) != len(set(secs)):
+    raise SystemExit("scheduled pull crons must use distinct second offsets: " + str(sched))
+ver = c.execute("select value from settings where name='AriaSignature:BootstrapVersion'").fetchone()
+if not ver or int(ver[0]) < 5:
+    raise SystemExit("bootstrap version expected >= 5, got " + str(ver))
 '@ | Set-Content -Encoding utf8 $listScript
     python $listScript $proj
     if ($LASTEXITCODE -ne 0) { throw "handler catalog verification failed" }

@@ -2,9 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
+const MELEZH_REPO_URL = "https://github.com/Bayselonarrend/Melezh";
 const UI_BUILD_VERSION = "1.1.0";
+const DISKS_LIVE_REFRESH_MS = 60_000;
+const MIN_TELEMETRY_CONFIDENCE_FOR_HEALTH = 50;
 
 const logoSrc = `./logo.png?v=${encodeURIComponent(__LOGO_CACHE_BUST__)}`;
+const melezhLogoSrc = `./melezh_long.png?v=${encodeURIComponent(__LOGO_CACHE_BUST__)}`;
 
 type DiskRow = {
   id: string;
@@ -145,22 +149,39 @@ const quartzDays = [
   { v: "SAT", label: "Суббота" },
 ];
 
-function formatSsdLifePercent(d: Pick<DiskRow, "ssdLifeRemainingPercent" | "healthPercent" | "mediaType" | "interface">): string {
+function formatSsdLifePercent(d: Pick<DiskRow, "ssdLifeRemainingPercent" | "mediaType">): string {
   const media = (d.mediaType ?? "").toUpperCase();
   if (media.includes("HDD") || media.includes("ЖЕСТК")) {
     return "—";
   }
-  if (d.ssdLifeRemainingPercent != null) {
-    return `${d.ssdLifeRemainingPercent}%`;
+  if (d.ssdLifeRemainingPercent == null) {
+    return "н/д";
   }
-  return "н/д";
+  return `${d.ssdLifeRemainingPercent}%`;
 }
 
-function formatHealthPercent(p: number | null | undefined): string {
+function formatHealthPercent(
+  p: number | null | undefined,
+  telemetryConfidence?: number
+): string {
+  if (telemetryConfidence != null && telemetryConfidence < MIN_TELEMETRY_CONFIDENCE_FOR_HEALTH) {
+    return "н/д";
+  }
   if (p == null) {
     return "н/д";
   }
   return `${p}%`;
+}
+
+function formatDiskUpdatedAt(iso: string | undefined): string {
+  if (!iso) {
+    return "—";
+  }
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return iso;
+  }
 }
 
 function formatTempC(t: number | null | undefined): string {
@@ -526,6 +547,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   const [disks, setDisks] = useState<DiskRow[]>([]);
+  const [disksRefreshing, setDisksRefreshing] = useState(false);
   const [selectedDisk, setSelectedDisk] = useState<DiskRow | null>(null);
   const [smart, setSmart] = useState<SmartRow[]>([]);
   const [smartPage, setSmartPage] = useState(1);
@@ -763,14 +785,19 @@ export default function App() {
     setStatus("");
   };
 
-  const refreshDisks = useCallback(async () => {
+  const refreshDisks = useCallback(async (silent = false) => {
     setError(null);
+    setDisksRefreshing(true);
     try {
       const d = await apiSend<DiskRow[]>("/disks/refresh", "POST");
       setDisks(d);
-      setStatus(`Диски обновлены: ${d.length}`);
+      if (!silent) {
+        setStatus("");
+      }
     } catch (e) {
       showErr(e);
+    } finally {
+      setDisksRefreshing(false);
     }
   }, []);
 
@@ -829,7 +856,7 @@ export default function App() {
         outboundSyncCron: s.outboundSyncCron ?? "0 0/30 * * * ?",
         melezhSyncEnabled: s.melezhSyncEnabled ?? true,
         melezhSyncHandler: s.melezhSyncHandler ?? "aria_sync",
-        melezhSyncCron: s.melezhSyncCron ?? "0 0/15 * * * ?",
+        melezhSyncCron: s.melezhSyncCron ?? "20 2/15 * * * ?",
         melezhSyncLastOk: s.melezhSyncLastOk ?? null,
         melezhSyncLastError: s.melezhSyncLastError ?? null,
         melezhEnabled: s.melezhEnabled ?? true,
@@ -910,17 +937,33 @@ export default function App() {
   }, [tab]);
 
   useEffect(() => {
+    if (tab !== "disks") {
+      return;
+    }
+
+    void refreshDisks(true);
+    const intervalId = window.setInterval(() => {
+      void refreshDisks(true);
+    }, DISKS_LIVE_REFRESH_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [tab, refreshDisks]);
+
+  useEffect(() => {
     const initialLoad = async () => {
       try {
-        await Promise.all([loadDisks(), refreshJobs(true), refreshSettings(), refreshServiceVersion()]);
-        try {
-          await refreshLogs(true);
-        } catch (e) {
-          showErr(e);
-        }
+        await Promise.all([refreshSettings(), refreshServiceVersion()]);
+      } catch (e) {
+        showErr(e);
       } finally {
         postToHost({ action: "appReady" });
       }
+
+      void loadDisks();
+      void refreshJobs(true);
+      void refreshLogs(true).catch(showErr);
     };
     void initialLoad();
     postToHost({ action: "getAutostart" });
@@ -1439,6 +1482,27 @@ export default function App() {
         </nav>
       </header>
 
+      {settings?.melezhEnabled &&
+      settings.melezhServiceStatus === "Running" &&
+      !settings.melezhRunning ? (
+        <div className="banner warn">
+          <strong>Melezh</strong>
+          <span>
+            {" "}
+            Шлюз OpenIntegrations (:7788) недоступен по HTTP
+            {settings.melezhLastError ? ` — ${settings.melezhLastError}` : ""}. Панель работает; восстановите Melezh в{" "}
+            <button type="button" className="btn-ghost" onClick={() => setTab("settings")}>
+              настройках
+            </button>{" "}
+            или{" "}
+            <a href={settings.melezhUiUrl} target="_blank" rel="noreferrer">
+              Web UI Melezh
+            </a>
+            .
+          </span>
+        </div>
+      ) : null}
+
       {error && (
         <div className="banner error">
           <strong>Ошибка</strong>
@@ -1610,8 +1674,8 @@ export default function App() {
       {tab === "disks" && (
         <section className="panel">
           <div className="toolbar">
-            <button type="button" onClick={() => void refreshDisks()}>
-              Обновить данные
+            <button type="button" onClick={() => void refreshDisks()} disabled={disksRefreshing}>
+              {disksRefreshing ? "Обновление…" : "Обновить данные"}
             </button>
           </div>
           <div className="grid2">
@@ -1637,7 +1701,7 @@ export default function App() {
                       <td>
                         {d["interface"]} {d.mediaType ? `· ${d.mediaType}` : ""}
                       </td>
-                      <td>{formatHealthPercent(d.healthPercent)}</td>
+                      <td>{formatHealthPercent(d.healthPercent, d.telemetryConfidence)}</td>
                       <td>
                         <button type="button" onClick={() => void loadSmart(d)}>
                           Детали
@@ -1665,6 +1729,8 @@ export default function App() {
                     <dd>{formatTempC(selectedDisk.temperatureCelsius)}</dd>
                     <dt>Ресурс SSD</dt>
                     <dd>{formatSsdLifePercent(selectedDisk)}</dd>
+                    <dt>Обновлено</dt>
+                    <dd>{formatDiskUpdatedAt(selectedDisk.updatedAtUtc)}</dd>
                     <dt>Наработка</dt>
                     <dd>
                       {formatPowerOnHours(selectedDisk.powerOnHours)}, включений {selectedDisk.powerCycleCount || "—"}
@@ -1698,7 +1764,7 @@ export default function App() {
                         <tr key={i}>
                           <td>{row.timestampUtc}</td>
                           <td>{formatTempC(row.temperatureCelsius)}</td>
-                          <td>{formatHealthPercent(row.healthPercent)}</td>
+                          <td>{formatHealthPercent(row.healthPercent, selectedDisk?.telemetryConfidence)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -2371,6 +2437,15 @@ export default function App() {
               — свободное использование с сохранением уведомления об авторских правах.
             </p>
             <p className="about-author muted">Автор: Arthur Barmine</p>
+            <div className="about-melezh">
+              <img className="about-melezh-logo" src={melezhLogoSrc} alt="Melezh" />
+              <p>
+                <a href={MELEZH_REPO_URL} target="_blank" rel="noreferrer">
+                  Melezh на GitHub
+                </a>
+              </p>
+              <p className="about-author muted">Автор: Anton Titovets</p>
+            </div>
           </div>
         </section>
       )}
@@ -2693,12 +2768,11 @@ export default function App() {
             </div>
           </details>
 
-          <details className="settings-collapsible" open>
-            <summary className="settings-collapsible-summary">Melezh / OpenIntegrations</summary>
+          <details className="settings-collapsible">
+            <summary className="settings-collapsible-summary">Melezh</summary>
             <div className="settings-collapsible-body">
               <p className="hint">
-                HTTP-шлюз для интеграций OpenIntegrations (Telegram, HTTP, БД и др.). Сбор телеметрии AriaSignature для 1С
-                выполняется напрямую через API на порту {settings.apiPort}, без Melezh.
+                HTTP-шлюз для интеграций OpenIntegrations (Telegram, HTTP, БД и др.)
               </p>
               <p>
                 <strong>Служба:</strong>{" "}
@@ -2737,6 +2811,12 @@ export default function App() {
                 </p>
               ) : null}
               <h3>Синхронизация в Melezh</h3>
+              <p className="hint">
+                Handler <span className="mono">aria_sync</span> принимает только{" "}
+                <strong>POST</strong> с JSON. Открытие ссылки в Web UI Melezh (GET) даст «Method Not Allowed» — это
+                нормально. Проверка: кнопка «Отправить снимок» ниже или{" "}
+                <span className="mono">POST /api/v1/melezh/push</span>.
+              </p>
               <label className="checkbox">
                 <input
                   type="checkbox"
@@ -2758,8 +2838,13 @@ export default function App() {
                 <input
                   value={settings.melezhSyncCron}
                   onChange={(e) => setSettings({ ...settings, melezhSyncCron: e.target.value })}
+                  placeholder="20 2/15 * * * ?"
                 />
               </label>
+              <p className="hint">
+                По умолчанию push сдвинут на 20-ю секунду (<span className="mono">20 2/15 * * * ?</span>), чтобы реже
+                совпадать с pull cron Melezh (каждые 5 мин, секунды 0/4/8/…).
+              </p>
               {settings.melezhSyncLastOk ? (
                 <p className="hint">
                   Последняя успешная отправка: <span className="mono">{settings.melezhSyncLastOk}</span>

@@ -43,7 +43,19 @@
 
 Push от агента: `MelezhSyncJob` → `POST :7788/aria_sync`. Отдельный outbound handler на `POST /api/v1/melezh/push` **не** создаётся.
 
-Cron pull по умолчанию: `0 */5 * * * * *` — env `ARIASIGNATURE_MELEZH_PULL_CRON`. Это **не** заменяет Quartz `melezh-sync-job` в `AriaSignatureService` (push); оба канала документированы в `docs/API.md`.
+Cron pull (bootstrap v5+): для каждого из 10 `aria_get_*` — **своя** секунда в цикле 5 минут (`0 */5`, `4 */5`, `8 */5`, … `36 */5`), чтобы не гонять общий OInt `http` параллельно. Переопределение всех pull одним выражением: env `ARIASIGNATURE_MELEZH_PULL_CRON`. Push от агента по умолчанию: Quartz `20 2/15 * * * ?` (настройка `melezhSyncCron`). Это **не** заменяет `melezh-sync-job`; оба канала в `docs/API.md`.
+
+### Параллельные cron и OInt HTTP
+
+Если в Web UI Melezh «краснеют» десятки handler’ов с `InvalidOperationException` / `non-concurrent collections` в `OPI_HTTPКлиент.os`, причина обычно **одновременные** вызовы модуля `http`, а не отдельные ошибки конфигурации. После bootstrap v4 все pull могли срабатывать в **одну секунду** (`0 */5 * * * * *`).
+
+| Действие | Команда |
+|----------|---------|
+| Repair + stagger + prune дубликатов | `.\scripts\repair-melezh.ps1` (admin) |
+| Только bootstrap | `AriaSignature.MelezhHost.exe --bootstrap-only` |
+| Проверка | `GET :7788/aria_ping`, `POST :7788/aria_sync` с `{}` |
+
+`aria_sync` в Web UI Melezh по ссылке (GET) → **Method Not Allowed**; нужен **POST** + JSON (кнопка в панели Aria или `POST /api/v1/melezh/push`).
 
 ## Связка 1С ↔ AriaSignature ↔ Melezh
 
@@ -75,7 +87,9 @@ Cron pull по умолчанию: `0 */5 * * * * *` — env `ARIASIGNATURE_MELE
 |---------|----------|
 | Web UI недоступен, служба Running | `.\scripts\diagnose-melezh.ps1` (admin); лог `melezh-host-*.log` |
 | В логе `CreateProject` / `code=99` / «неизвестный параметр --path» | Обновить `melezh-host\AriaSignature.MelezhHost.exe` (1.1.0+ с русскими CLI) и перезапустить службу |
-| `GET :7788/aria_ping` → `result:false`, «Некорректное имя команды: http» | Пересобрать bundle (`prepare-melezh` + патч `oint-http-index`), `repair-melezh.ps1` или `MelezhHost --bootstrap-only` (bootstrap v2 пересоздаёт handlers) |
+| `GET :7788/aria_ping` → `result:false`, «Некорректное имя команды: http» | Пересобрать bundle (`prepare-melezh` + патч `oint-http-index`), `repair-melezh.ps1` или `MelezhHost --bootstrap-only` (bootstrap v2+ пересоздаёт handlers) |
+| Массовые 500, `non-concurrent collections` на многих handler’ах | `repair-melezh.ps1` (bootstrap **v5**: stagger cron, prune лишних keys), перезапуск `AriaSignatureMelezhService` |
+| `aria_sync` → Method Not Allowed в Web UI Melezh | Не открывать GET; только POST (`/api/v1/melezh/push` или `POST :7788/aria_sync`) |
 | Web UI недоступен | `services.msc` → `AriaSignatureMelezhService` → перезапуск |
 | Служба не стартует | `%ProgramData%\AriaSignature\logs\melezh-host-*.log` |
 | Нет `bin\melezh.bat` | Переустановить сборку с полным OInt bundle (`prepare-melezh`) |

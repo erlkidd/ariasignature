@@ -233,7 +233,7 @@ public static class AriaApiExtensions
             var melezhSyncHandler = dict.GetValueOrDefault(AppSettingsMelezhSyncKeys.Handler) ?? "aria_sync";
             var melezhSyncCron = dict.GetValueOrDefault(AppSettingsMelezhSyncKeys.Cron)
                 ?? configuration.GetValue<string>("MelezhSync:Cron")
-                ?? "0 0/15 * * * ?";
+                ?? "20 2/15 * * * ?";
             var melezhSyncLastOk = dict.GetValueOrDefault(AppSettingsMelezhSyncKeys.LastOkUtc);
             var melezhSyncLastError = dict.GetValueOrDefault(AppSettingsMelezhSyncKeys.LastError);
             var melezh = await melezhStatus.GetSnapshotAsync(cancellationToken);
