@@ -1,6 +1,6 @@
 # AriaSignature — спецификация API (v1)
 
-Версия документа: 1.0.1.
+Версия документа: 1.1.2
 
 ## 1. Общие параметры
 
@@ -72,6 +72,9 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
     - `outboundSyncEnabled` (`boolean`);
     - `outboundSyncUrl` (`string`, полный URL коллектора `http`/`https`);
     - `outboundSyncCron` (Quartz cron для исходящего `POST`).
+    - `melezhSyncEnabled`, `melezhSyncHandler` (по умолчанию `aria_sync`), `melezhSyncCron`;
+    - `melezhEnabled`, `melezhPort`, `melezhUiUrl`, `melezhServiceName`, `melezhServiceStatus`, `melezhRunning` (диагностика службы Melezh; см. `docs/MELEZH.md`);
+    - read-only: `melezhSyncLastOk`, `melezhSyncLastError`, `melezhLastError`, `melezhLogHint` (путь к последнему `melezh-host-*.log`).
   - Поле `note`: смена **порта** и **apiBind** вступает в силу после перезапуска службы `AriaSignatureService`; токен удалённого API и cron-поля применяются сразу после `PUT /settings`.
 
 - `PUT /settings`
@@ -83,7 +86,17 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
     - `smartMonitoringCron` (Quartz);
     - `outboundSyncEnabled` (`boolean`);
     - `outboundSyncUrl` (абсолютный `http`/`https`; пустая строка допустима только если синхронизация выключена);
-    - `outboundSyncCron` (Quartz).
+    - `outboundSyncCron` (Quartz);
+    - `melezhSyncEnabled`, `melezhSyncHandler`, `melezhSyncCron`.
+
+- `POST /melezh/push`
+  - Назначение: немедленная отправка снимка телеметрии в Melezh (`POST http://127.0.0.1:{melezhPort}/{melezhSyncHandler}`).
+  - Тело запроса: пустое или `{}`.
+  - Ответ: `{ "ok": true, "targetUrl": "..." }` или `502` с `{ "ok": false, "error": "...", "targetUrl": "..." }`.
+
+- `POST /melezh/ingest`
+  - Назначение: ACK для inbound handler Melezh `aria_sync` (целевой URL в bootstrap: `POST /api/v1/melezh/ingest`). Не вызывается из панели напрямую.
+  - Ответ: `{ "ok": true, "result": true }`.
 
 **Безопасность:** при **пустом** `apiSharedSecret` любой узел, который может открыть TCP до порта API, может вызывать те же операции, что и доверенный мониторинг — ограничивайте сеть (VPN), брандмауэр и при необходимости задавайте токен. Исходящий `POST` на коллектор по-прежнему не использует поля входящего API.
 
@@ -93,7 +106,34 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
   - Назначение: сведения об узле (hostname, DNS, адреса активных интерфейсов, ОС, процессор, ОЗУ, видеокарты, время сбора, версия агента) — **как на вкладке «О системе»**.
   - Ответ: camelCase JSON (`hostName`, `networkAddresses[]`, `videoControllers[]`, …).
 
-### 3.4 Исходящая синхронизация (POST на коллектор)
+### 3.3a Melezh и два HTTP-порта (`:5160` vs `:7788`)
+
+| Порт | Контракт | Swagger |
+|------|----------|---------|
+| **5160** | REST агента `/api/v1/*` | Да (`/swagger`) |
+| **7788** | Handler keys Melezh (`/aria_ping`, `/aria_get_*`, …) | Нет (см. [`MELEZH_HANDLER_CATALOG.md`](MELEZH_HANDLER_CATALOG.md)) |
+
+Соответствие (типовые примеры):
+
+| Агент `:5160` | Melezh `:7788` | Примечание |
+|---------------|----------------|------------|
+| `POST /api/v1/melezh/push` | `POST /aria_sync` | Один JSON-снимок телеметрии |
+| `GET /api/v1/disks` | `GET /aria_get_disks` | Pull по cron (stagger v5) |
+| `GET /api/v1/disks/{id}/smart` | `GET /aria_get_disk_smart` | В bootstrap URL подставлен **placeholder** `00000000-0000-0000-0000-000000000001`; тест из Web UI без реального `id` даёт **404** — ожидаемо. Возьмите `id` из `aria_get_disks` / `GET /disks`. |
+| `GET /api/v1/status` | `GET /aria_ping` | Health |
+
+Внешние интеграции (1С, OInt) для чтения данных агента ориентируются на **:7788**, не на прямой `:5160`.
+
+### 3.4 Синхронизация в Melezh (локальный POST :7788)
+
+- Назначение: доставка того же JSON-снимка, что и раздел 3.5 исходящего sync, в handler Melezh на этой машине (интеграции OInt / 1С).
+- Управление: `melezhSync*` в разделе 3.2; Quartz job `melezh-sync-job` в `AriaSignatureService`.
+- URL: `http://127.0.0.1:{melezhPort}/{melezhSyncHandler}` (handler по умолчанию `aria_sync`, health `aria_ping`).
+- Схема тела: как в разделе 3.5 (исходящий POST на коллектор).
+- **Push в шлюз обязателен** для доставки снимка на `:7788` (Quartz + `POST /api/v1/melezh/push` → тот же handler `aria_sync`).
+- **Опрос через Melezh (pull):** планировщик Melezh по cron вызывает outbound GET handlers (`aria_get_*`); прямой `GET :5160/api/v1/*` допустим для UI/диагностики, но внешние интеграции ориентируются на `:7788`. См. [`docs/MELEZH_HANDLER_CATALOG.md`](MELEZH_HANDLER_CATALOG.md).
+
+### 3.5 Исходящая синхронизация (POST на коллектор)
 
 - Назначение: дополнительный канал доставки данных на сервер заказчика **наружу** от машины с агентом (исходящее соединение). **Не заменяет** опрос по `GET /api/v1/*`.
 - Управление: флаги и поля из раздела 3.2; выполняется службой `AriaSignatureService` по расписанию Quartz (`outbound-sync-job`).
@@ -106,7 +146,7 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
 
 Заголовки запроса к коллектору: `Content-Type: application/json` (и при необходимости стандартные заголовки клиента); без `Authorization` и без пользовательских токенов из панели настроек.
 
-### 3.5 Телеметрия дисков
+### 3.6 Телеметрия дисков
 
 - `GET /disks`
   - Назначение: список диагностируемых дисков.
@@ -140,7 +180,7 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
   - Примечание: локальная операторская операция повышенного риска, выполняется только с подтверждением.
   - Ответ: `cleared`, `scope`, `deleted`.
 
-### 3.6 Задачи архивации
+### 3.7 Задачи архивации
 
 В панели вкладка «Активные задачи» показывает задачи, **включённые в расписание**, и задачу, которая **выполняется в данный момент** (в том числе при снятом флажке «Вкл»).
 
@@ -166,7 +206,7 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
 - `POST /backups/test-mssql`
   - Назначение: проверка подключения к MSSQL без сохранения задачи.
 
-### 3.7 Журнал архивации
+### 3.8 Журнал архивации
 
 - `GET /backups/logs`
   - Назначение: журнал выполнения задач.

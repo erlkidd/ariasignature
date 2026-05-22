@@ -1,6 +1,6 @@
 # AriaSignature — operations runbook
 
-Версия документа: 1.0.1.
+Версия документа: 1.1.2
 
 ## 1. Цель
 
@@ -84,5 +84,6 @@
    - логический guardrail.
 3. Обновить:
    - `docs/INCIDENT_STARTUP_W10_W11.md`,
+   - `docs/INCIDENT_SCM_INSTALL_UNINSTALL_MELEZH.md`,
    - `docs/RELEASE_GATE.md`,
    - `docs/CHANGELOG.md`.

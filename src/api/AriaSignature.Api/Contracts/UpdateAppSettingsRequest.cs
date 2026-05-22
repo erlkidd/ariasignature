@@ -10,4 +10,8 @@ public sealed class UpdateAppSettingsRequest
     public bool? OutboundSyncEnabled { get; set; }
     public string? OutboundSyncUrl { get; set; }
     public string? OutboundSyncCron { get; set; }
+
+    public bool? MelezhSyncEnabled { get; set; }
+    public string? MelezhSyncHandler { get; set; }
+    public string? MelezhSyncCron { get; set; }
 }

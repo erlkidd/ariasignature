@@ -1,10 +1,11 @@
 # AriaSignature - AI Context
 
-Версия документа: 1.0.1.
+Версия документа: 1.1.2
 
 ## 1) Что это за система
 
-- `AriaSignature.Service` - главный runtime процесса (Windows Service).
+- `AriaSignature.Service` - главный runtime процесса (Windows Service), API порт **5160**.
+- `AriaSignature.MelezhHost` + `AriaSignatureMelezhService` - Melezh (OpenIntegrations), порт **7788**.
 - `AriaSignature.Api` - REST API `/api/v1` (Kestrel), Swagger `/swagger`.
 - `AriaSignature.UI` - desktop shell (WPF + WebView2).
 - `src/web` - React SPA, загружается из `service/wwwroot`.

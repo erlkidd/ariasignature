@@ -1,6 +1,6 @@
 # AriaSignature — руководство по installer
 
-Версия документа: 1.0.1.
+Версия документа: 1.1.2
 
 ## 1. Назначение
 
@@ -26,6 +26,7 @@
 ```powershell
 dotnet publish .\src\ui\AriaSignature.UI\AriaSignature.UI.csproj -c Release -r win-x64 --self-contained true -o .\publish\ui
 dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj -c Release -r win-x64 --self-contained true -o .\publish\service
+dotnet publish .\src\service\AriaSignature.MelezhHost\AriaSignature.MelezhHost.csproj -c Release -r win-x64 --self-contained true -o .\publish\melezh-host
 ```
 
 ## 4. Сборка installer
@@ -62,25 +63,62 @@ dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj 
 - при неуспешном старте setup выполняет preflight/postflight проверки и запускает auto-repair через `AriaSignature.ServiceBootstrap.exe`;
 - установка не оставляет полу-рабочее состояние: если после auto-repair не подтверждены `service running + /api/v1/status`, setup завершается ошибкой.
 
-При критической ошибке регистрации/здоровья (`install-health:fail-hard`) установка завершается с ошибкой.
+При критической ошибке регистрации/здоровья (`install-health:fail-hard`) установка завершается с ошибкой. Статусы `install-health:degraded-*` и `install-health:timeout` **не** прерывают мастер — пользователь может нажать «Завершить»; детали только в логе установщика (`marker=install-user-notice`, без MsgBox «ограниченной готовности»). Прогрев API/Melezh делегируется UI.
+
+Задача автозапуска трея при входе (`schtasks`, `AriaSignatureTrayLogon`) регистрируется с учётной записью `{%USERDOMAIN%}\{%USERNAME%}` (не `{userdomain}` — такой константы в Inno Setup нет).
 
 ## 7. Поведение удаления
 
-- best-effort stop/delete `AriaSignatureService`;
-- допустимые состояния: служба отсутствует / уже остановлена;
-- дополнительно выполняется завершение процессов `AriaSignature.*`;
-- удаляется каталог установки целиком (`{app}`), чтобы reinstall не наследовал старые бинарники.
+- в `usUninstall` / `usPostUninstall` — `taskkill` для UI/Service/API/MelezhHost/oscript (Inno Setup не имеет отдельной директивы `UninstallCloseApplications`);
+- best-effort stop/delete `AriaSignatureService` и `AriaSignatureMelezhService`;
+- ожидание исчезновения обеих записей в SCM (`WaitServiceAbsent`);
+- завершение процессов `AriaSignature.*`, `AriaSignature.MelezhHost.exe`, `oscript.exe` (bundle);
+- удаление `%ProgramData%\AriaSignature\melezh\` (проект Melezh);
+- в `usPostUninstall` — `RemoveAppDirectoryBestEffort`: до 3 попыток `DelTree({app})` с повторным `taskkill`;
+- при неудаче — сообщение с путём `{app}` и подсказкой `scripts\repair-upgrade.ps1`.
+
+## 7.1. Melezh при установке (1.1.0+)
+
+- Preflight: `{app}\melezh\bin\melezh.bat`, `{app}\melezh-host\AriaSignature.MelezhHost.exe`.
+- Регистрация и запуск `AriaSignatureMelezhService` — **обязательны** (fail-hard при ошибке `sc create` / `sc start`).
+- Проверка `http://127.0.0.1:7788/ui` после `sc start` — при таймауте установка завершается в режиме `install-health:degraded-melezh-ui` (мастер не блокируется).
+- Проверка версии API `/api/v1/status` == `MyAppVersion` (ловит «залипший» upgrade 1.0.1).
+- `[Files]` для `service`, `melezh-host`, `melezh`: флаг `restartreplace` при upgrade.
+- Полевое восстановление: `scripts/repair-upgrade.ps1` (служба + версия API), `scripts/repair-melezh.ps1` (только Melezh) или кнопка **«Восстановить службу Melezh»** в «Настройки».
+- Если installer сообщает, что **файлы на диске** или **API** не совпадают с версией — закройте процессы, перезагрузите ПК (для отложенного `restartreplace`) и повторите setup; либо `.\scripts\repair-upgrade.ps1` от администратора.
 
 ## 8. Автозапуск UI и трей
 
 - optional startup shortcut в `commonstartup`;
 - запуск UI с параметром `--tray`;
 - штатный выход выполняется через меню трея.
+- флажок **Автозапуск** в настройках включает панель и тип запуска **Автоматически** для `AriaSignatureService` и `AriaSignatureMelezhService` (может запросить UAC).
+
+## 7.2 CLI-зеркало ISS (только для агентов / CI)
+
+**Пользовательский установщик** — только `AriaSignature-Setup.exe` (Inno Setup, [`AriaSignature.iss`](../installer/inno/AriaSignature.iss)). Логика SCM/Melezh выполняется **в Pascal**, как раньше.
+
+**CLI** ([`scripts/install-cli.ps1`](../scripts/install-cli.ps1)) — зеркало тех же шагов для нейросетей и `release-gate`: те же `install-health:*` маркеры, fail-hard на версии API и Melezh, degraded-пути для основной службы. Не включается в состав setup.exe.
+
+```powershell
+.\scripts\install-cli.ps1 -Action Install -InstallRoot "C:\Program Files\AriaSignature" -SkipFirewall
+```
+
+Действия: `Install`, `Upgrade`, `Uninstall`, `Verify`, `Diagnose`. Реализация: [`AriaSignature.Install.IssMirror.ps1`](../installer/lib/AriaSignature.Install.IssMirror.ps1).
+
+`release-gate` прогоняет cli-install-smoke **до** ISCC, чтобы поймать те же ошибки SCM, что и в ISS, без замены production-installer.
+
+## 7.3 Bundle OInt / Melezh
+
+Манифест обязательных путей: [`installer/melezh/required-files.json`](../installer/melezh/required-files.json). Проверка: `.\scripts\Test-MelezhBundle.ps1 -RootPath .\installer\melezh\bundle`.
 
 ## 9. Верификация после установки
 
 Минимальные проверки:
 - служба `AriaSignatureService` существует и запущена;
+- служба `AriaSignatureMelezhService` запущена, `http://127.0.0.1:7788/ui` отвечает;
+- `/api/v1/status` → `version` совпадает с версией installer;
+- в «Настройки» виден блок **Melezh / OpenIntegrations**;
 - UI открывается без ошибки WebView2;
 - API доступен на `http://127.0.0.1:{port}/api/v1/status`;
 - при необходимости с другой машины в VPN: `http://<IP_агента>:{port}/api/v1/status` (и с заголовком авторизации, если задан токен в настройках);
@@ -94,3 +132,7 @@ dotnet publish .\src\service\AriaSignature.Service\AriaSignature.Service.csproj 
 - При установке выполняется команда `netsh`, добавляющая входящее правило **«AriaSignature API (TCP 5160)»** для TCP-порта **5160**.
 - Если порт API изменён в настройках службы, обновите правило вручную в «Брандмауэр Windows в режиме повышенной безопасности» или удалите старое и создайте новое для актуального порта.
 - При удалении продукта установщик выполняет best-effort удаление правила с тем же именем.
+
+## 11. Инцидентные заметки
+
+- SCM/install/uninstall + Melezh autostart incident: [`docs/INCIDENT_SCM_INSTALL_UNINSTALL_MELEZH.md`](./INCIDENT_SCM_INSTALL_UNINSTALL_MELEZH.md)

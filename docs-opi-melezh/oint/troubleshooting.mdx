@@ -1,0 +1,33 @@
+# Troubleshooting
+
+## RU
+
+### Типовые проблемы
+
+- ошибка авторизации (неверный токен/просрочка)
+- несовпадение сигнатуры метода и CLI-опций
+- ограничения внешнего API (429/5xx)
+- ошибки сериализации входных параметров
+
+### Чеклист
+
+1. Проверить версию OInt и доступность метода в changelog.
+2. Проверить минимальный запрос.
+3. Включить детальные логи.
+4. Сравнить результат в CLI и 1C/OneScript.
+
+## EN
+
+### Common issues
+
+- auth failures (invalid/expired token)
+- mismatch between method signature and CLI options
+- upstream API limits (429/5xx)
+- request payload serialization errors
+
+### Checklist
+
+1. Verify OInt version and method availability in changelog.
+2. Reproduce with minimal request.
+3. Enable detailed logs.
+4. Compare behavior across CLI and 1C/OneScript.

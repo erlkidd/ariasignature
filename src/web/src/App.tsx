@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
-const UI_BUILD_VERSION = "1.0.1";
+const MELEZH_REPO_URL = "https://github.com/Bayselonarrend/Melezh";
+const UI_BUILD_VERSION = "1.1.2";
+const DISKS_LIVE_REFRESH_MS = 60_000;
+const MIN_TELEMETRY_CONFIDENCE_FOR_HEALTH = 40;
 
 const logoSrc = `./logo.png?v=${encodeURIComponent(__LOGO_CACHE_BUST__)}`;
+const melezhLogoSrc = `./melezh_long.png?v=${encodeURIComponent(__LOGO_CACHE_BUST__)}`;
 
 type DiskRow = {
   id: string;
@@ -28,6 +32,7 @@ type DiskRow = {
   storageReliabilityUsed: boolean;
   telemetryConfidence: number;
   telemetryDegradationReason: string;
+  healthSummary?: string;
   status: string;
   updatedAtUtc: string;
 };
@@ -75,6 +80,19 @@ interface SettingsDto {
   outboundSyncEnabled: boolean;
   outboundSyncUrl: string;
   outboundSyncCron: string;
+  melezhSyncEnabled: boolean;
+  melezhSyncHandler: string;
+  melezhSyncCron: string;
+  melezhSyncLastOk?: string | null;
+  melezhSyncLastError?: string | null;
+  melezhEnabled: boolean;
+  melezhPort: number;
+  melezhUiUrl: string;
+  melezhServiceName: string;
+  melezhServiceStatus?: string | null;
+  melezhRunning: boolean;
+  melezhLastError?: string | null;
+  melezhLogHint?: string | null;
 }
 
 interface NetworkAddressInfoDto {
@@ -132,11 +150,43 @@ const quartzDays = [
   { v: "SAT", label: "Суббота" },
 ];
 
-function formatHealthPercent(p: number | null | undefined): string {
+function formatSsdLifePercent(d: Pick<DiskRow, "ssdLifeRemainingPercent" | "mediaType">): string {
+  const media = (d.mediaType ?? "").toUpperCase();
+  if (media.includes("HDD") || media.includes("ЖЕСТК")) {
+    return "—";
+  }
+  if (d.ssdLifeRemainingPercent == null) {
+    return "н/д";
+  }
+  return `${d.ssdLifeRemainingPercent}%`;
+}
+
+function formatHealthPercent(
+  p: number | null | undefined,
+  telemetryConfidence?: number,
+  healthSummary?: string | null
+): string {
   if (p == null) {
     return "н/д";
   }
+  if (telemetryConfidence != null && telemetryConfidence < MIN_TELEMETRY_CONFIDENCE_FOR_HEALTH) {
+    return `${p}%*`;
+  }
+  if (healthSummary?.includes("неполным данным")) {
+    return `${p}%*`;
+  }
   return `${p}%`;
+}
+
+function formatDiskUpdatedAt(iso: string | undefined): string {
+  if (!iso) {
+    return "—";
+  }
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return iso;
+  }
 }
 
 function formatTempC(t: number | null | undefined): string {
@@ -502,6 +552,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   const [disks, setDisks] = useState<DiskRow[]>([]);
+  const [disksRefreshing, setDisksRefreshing] = useState(false);
   const [selectedDisk, setSelectedDisk] = useState<DiskRow | null>(null);
   const [smart, setSmart] = useState<SmartRow[]>([]);
   const [smartPage, setSmartPage] = useState(1);
@@ -521,9 +572,16 @@ export default function App() {
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
   const [launchAtStartup, setLaunchAtStartup] = useState(true);
   const [serviceSettingsExpanded, setServiceSettingsExpanded] = useState(false);
+  const [melezhSettingsExpanded, setMelezhSettingsExpanded] = useState(false);
+  const windowsServiceStatusNotifyRef = useRef(false);
   const [outboundSettingsExpanded, setOutboundSettingsExpanded] = useState(false);
   /** Сообщение хоста: тип запуска службы — Automatic (null = ещё не приходило). */
   const [autostartServiceBootAuto, setAutostartServiceBootAuto] = useState<boolean | null>(null);
+  const [autostartMelezhBootAuto, setAutostartMelezhBootAuto] = useState<boolean | null>(null);
+  const [autostartAllServicesBootAuto, setAutostartAllServicesBootAuto] = useState<boolean | null>(null);
+  const [melezhRepairBusy, setMelezhRepairBusy] = useState(false);
+  const [melezhPushBusy, setMelezhPushBusy] = useState(false);
+  const [autostartBusy, setAutostartBusy] = useState(false);
 
   const [jobName, setJobName] = useState("");
   const [jobType, setJobType] = useState<"file" | "msSql">("file");
@@ -734,14 +792,19 @@ export default function App() {
     setStatus("");
   };
 
-  const refreshDisks = useCallback(async () => {
+  const refreshDisks = useCallback(async (silent = false) => {
     setError(null);
+    setDisksRefreshing(true);
     try {
       const d = await apiSend<DiskRow[]>("/disks/refresh", "POST");
       setDisks(d);
-      setStatus(`Диски обновлены: ${d.length}`);
+      if (!silent) {
+        setStatus("Данные дисков обновлены.");
+      }
     } catch (e) {
       showErr(e);
+    } finally {
+      setDisksRefreshing(false);
     }
   }, []);
 
@@ -798,6 +861,19 @@ export default function App() {
         outboundSyncEnabled: Boolean(s.outboundSyncEnabled),
         outboundSyncUrl: s.outboundSyncUrl ?? "",
         outboundSyncCron: s.outboundSyncCron ?? "0 0/30 * * * ?",
+        melezhSyncEnabled: s.melezhSyncEnabled ?? true,
+        melezhSyncHandler: s.melezhSyncHandler ?? "aria_sync",
+        melezhSyncCron: s.melezhSyncCron ?? "20 2/15 * * * ?",
+        melezhSyncLastOk: s.melezhSyncLastOk ?? null,
+        melezhSyncLastError: s.melezhSyncLastError ?? null,
+        melezhEnabled: s.melezhEnabled ?? true,
+        melezhPort: s.melezhPort ?? 7788,
+        melezhUiUrl: s.melezhUiUrl ?? "http://127.0.0.1:7788/ui",
+        melezhServiceName: s.melezhServiceName ?? "AriaSignatureMelezhService",
+        melezhServiceStatus: s.melezhServiceStatus ?? null,
+        melezhRunning: Boolean(s.melezhRunning),
+        melezhLastError: s.melezhLastError ?? null,
+        melezhLogHint: s.melezhLogHint ?? null,
       });
     } catch (e) {
       showErr(e);
@@ -868,17 +944,45 @@ export default function App() {
   }, [tab]);
 
   useEffect(() => {
+    if (tab !== "disks") {
+      return;
+    }
+
+    void refreshDisks(true);
+    const intervalId = window.setInterval(() => {
+      void refreshDisks(true);
+    }, DISKS_LIVE_REFRESH_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [tab, refreshDisks]);
+
+  useEffect(() => {
     const initialLoad = async () => {
       try {
-        await Promise.all([loadDisks(), refreshJobs(true), refreshSettings(), refreshServiceVersion()]);
-        try {
-          await refreshLogs(true);
-        } catch (e) {
-          showErr(e);
+        await Promise.all([refreshSettings(), refreshServiceVersion()]);
+        let s = await apiGet<SettingsDto>("/settings");
+        const melezhOn = s.melezhEnabled !== false;
+        if (melezhOn) {
+          for (let attempt = 0; attempt < 12; attempt++) {
+            s = await apiGet<SettingsDto>("/settings");
+            if (s.melezhServiceStatus === "Running" && s.melezhRunning) {
+              break;
+            }
+            await new Promise((r) => window.setTimeout(r, 2500));
+          }
+          await refreshSettings();
         }
+      } catch (e) {
+        showErr(e);
       } finally {
         postToHost({ action: "appReady" });
       }
+
+      void loadDisks();
+      void refreshJobs(true);
+      void refreshLogs(true).catch(showErr);
     };
     void initialLoad();
     postToHost({ action: "getAutostart" });
@@ -939,10 +1043,36 @@ export default function App() {
         const data = JSON.parse(ev.data);
         if (data?.action === "autostart" && typeof data.enabled === "boolean") {
           setLaunchAtStartup(data.enabled);
+          setAutostartBusy(false);
           if (typeof data.serviceBootAuto === "boolean") {
             setAutostartServiceBootAuto(data.serviceBootAuto);
           } else {
             setAutostartServiceBootAuto(null);
+          }
+          if (typeof data.melezhServiceBootAuto === "boolean") {
+            setAutostartMelezhBootAuto(data.melezhServiceBootAuto);
+          } else {
+            setAutostartMelezhBootAuto(null);
+          }
+          if (typeof data.allServicesBootAuto === "boolean") {
+            setAutostartAllServicesBootAuto(data.allServicesBootAuto);
+          } else {
+            setAutostartAllServicesBootAuto(null);
+          }
+        }
+        if (data?.action === "autostartProgress") {
+          setAutostartBusy(true);
+        }
+        if (data?.action === "repairMelezhProgress") {
+          setMelezhRepairBusy(true);
+        }
+        if (data?.action === "repairMelezh") {
+          setMelezhRepairBusy(false);
+          void refreshSettings();
+          if (data.ok === true) {
+            setStatus("Служба Melezh восстановлена.");
+          } else if (typeof data.error === "string" && data.error) {
+            setStatus(`Восстановление Melezh: ${data.error}`);
           }
         }
         if (data?.action === "pickedFile" && typeof data.path === "string") {
@@ -952,7 +1082,16 @@ export default function App() {
           setDestFolder(data.path);
         }
         if (data?.action === "windowsServiceStatus") {
-          setWindowsService(data as WindowsServiceStatus);
+          const ws = data as WindowsServiceStatus;
+          setWindowsService(ws);
+          if (windowsServiceStatusNotifyRef.current) {
+            windowsServiceStatusNotifyRef.current = false;
+            if (ws.ok === false) {
+              setStatus(`AriaSignatureService: ${ws.error ?? "недоступна"}`);
+            } else if (ws.status) {
+              setStatus(`AriaSignatureService: ${formatWindowsServiceStatus(ws.status)}`);
+            }
+          }
         }
       } catch {
         /* ignore */
@@ -960,7 +1099,7 @@ export default function App() {
     };
     chromeWebview.addEventListener("message", fn);
     return () => chromeWebview.removeEventListener("message", fn);
-  }, []);
+  }, [refreshSettings]);
 
   useEffect(() => {
     if (tab !== "settings") {
@@ -1283,6 +1422,9 @@ export default function App() {
         outboundSyncEnabled: settings.outboundSyncEnabled,
         outboundSyncUrl: settings.outboundSyncUrl,
         outboundSyncCron: outboundCronPreview,
+        melezhSyncEnabled: settings.melezhSyncEnabled,
+        melezhSyncHandler: settings.melezhSyncHandler,
+        melezhSyncCron: settings.melezhSyncCron,
       };
       await apiSend("/settings", "PUT", body);
       await refreshSettings();
@@ -1544,8 +1686,8 @@ export default function App() {
       {tab === "disks" && (
         <section className="panel">
           <div className="toolbar">
-            <button type="button" onClick={() => void refreshDisks()}>
-              Обновить данные
+            <button type="button" onClick={() => void refreshDisks()} disabled={disksRefreshing}>
+              {disksRefreshing ? "Обновление…" : "Обновить данные"}
             </button>
           </div>
           <div className="grid2">
@@ -1571,7 +1713,10 @@ export default function App() {
                       <td>
                         {d["interface"]} {d.mediaType ? `· ${d.mediaType}` : ""}
                       </td>
-                      <td>{formatHealthPercent(d.healthPercent)}</td>
+                      <td>
+                        {formatHealthPercent(d.healthPercent, d.telemetryConfidence, d.healthSummary)}{" "}
+                        <span className={statusClass(d.status)}>{d.status}</span>
+                      </td>
                       <td>
                         <button type="button" onClick={() => void loadSmart(d)}>
                           Детали
@@ -1598,9 +1743,24 @@ export default function App() {
                     <dt>Температура</dt>
                     <dd>{formatTempC(selectedDisk.temperatureCelsius)}</dd>
                     <dt>Ресурс SSD</dt>
+                    <dd>{formatSsdLifePercent(selectedDisk)}</dd>
+                    <dt>Оценка здоровья</dt>
                     <dd>
-                      {selectedDisk.ssdLifeRemainingPercent == null ? "н/д" : `${selectedDisk.ssdLifeRemainingPercent}%`}
+                      {formatHealthPercent(
+                        selectedDisk.healthPercent,
+                        selectedDisk.telemetryConfidence,
+                        selectedDisk.healthSummary
+                      )}{" "}
+                      <span className={statusClass(selectedDisk.status)}>{selectedDisk.status}</span>
                     </dd>
+                    {selectedDisk.healthSummary ? (
+                      <>
+                        <dt>Пояснение</dt>
+                        <dd className="muted">{selectedDisk.healthSummary}</dd>
+                      </>
+                    ) : null}
+                    <dt>Обновлено</dt>
+                    <dd>{formatDiskUpdatedAt(selectedDisk.updatedAtUtc)}</dd>
                     <dt>Наработка</dt>
                     <dd>
                       {formatPowerOnHours(selectedDisk.powerOnHours)}, включений {selectedDisk.powerCycleCount || "—"}
@@ -1634,7 +1794,7 @@ export default function App() {
                         <tr key={i}>
                           <td>{row.timestampUtc}</td>
                           <td>{formatTempC(row.temperatureCelsius)}</td>
-                          <td>{formatHealthPercent(row.healthPercent)}</td>
+                          <td>{formatHealthPercent(row.healthPercent, selectedDisk?.telemetryConfidence)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1879,6 +2039,7 @@ export default function App() {
                     />
                   </label>
                   <h4 style={{ margin: "12px 0 8px" }}>Расписание</h4>
+                  <p className="hint">Время задаётся в локальном часовом поясе Windows на этом ПК.</p>
                   <label className="check">
                     <input
                       type="checkbox"
@@ -2219,6 +2380,7 @@ export default function App() {
                 </label>
 
                 <h3>Расписание</h3>
+                <p className="hint">Время задаётся в локальном часовом поясе Windows на этом ПК.</p>
                 <label className="check">
                   <input type="checkbox" checked={useAdvancedCron} onChange={(e) => setUseAdvancedCron(e.target.checked)} />
                   Расширенный режим (cron Quartz)
@@ -2305,6 +2467,15 @@ export default function App() {
               — свободное использование с сохранением уведомления об авторских правах.
             </p>
             <p className="about-author muted">Автор: Arthur Barmine</p>
+            <div className="about-melezh">
+              <img className="about-melezh-logo" src={melezhLogoSrc} alt="Melezh" />
+              <p>
+                <a href={MELEZH_REPO_URL} target="_blank" rel="noreferrer">
+                  Melezh на GitHub
+                </a>
+              </p>
+              <p className="about-author muted">Автор: Anton Titovets</p>
+            </div>
           </div>
         </section>
       )}
@@ -2330,7 +2501,14 @@ export default function App() {
               )}
             </p>
             <div className="row service-control-actions">
-              <button type="button" className="secondary" onClick={() => postToHost({ action: "getWindowsServiceStatus" })}>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  windowsServiceStatusNotifyRef.current = true;
+                  postToHost({ action: "getWindowsServiceStatus" });
+                }}
+              >
                 Обновить статус
               </button>
               <button type="button" onClick={() => postToHost({ action: "controlWindowsService", command: "start" })}>
@@ -2627,6 +2805,144 @@ export default function App() {
             </div>
           </details>
 
+          <details
+            className="settings-collapsible"
+            open={melezhSettingsExpanded}
+            onToggle={(e) => setMelezhSettingsExpanded((e.currentTarget as HTMLDetailsElement).open)}
+          >
+            <summary className="settings-collapsible-summary">Melezh</summary>
+            <div className="settings-collapsible-body">
+              <div className="box service-control-box">
+                <p className="hint">
+                  HTTP-шлюз на порту <span className="mono">{settings.melezhPort}</span> (интеграции 1С, OInt).
+                </p>
+                <p>
+                  <strong>{settings.melezhServiceName}:</strong>{" "}
+                  {settings.melezhServiceStatus === "Running" ? (
+                    <span className="pill ok">запущена</span>
+                  ) : settings.melezhServiceStatus ? (
+                    <span className="pill warn">{settings.melezhServiceStatus}</span>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                  {settings.melezhRunning ? (
+                    <>
+                      {" "}
+                      · <span className="pill ok">Web UI доступен</span>
+                    </>
+                  ) : (
+                    <>
+                      {" "}
+                      · <span className="pill bad">Web UI недоступен</span>
+                    </>
+                  )}
+                </p>
+                {settings.melezhLastError ? (
+                  <p className="hint warn">
+                    {settings.melezhLastError}
+                    {settings.melezhLogHint ? (
+                      <>
+                        {" "}
+                        · лог: <span className="mono">{settings.melezhLogHint}</span>
+                      </>
+                    ) : null}
+                  </p>
+                ) : null}
+                {melezhRepairBusy ? (
+                  <p className="hint">Восстановление службы Melezh…</p>
+                ) : null}
+                <div className="row service-control-actions">
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={async () => {
+                      await refreshSettings();
+                      setStatus("Статус Melezh обновлён.");
+                    }}
+                  >
+                    Обновить статус
+                  </button>
+                  <a href={settings.melezhUiUrl} target="_blank" rel="noreferrer" className="secondary">
+                    Открыть Web UI
+                  </a>
+                  {(settings.melezhServiceStatus !== "Running" || !settings.melezhRunning) && (
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={melezhRepairBusy}
+                      onClick={() => {
+                        setMelezhRepairBusy(true);
+                        postToHost({ action: "repairMelezh" });
+                      }}
+                    >
+                      {melezhRepairBusy ? "Восстановление…" : "Восстановить службу"}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="box">
+              <h3>Синхронизация в Melezh</h3>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={settings.melezhSyncEnabled}
+                  onChange={(e) => setSettings({ ...settings, melezhSyncEnabled: e.target.checked })}
+                />
+                Периодическая отправка телеметрии в Melezh (POST)
+              </label>
+              <label>
+                Handler (URL path)
+                <input
+                  value={settings.melezhSyncHandler}
+                  onChange={(e) => setSettings({ ...settings, melezhSyncHandler: e.target.value })}
+                  placeholder="aria_sync"
+                />
+              </label>
+              <label>
+                Cron (Quartz)
+                <input
+                  value={settings.melezhSyncCron}
+                  onChange={(e) => setSettings({ ...settings, melezhSyncCron: e.target.value })}
+                  placeholder="20 2/15 * * * ?"
+                />
+              </label>
+              {settings.melezhSyncLastOk ? (
+                <p className="hint">
+                  Последняя успешная отправка: <span className="mono">{settings.melezhSyncLastOk}</span>
+                </p>
+              ) : null}
+              {settings.melezhSyncLastError &&
+              settings.melezhServiceStatus === "Running" &&
+              settings.melezhRunning ? (
+                <p className="hint warn">Ошибка sync: {settings.melezhSyncLastError}</p>
+              ) : null}
+              <div className="row">
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={melezhPushBusy}
+                  onClick={async () => {
+                    setMelezhPushBusy(true);
+                    setError(null);
+                    try {
+                      await apiSend<{ ok: boolean; error?: string }>("/melezh/push", "POST", {});
+                      await refreshSettings();
+                      setStatus("Снимок телеметрии отправлен в Melezh.");
+                    } catch (e) {
+                      showErr(e);
+                    } finally {
+                      setMelezhPushBusy(false);
+                    }
+                  }}
+                >
+                  {melezhPushBusy ? "Отправка…" : "Отправить сейчас"}
+                </button>
+              </div>
+              </div>
+            </div>
+          </details>
+
           <button type="button" onClick={() => void saveSettings()}>
             Сохранить в базу настроек
           </button>
@@ -2645,23 +2961,30 @@ export default function App() {
             <input
               type="checkbox"
               checked={launchAtStartup}
+              disabled={autostartBusy}
               onChange={(e) => {
                 setLaunchAtStartup(e.target.checked);
+                setAutostartBusy(true);
                 postToHost({ action: "setAutostart", enabled: e.target.checked });
               }}
             />
-            Запускать AriaSignature при входе в Windows
+            {autostartBusy ? "Настройка автозапуска…" : "Запускать AriaSignature и Melezh при входе в Windows"}
           </label>
           <p className="hint">
-            Флажок включает или выключает автозапуск панели для вашей учётной записи (настраивает приложение само, без
-            ручного редактирования реестра). Фоновая служба при установке уже получает тип запуска «Автоматически»; из
-            настроек запросов администратора не будет.
+            Включает автозапуск панели (ярлык/реестр) и тип запуска служб Windows «Автоматически» для AriaSignature и
+            Melezh. Может потребоваться подтверждение UAC.
           </p>
-          {launchAtStartup && autostartServiceBootAuto === false ? (
+          {launchAtStartup && autostartAllServicesBootAuto === false ? (
             <p className="hint warn">
-              Служба AriaSignatureService не в режиме автозапуска (возможно, сбой установки или ручное изменение).
-              Переустановите приложение от имени администратора или обратитесь к администратору ПК.
+              Одна или обе службы (AriaSignatureService / AriaSignatureMelezhService) не в режиме автозапуска. Повторите
+              включение флажка от администратора или переустановите приложение.
             </p>
+          ) : null}
+          {launchAtStartup && autostartServiceBootAuto === false && autostartMelezhBootAuto !== false ? (
+            <p className="hint warn">Служба AriaSignatureService не в режиме автозапуска.</p>
+          ) : null}
+          {launchAtStartup && autostartMelezhBootAuto === false && autostartServiceBootAuto !== false ? (
+            <p className="hint warn">Служба AriaSignatureMelezhService не в режиме автозапуска.</p>
           ) : null}
         </section>
       )}

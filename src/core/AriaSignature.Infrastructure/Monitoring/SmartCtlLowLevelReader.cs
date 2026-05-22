@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Text.Json;
+using AriaSignature.Application.Telemetry;
 using Microsoft.Extensions.Logging;
 
 namespace AriaSignature.Infrastructure.Monitoring;
@@ -294,14 +295,29 @@ public sealed class SmartCtlLowLevelReader
                     case 198:
                         snap.UncorrectableErrors = (int)Math.Clamp(raw, 0, int.MaxValue);
                         break;
+                    case 177:
+                    {
+                        TryApplySsdLifeFromAtaAttribute(snap, row, raw, attrName);
+                        var wearValue = GetInt(row, "value");
+                        if (wearValue is >= 0 and <= 100)
+                        {
+                            snap.VendorHealthPercent = snap.VendorHealthPercent is int v
+                                ? Math.Max(v, wearValue.Value)
+                                : wearValue.Value;
+                        }
+
+                        break;
+                    }
                     case 231:
                     case 233:
-                        if (raw is > 0 and <= 100)
+                        TryApplySsdLifeFromAtaAttribute(snap, row, raw, attrName);
+                        break;
+                    case 187:
+                    case 190:
+                    case 199:
+                        if (raw > 0)
                         {
-                            var normalized = NormalizeLifePercent((int)raw, attrName);
-                            snap.SsdLifeRemainingPercent = snap.SsdLifeRemainingPercent is int prev
-                                ? Math.Min(prev, normalized)
-                                : normalized;
+                            snap.UncorrectableErrors = Math.Max(snap.UncorrectableErrors, (int)Math.Clamp(raw, 0, int.MaxValue));
                         }
 
                         break;
@@ -309,8 +325,20 @@ public sealed class SmartCtlLowLevelReader
             }
         }
 
+        if (root.TryGetProperty("smart_status", out var smartStatus)
+            && smartStatus.TryGetProperty("passed", out var passedEl)
+            && passedEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            snap.SmartPassed = passedEl.GetBoolean();
+        }
+
         if (root.TryGetProperty("nvme_smart_health_information_log", out var nvme))
         {
+            var criticalWarning = GetInt(nvme, "critical_warning");
+            if (criticalWarning is >= 0)
+            {
+                snap.NvmeCriticalWarning = criticalWarning;
+            }
             if (snap.TemperatureCelsius <= 0)
             {
                 var k = GetInt(nvme, "temperature");
@@ -327,7 +355,13 @@ public sealed class SmartCtlLowLevelReader
             var percentageUsed = GetInt(nvme, "percentage_used");
             if (percentageUsed is >= 0 and <= 100)
             {
-                snap.SsdLifeRemainingPercent = Math.Clamp(100 - percentageUsed.Value, 0, 100);
+                var remaining = Math.Clamp(100 - percentageUsed.Value, 0, 100);
+                if (percentageUsed.Value >= 100)
+                {
+                    snap.SsdLifeEndOfLife = true;
+                }
+
+                snap.SsdLifeRemainingPercent = MergeSsdLifeSnapshot(snap.SsdLifeRemainingPercent, remaining, snap.SsdLifeEndOfLife);
             }
 
             var mediaErrors = GetLong(nvme, "media_errors") ?? 0;
@@ -502,6 +536,56 @@ public sealed class SmartCtlLowLevelReader
         };
     }
 
+    private static void TryApplySsdLifeFromAtaAttribute(Snapshot snap, JsonElement row, long raw, string attrName)
+    {
+        int? candidate = null;
+        var endOfLife = false;
+        var normalizedValue = GetInt(row, "value");
+        if (normalizedValue is >= 0 and <= 100)
+        {
+            candidate = NormalizeLifePercent(normalizedValue.Value, attrName);
+            if (candidate == 0 && IsRemainingLifeAttribute(attrName))
+            {
+                endOfLife = true;
+            }
+        }
+        else if (raw is >= 0 and <= 100)
+        {
+            candidate = NormalizeLifePercent((int)raw, attrName);
+        }
+        else if (raw > 0 && normalizedValue is null)
+        {
+            var highByte = (int)((raw >> 16) & 0xFF);
+            if (highByte is > 0 and <= 100)
+            {
+                candidate = NormalizeLifePercent(highByte, attrName);
+            }
+        }
+
+        if (candidate is not int life)
+        {
+            return;
+        }
+
+        if (endOfLife)
+        {
+            snap.SsdLifeEndOfLife = true;
+        }
+
+        snap.SsdLifeRemainingPercent = MergeSsdLifeSnapshot(snap.SsdLifeRemainingPercent, life, snap.SsdLifeEndOfLife);
+    }
+
+    private static bool IsRemainingLifeAttribute(string attrName)
+    {
+        var n = attrName.Trim().ToUpperInvariant();
+        return n.Contains("LIFE_LEFT", StringComparison.Ordinal) ||
+               n.Contains("MEDIA_WEAROUT", StringComparison.Ordinal) ||
+               n.Contains("WEAROUT", StringComparison.Ordinal);
+    }
+
+    private static int? MergeSsdLifeSnapshot(int? current, int incoming, bool incomingEndOfLife) =>
+        DiskTelemetryRules.MergeSsdLifeRemainingPercent(current, incoming, incomingEndOfLife);
+
     private static int NormalizeLifePercent(int rawPercent, string attrName)
     {
         var normalizedName = attrName.Trim().ToUpperInvariant();
@@ -544,6 +628,14 @@ public sealed class SmartCtlLowLevelReader
         public int PendingSectors { get; set; }
         public int UncorrectableErrors { get; set; }
         public int? SsdLifeRemainingPercent { get; set; }
+
+        public bool SsdLifeEndOfLife { get; set; }
+
+        public bool? SmartPassed { get; set; }
+
+        public int? NvmeCriticalWarning { get; set; }
+
+        public int? VendorHealthPercent { get; set; }
     }
 
     public sealed record ReadResult(

@@ -1,0 +1,17 @@
+{
+  "description": "Required OInt/Melezh paths relative to bundle or {app}\\melezh",
+  "requiredFiles": [
+    "bin\\melezh.bat",
+    "lib\\oint\\bin\\oscript.exe"
+  ],
+  "requiredDirectories": [
+    "lib\\oint",
+    "share\\oint\\lib\\oint-cli"
+  ],
+  "installRootFiles": [
+    "melezh-host\\AriaSignature.MelezhHost.exe",
+    "service\\AriaSignature.Service.exe",
+    "service\\AriaSignature.Api.exe",
+    "ui\\AriaSignature.UI.exe"
+  ]
+}

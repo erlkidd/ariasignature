@@ -13,6 +13,7 @@
     <Project Path="src/tools/AriaSignature.ServiceBootstrap/AriaSignature.ServiceBootstrap.csproj" />
   </Folder>
   <Folder Name="/src/service/">
+    <Project Path="src/service/AriaSignature.MelezhHost/AriaSignature.MelezhHost.csproj" />
     <Project Path="src/service/AriaSignature.Service/AriaSignature.Service.csproj" />
   </Folder>
   <Folder Name="/src/ui/">

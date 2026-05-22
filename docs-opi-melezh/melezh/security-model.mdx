@@ -1,0 +1,21 @@
+# Security Model
+
+## RU
+
+Базовые принципы:
+
+- не публикуй секреты в query/body клиента
+- задавай критичные аргументы как default + strict
+- ротируй ключи обработчиков (`UpdateHandlersKey`)
+- ограничивай список доступных методов
+- регулярно проверяй логи аномальных запросов
+
+## EN
+
+Baseline principles:
+
+- never expose secrets in client query/body
+- store critical values as default + strict arguments
+- rotate handler keys (`UpdateHandlersKey`)
+- restrict the allowed method set
+- review logs for abnormal request patterns

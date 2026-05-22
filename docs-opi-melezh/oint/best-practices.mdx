@@ -1,0 +1,17 @@
+# Best Practices
+
+## RU
+
+- Проектируй интеграции по принципу "малый шаг -> проверка -> расширение".
+- Разделяй auth-слой и бизнес-вызовы.
+- Фиксируй контракт ответа (поля, коды, ошибки).
+- Делай retry только для идемпотентных операций.
+- Держи примеры короткими и воспроизводимыми.
+
+## EN
+
+- Build integrations incrementally: small step, verify, then expand.
+- Separate authentication setup from business calls.
+- Define response contract (fields, status, error shape).
+- Retry only idempotent operations.
+- Keep examples short and reproducible.

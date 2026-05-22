@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace AriaSignature.UI.Services;
 
 /// <summary>
-/// Автозапуск панели: HKCU Run + ярлык shell:startup с --tray. Тип запуска службы задаётся при установке.
+/// Автозапуск панели: HKCU Run + ярлык shell:startup. Тип запуска служб — через <see cref="WindowsServicesAutostartCoordinator"/>.
 /// </summary>
 public static class WindowsServiceAutostartConfigurator
 {
@@ -14,9 +14,6 @@ public static class WindowsServiceAutostartConfigurator
         "AriaSignature",
         ".autostart-default-once");
 
-    /// <summary>
-    /// После установки без ярлыка в Startup: один раз включить автозапуск, если пользователь ещё ничего не настроил.
-    /// </summary>
     public static void EnsureDefaultAutostartApplied(StartupRegistrationService startup)
     {
         try
@@ -46,37 +43,18 @@ public static class WindowsServiceAutostartConfigurator
         }
     }
 
-    /// <summary>
-    /// Служба настроена на старт при загрузке ОС (тип «Автоматически» в оснастке служб).
-    /// </summary>
-    public static bool IsBootStartAutomatic()
-    {
-        try
-        {
-            using var sc = new ServiceController(WindowsServiceEnsure.ServiceName);
-            sc.Refresh();
-            return sc.StartType == ServiceStartMode.Automatic;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    public static bool IsBootStartAutomatic() => WindowsServicesAutostartCoordinator.IsMainServiceBootAutomatic();
 
-    /// <summary>
-    /// Включает или выключает автозапуск панели (реестр + ярлык автозагрузки). Без UAC.
-    /// </summary>
     public static void ApplyAutostart(bool enabled, StartupRegistrationService startup) =>
         startup.SetEnabled(enabled);
 
-    /// <summary>
-    /// JSON для WebView2: чекбокс по факту HKCU Run / ярлыка; <c>serviceBootAuto</c> — диагностика службы.
-    /// </summary>
     public static string SerializeAutostartWebMessage(StartupRegistrationService startup) =>
         JsonSerializer.Serialize(new
         {
             action = "autostart",
             enabled = startup.IsEnabled(),
-            serviceBootAuto = IsBootStartAutomatic()
+            serviceBootAuto = WindowsServicesAutostartCoordinator.IsMainServiceBootAutomatic(),
+            melezhServiceBootAuto = WindowsServicesAutostartCoordinator.IsMelezhServiceBootAutomatic(),
+            allServicesBootAuto = WindowsServicesAutostartCoordinator.AreAllServicesBootAutomatic()
         });
 }

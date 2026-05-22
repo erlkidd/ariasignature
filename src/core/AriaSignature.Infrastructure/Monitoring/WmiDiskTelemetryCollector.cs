@@ -3,6 +3,7 @@ using System.IO;
 using System.Management;
 using System.Runtime.Versioning;
 using AriaSignature.Application.Abstractions;
+using AriaSignature.Application.Telemetry;
 using AriaSignature.Domain.Entities;
 using AriaSignature.Domain.Enums;
 using Microsoft.Extensions.Logging;
@@ -73,10 +74,19 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                         var reallocated = smart.ReallocatedSectors;
                         var pending = smart.PendingSectors;
                         var uncorrectable = smart.UncorrectableErrors;
-                        var ssdLife = smart.SsdLifeRemainingPercent;
-                        var hadTelemetry = HasTelemetrySignal(smart) || smart.PredictFailure;
-                        var health = EstimateHealthPercent(reallocated, pending, uncorrectable, ssdLife, hadTelemetry, smart.PredictFailure);
-                        var status = CalculateStatus(reallocated, pending, uncorrectable, ssdLife);
+                        var ssdLife = DiskTelemetryRules.NormalizeSsdLifeRemainingPercent(
+                            smart.SsdLifeRemainingPercent,
+                            smart.SsdLifeEndOfLife);
+                        var wearConfirmed = smart.SsdLifeEndOfLife || ssdLife is > 0;
+                        var hadTelemetry = DiskTelemetryRules.HasMeaningfulTelemetrySignal(
+                            smart.TemperatureCelsius,
+                            smart.PowerOnHours,
+                            reallocated,
+                            pending,
+                            uncorrectable,
+                            ssdLife,
+                            wearConfirmed) || smart.PredictFailure;
+                        var assessment = AssessDiskHealth(smart, ssdLife, smartCtlUsed, storageUsed, wmiUsed);
 
                         disks.Add(new Disk
                         {
@@ -84,12 +94,18 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                             Model = model,
                             Serial = serial,
                             Interface = iface,
-                            MediaType = ResolveMediaType(mediaType, physicalIndex, iface, model, storageMediaType),
+                            MediaType = DiskTelemetryRules.NormalizeMediaType(
+                                mediaType,
+                                physicalIndex,
+                                iface,
+                                model,
+                                storageMediaType),
                             SizeTotalBytes = diskCapacity.total > 0 ? diskCapacity.total : size,
                             SizeFreeBytes = diskCapacity.free,
                             SsdLifeRemainingPercent = ssdLife,
                             TemperatureCelsius = smart.TemperatureCelsius,
-                            HealthPercent = health,
+                            HealthPercent = assessment.HealthPercent,
+                            HealthSummary = assessment.HealthSummary,
                             PowerOnHours = smart.PowerOnHours,
                             PowerCycleCount = smart.PowerCycleCount,
                             ReallocatedSectors = reallocated,
@@ -98,7 +114,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                             SmartCtlUsed = smartCtlUsed,
                             WmiUsed = wmiUsed,
                             StorageReliabilityUsed = storageUsed,
-                            TelemetryConfidence = ComputeTelemetryConfidence(smartCtlUsed, storageUsed, wmiUsed, hadTelemetry),
+                            TelemetryConfidence = assessment.TelemetryConfidence,
                             TelemetryDegradationReason = BuildTelemetryDegradationReason(
                                 smartCtlUsed,
                                 storageUsed,
@@ -108,7 +124,7 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                                 physicalIndex,
                                 model,
                                 serial),
-                            Status = status,
+                            Status = assessment.Status,
                             UpdatedAtUtc = DateTimeOffset.UtcNow
                         });
                     }
@@ -179,10 +195,11 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                     var reallocated = smart.ReallocatedSectors;
                     var pending = smart.PendingSectors;
                     var uncorrectable = smart.UncorrectableErrors;
-                    var ssdLife = smart.SsdLifeRemainingPercent;
+                    var ssdLife = DiskTelemetryRules.NormalizeSsdLifeRemainingPercent(
+                        smart.SsdLifeRemainingPercent,
+                        smart.SsdLifeEndOfLife);
                     var hadTelemetry = HasTelemetrySignal(smart) || smart.PredictFailure;
-                    var health = EstimateHealthPercent(reallocated, pending, uncorrectable, ssdLife, hadTelemetry, smart.PredictFailure);
-                    var status = CalculateStatus(reallocated, pending, uncorrectable, ssdLife);
+                    var assessment = AssessDiskHealth(smart, ssdLife, false, false, HasTelemetrySignal(smart));
 
                     disks.Add(new Disk
                     {
@@ -195,7 +212,8 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                         SizeFreeBytes = drive.AvailableFreeSpace,
                         SsdLifeRemainingPercent = ssdLife,
                         TemperatureCelsius = smart.TemperatureCelsius,
-                        HealthPercent = health,
+                        HealthPercent = assessment.HealthPercent,
+                        HealthSummary = assessment.HealthSummary,
                         PowerOnHours = smart.PowerOnHours,
                         PowerCycleCount = smart.PowerCycleCount,
                         ReallocatedSectors = reallocated,
@@ -204,11 +222,11 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                         SmartCtlUsed = false,
                         WmiUsed = HasTelemetrySignal(smart),
                         StorageReliabilityUsed = false,
-                        TelemetryConfidence = HasTelemetrySignal(smart) ? 45 : 10,
+                        TelemetryConfidence = assessment.TelemetryConfidence,
                         TelemetryDegradationReason = HasTelemetrySignal(smart)
                             ? "Данные получены из WMI fallback."
                             : "SMART недоступен в fallback-режиме.",
-                        Status = status,
+                        Status = assessment.Status,
                         UpdatedAtUtc = DateTimeOffset.UtcNow
                     });
                 }
@@ -268,12 +286,17 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                     }
 
                     var wear = TryGetUInt16(row["Wear"]);
-                    if (wear is ushort wWear && wWear is > 0 and <= 100)
+                    if (wear is ushort wWear && wWear > 0 && wWear <= 100)
                     {
                         var remaining = (int)Math.Clamp(100 - wWear, 0, 100);
-                        agg.SsdLifeRemainingPercent = agg.SsdLifeRemainingPercent is int prev
-                            ? Math.Min(prev, remaining)
-                            : remaining;
+                        var eol = wWear >= 100;
+                        agg.SsdLifeRemainingPercent = MergeSmartLife(
+                            agg.SsdLifeRemainingPercent,
+                            remaining,
+                            eol,
+                            agg.SsdLifeEndOfLife,
+                            out var mergedEol);
+                        agg.SsdLifeEndOfLife = mergedEol;
                     }
 
                     var temp = TryGetUInt16(row["Temperature"]);
@@ -401,10 +424,21 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             ReallocatedSectors = Math.Max(a.ReallocatedSectors, b.ReallocatedSectors),
             PendingSectors = Math.Max(a.PendingSectors, b.PendingSectors),
             UncorrectableErrors = Math.Max(a.UncorrectableErrors, b.UncorrectableErrors),
-            SsdLifeRemainingPercent = a.SsdLifeRemainingPercent is int la && b.SsdLifeRemainingPercent is int lb
-                ? Math.Min(la, lb)
-                : a.SsdLifeRemainingPercent ?? b.SsdLifeRemainingPercent,
-            PredictFailure = a.PredictFailure || b.PredictFailure
+            SsdLifeRemainingPercent = MergeSmartLife(
+                a.SsdLifeRemainingPercent,
+                b.SsdLifeRemainingPercent,
+                b.SsdLifeEndOfLife,
+                a.SsdLifeEndOfLife,
+                out var eol),
+            SsdLifeEndOfLife = eol,
+            PredictFailure = a.PredictFailure || b.PredictFailure,
+            SmartPassed = a.SmartPassed == false || b.SmartPassed == false ? false : a.SmartPassed ?? b.SmartPassed,
+            NvmeCriticalWarning = a.NvmeCriticalWarning is int ncwa && b.NvmeCriticalWarning is int ncwb
+                ? Math.Max(ncwa, ncwb)
+                : a.NvmeCriticalWarning ?? b.NvmeCriticalWarning,
+            VendorHealthPercent = a.VendorHealthPercent is int vha && b.VendorHealthPercent is int vhb
+                ? Math.Max(vha, vhb)
+                : a.VendorHealthPercent ?? b.VendorHealthPercent
         };
 
     private static bool HasTelemetrySignal(SmartAttributes s) =>
@@ -431,11 +465,15 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             used = true;
         }
 
-        if (extra.SsdLifeRemainingPercent is int storageLife)
+        if (extra.SsdLifeRemainingPercent is int storageLife || extra.SsdLifeEndOfLife)
         {
-            target.SsdLifeRemainingPercent = target.SsdLifeRemainingPercent is int smartLife
-                ? Math.Min(smartLife, storageLife)
-                : storageLife;
+            target.SsdLifeRemainingPercent = MergeSmartLife(
+                target.SsdLifeRemainingPercent,
+                extra.SsdLifeRemainingPercent,
+                extra.SsdLifeEndOfLife,
+                target.SsdLifeEndOfLife,
+                out var mergedEol);
+            target.SsdLifeEndOfLife = mergedEol;
             used = true;
         }
 
@@ -499,14 +537,46 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         target.PendingSectors = Math.Max(target.PendingSectors, src.PendingSectors);
         target.UncorrectableErrors = Math.Max(target.UncorrectableErrors, src.UncorrectableErrors);
 
-        if (src.SsdLifeRemainingPercent is int life)
+        if (src.SsdLifeRemainingPercent is int life || src.SsdLifeEndOfLife)
         {
-            target.SsdLifeRemainingPercent = target.SsdLifeRemainingPercent is int existing
-                ? Math.Min(existing, life)
-                : life;
+            target.SsdLifeRemainingPercent = MergeSmartLife(
+                target.SsdLifeRemainingPercent,
+                src.SsdLifeRemainingPercent,
+                src.SsdLifeEndOfLife,
+                target.SsdLifeEndOfLife,
+                out var mergedEol);
+            target.SsdLifeEndOfLife = mergedEol;
+        }
+
+        if (src.SmartPassed is bool passed)
+        {
+            target.SmartPassed = target.SmartPassed == false ? false : passed;
+        }
+
+        if (src.NvmeCriticalWarning is int cw)
+        {
+            target.NvmeCriticalWarning = Math.Max(target.NvmeCriticalWarning ?? 0, cw);
+        }
+
+        if (src.VendorHealthPercent is int vendor)
+        {
+            target.VendorHealthPercent = target.VendorHealthPercent is int v
+                ? Math.Max(v, vendor)
+                : vendor;
         }
 
         return true;
+    }
+
+    private static int? MergeSmartLife(
+        int? current,
+        int? incoming,
+        bool incomingEndOfLife,
+        bool currentEndOfLife,
+        out bool mergedEndOfLife)
+    {
+        mergedEndOfLife = currentEndOfLife || incomingEndOfLife;
+        return DiskTelemetryRules.MergeSsdLifeRemainingPercent(current, incoming, mergedEndOfLife && incoming is 0);
     }
 
     private static SmartCtlLowLevelReader.Snapshot? FindBestSmartCtlSnapshot(
@@ -597,7 +667,11 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
             PendingSectors = s.PendingSectors,
             UncorrectableErrors = s.UncorrectableErrors,
             SsdLifeRemainingPercent = s.SsdLifeRemainingPercent,
-            PredictFailure = s.PredictFailure
+            SsdLifeEndOfLife = s.SsdLifeEndOfLife,
+            PredictFailure = s.PredictFailure,
+            SmartPassed = s.SmartPassed,
+            NvmeCriticalWarning = s.NvmeCriticalWarning,
+            VendorHealthPercent = s.VendorHealthPercent
         };
 
     /// <summary>Ищет номер физического диска в строке (DeviceID Win32 или ObjectId Storage WMI).</summary>
@@ -876,19 +950,44 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
                     attributes.UncorrectableErrors = (int)raw;
                     break;
                 case 231:
-                    attributes.SsdLifeRemainingPercent = (int)Math.Clamp(raw & 0xFF, 0, 100);
-                    break;
-                case 233:
-                    if (attributes.SsdLifeRemainingPercent is null)
+                {
+                    var lifeLeft = (int)Math.Clamp(raw & 0xFF, 0, 100);
+                    if (lifeLeft > 0)
                     {
-                        var wear = (int)Math.Clamp((raw >> 16) & 0xFF, 0, 100);
-                        if (wear > 0)
-                        {
-                            attributes.SsdLifeRemainingPercent = wear;
-                        }
+                        attributes.SsdLifeRemainingPercent = MergeSmartLife(
+                            attributes.SsdLifeRemainingPercent,
+                            lifeLeft,
+                            false,
+                            attributes.SsdLifeEndOfLife,
+                            out var eol231);
+                        attributes.SsdLifeEndOfLife = eol231;
+                    }
+                    else if (lifeLeft == 0 && raw > 0 && raw <= 100)
+                    {
+                        attributes.SsdLifeEndOfLife = true;
+                        attributes.SsdLifeRemainingPercent = 0;
                     }
 
                     break;
+                }
+
+                case 233:
+                {
+                    var wearUsed = (int)Math.Clamp((raw >> 16) & 0xFF, 0, 100);
+                    if (wearUsed > 0 && wearUsed <= 100)
+                    {
+                        var remaining = Math.Clamp(100 - wearUsed, 0, 100);
+                        attributes.SsdLifeRemainingPercent = MergeSmartLife(
+                            attributes.SsdLifeRemainingPercent,
+                            remaining,
+                            wearUsed >= 100,
+                            attributes.SsdLifeEndOfLife,
+                            out var eol233);
+                        attributes.SsdLifeEndOfLife = eol233;
+                    }
+
+                    break;
+                }
             }
         }
 
@@ -1004,38 +1103,27 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         return normalized[..maxLen] + "...";
     }
 
-    private static int EstimateHealth(int reallocated, int pending, int uncorrectable, int? ssdLife)
-    {
-        var penalty = Math.Min(reallocated, 20) + (pending * 4) + (uncorrectable * 10);
-        var baseHealth = Math.Clamp(100 - penalty, 0, 100);
-        if (ssdLife is int life)
-        {
-            baseHealth = Math.Min(baseHealth, life);
-        }
-
-        return baseHealth;
-    }
-
-    private static int? EstimateHealthPercent(
-        int reallocated,
-        int pending,
-        int uncorrectable,
+    private static DiskHealthEngine.Assessment AssessDiskHealth(
+        SmartAttributes smart,
         int? ssdLife,
-        bool hadTelemetrySignal,
-        bool predictFailure)
-    {
-        if (predictFailure)
-        {
-            return Math.Clamp(EstimateHealth(reallocated, pending, uncorrectable, ssdLife), 0, 35);
-        }
-
-        if (!hadTelemetrySignal)
-        {
-            return null;
-        }
-
-        return EstimateHealth(reallocated, pending, uncorrectable, ssdLife);
-    }
+        bool smartCtlUsed,
+        bool storageUsed,
+        bool wmiUsed) =>
+        DiskHealthEngine.Compute(new DiskHealthInput(
+            ssdLife,
+            smart.SsdLifeEndOfLife,
+            smart.TemperatureCelsius,
+            smart.PowerOnHours,
+            smart.ReallocatedSectors,
+            smart.PendingSectors,
+            smart.UncorrectableErrors,
+            smart.PredictFailure,
+            smart.SmartPassed,
+            smart.NvmeCriticalWarning,
+            smart.VendorHealthPercent,
+            smartCtlUsed,
+            storageUsed,
+            wmiUsed));
 
     private static string ResolveMediaType(
         string sourceMediaType,
@@ -1144,6 +1232,13 @@ public sealed class WmiDiskTelemetryCollector : IDiskTelemetryCollector
         public int PendingSectors { get; set; }
         public int UncorrectableErrors { get; set; }
         public int? SsdLifeRemainingPercent { get; set; }
+        public bool SsdLifeEndOfLife { get; set; }
         public bool PredictFailure { get; set; }
+
+        public bool? SmartPassed { get; set; }
+
+        public int? NvmeCriticalWarning { get; set; }
+
+        public int? VendorHealthPercent { get; set; }
     }
 }

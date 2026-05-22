@@ -1,0 +1,52 @@
+# Installation and First Start
+
+## RU
+
+### Установка
+
+Поддерживаются installer/packages/OPM/docker сценарии (в зависимости от окружения).
+
+### Минимальный старт
+
+Для OInt 2.0 / Melezh 0.12+ в **командной строке** используются русские имена методов (`МетодПоиска` в `app.os`):
+
+```powershell
+melezh СоздатьПроект --path C:\temp\demo.melezh
+melezh ЗапуститьПроект --port 7788 --proj C:\temp\demo.melezh
+```
+
+Эквивалент через `oscript.exe`:
+
+```powershell
+& "{OInt}\lib\oint\bin\oscript.exe" "{OInt}\share\oint\lib\melezh\core\Classes\app.os" СоздатьПроект --path C:\temp\demo.melezh
+& "{OInt}\lib\oint\bin\oscript.exe" "{OInt}\share\oint\lib\melezh\core\Classes\app.os" ЗапуститьПроект --port 7788 --proj C:\temp\demo.melezh
+```
+
+> **Примечание:** `CreateProject` / `RunProject` в документации IntegrationProxy — английские **экспорты API**, не имена CLI. Вызов `CreateProject --path ...` из cmd завершится ошибкой парсера (код 99).
+
+Далее проверь:
+
+- API endpoint: `http://localhost:7788/<handler>`
+- Web UI: `http://localhost:7788/ui`
+
+## EN
+
+### Installation
+
+Installer/package/OPM/docker options are supported by environment.
+
+### Minimal startup
+
+For OInt 2.0 / Melezh 0.12+, the CLI expects **Russian** method names:
+
+```powershell
+melezh СоздатьПроект --path C:\temp\demo.melezh
+melezh ЗапуститьПроект --port 7788 --proj C:\temp\demo.melezh
+```
+
+> **Note:** English `CreateProject` / `RunProject` are IntegrationProxy export names, not CLI tokens. Using `CreateProject --path ...` fails with parser exit code 99.
+
+Then verify:
+
+- API endpoint: `http://localhost:7788/<handler>`
+- Web UI: `http://localhost:7788/ui`

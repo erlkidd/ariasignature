@@ -166,8 +166,10 @@ public partial class App : System.Windows.Application
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Открыть", null, (_, _) => RestoreMainWindow());
-        menu.Items.Add("Перезапустить службу", null, (_, _) => _ = HandleRestartServiceFromTrayAsync());
-        menu.Items.Add("Остановить службу", null, (_, _) => _ = HandleStopServiceFromTrayAsync());
+        menu.Items.Add("Перезапустить службу AriaSignature", null, (_, _) => _ = HandleRestartServiceFromTrayAsync());
+        menu.Items.Add("Остановить службу AriaSignature", null, (_, _) => _ = HandleStopServiceFromTrayAsync());
+        menu.Items.Add("Перезапустить службу Melezh", null, (_, _) => _ = HandleRestartMelezhServiceFromTrayAsync());
+        menu.Items.Add("Остановить службу Melezh", null, (_, _) => _ = HandleStopMelezhServiceFromTrayAsync());
         menu.Items.Add("Выход", null, (_, _) => ExitApplication());
 
         _trayIcon = new Forms.NotifyIcon
@@ -251,29 +253,45 @@ public partial class App : System.Windows.Application
         Shutdown();
     }
 
-    private async Task HandleStopServiceFromTrayAsync()
+    private Task HandleStopServiceFromTrayAsync() =>
+        HandleStopServiceFromTrayAsync(WindowsServiceEnsure.ServiceName, "stop-aria-service");
+
+    private Task HandleRestartServiceFromTrayAsync() =>
+        HandleRestartServiceFromTrayAsync(WindowsServiceEnsure.ServiceName, "restart-aria-service");
+
+    private Task HandleStopMelezhServiceFromTrayAsync() =>
+        HandleStopServiceFromTrayAsync(WindowsServicesAutostartCoordinator.MelezhServiceName, "stop-melezh-service");
+
+    private Task HandleRestartMelezhServiceFromTrayAsync() =>
+        HandleRestartServiceFromTrayAsync(WindowsServicesAutostartCoordinator.MelezhServiceName, "restart-melezh-service");
+
+    private async Task HandleStopServiceFromTrayAsync(string serviceName, string logAction)
     {
         var ok = await Task.Run(() =>
-            WindowsServiceEnsure.TryStopServiceWithElevation(TimeSpan.FromSeconds(45), out var warning)
+            WindowsServiceEnsure.TryStopServiceWithElevation(serviceName, TimeSpan.FromSeconds(45), out var warning)
                 ? (Success: true, Warning: (string?)null)
                 : (Success: false, Warning: warning));
 
         if (!ok.Success && !string.IsNullOrWhiteSpace(ok.Warning))
         {
-            AppendTrayActionLog("stop-service", ok.Warning!);
+            AppendTrayActionLog(logAction, ok.Warning!);
         }
     }
 
-    private async Task HandleRestartServiceFromTrayAsync()
+    private async Task HandleRestartServiceFromTrayAsync(string serviceName, string logAction)
     {
         var result = await Task.Run(() =>
-            WindowsServiceEnsure.TryRestartServiceWithElevation(TimeSpan.FromSeconds(45), TimeSpan.FromSeconds(60), out var warning)
+            WindowsServiceEnsure.TryRestartServiceWithElevation(
+                serviceName,
+                TimeSpan.FromSeconds(45),
+                TimeSpan.FromSeconds(60),
+                out var warning)
                 ? (Success: true, Warning: (string?)null)
                 : (Success: false, Warning: warning));
 
         if (!result.Success && !string.IsNullOrWhiteSpace(result.Warning))
         {
-            AppendTrayActionLog("restart-service", result.Warning!);
+            AppendTrayActionLog(logAction, result.Warning!);
         }
     }
 

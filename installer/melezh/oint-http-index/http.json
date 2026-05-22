@@ -1,0 +1,133 @@
+{
+  "module": "OPI_ЗапросыHTTP",
+  "library": "http",
+  "self_depend": true,
+  "dependencies": null,
+  "cli_tool": false,
+  "regions": [
+    {
+      "name": "HTTP",
+      "methods": [
+        "Get",
+        "Head",
+        "Put",
+        "Delete",
+        "PostСТелом",
+        "PatchСТелом",
+        "PutСТелом",
+        "DeleteСТелом"
+      ]
+    }
+  ],
+  "methods": [
+    {
+      "name": "Get",
+      "id": "GET",
+      "description": "HTTP GET request",
+      "params": [
+        {
+          "name": "--url",
+          "types": "Строка",
+          "description": "Request URL",
+          "default": null,
+          "short": "-u"
+        },
+        {
+          "name": "--headers",
+          "types": "Строка",
+          "description": "Additional headers",
+          "default": "",
+          "short": "-h"
+        }
+      ],
+      "region": "HTTP"
+    },
+    {
+      "name": "PostСТелом",
+      "id": "POSTСТЕЛОМ",
+      "description": "HTTP POST with body",
+      "params": [
+        {
+          "name": "--url",
+          "types": "Строка",
+          "description": "Request URL",
+          "default": null,
+          "short": "-u"
+        },
+        {
+          "name": "--data",
+          "types": "Строка",
+          "description": "Request body",
+          "default": "",
+          "short": "-d"
+        },
+        {
+          "name": "--headers",
+          "types": "Строка",
+          "description": "Additional headers",
+          "default": "",
+          "short": "-h"
+        }
+      ],
+      "region": "HTTP"
+    },
+    {
+      "name": "PutСТелом",
+      "id": "PUTСТЕЛОМ",
+      "description": "HTTP PUT with body",
+      "params": [
+        {
+          "name": "--url",
+          "types": "Строка",
+          "description": "Request URL",
+          "default": null,
+          "short": "-u"
+        },
+        {
+          "name": "--data",
+          "types": "Строка",
+          "description": "Request body",
+          "default": "",
+          "short": "-d"
+        },
+        {
+          "name": "--headers",
+          "types": "Строка",
+          "description": "Additional headers",
+          "default": "",
+          "short": "-h"
+        }
+      ],
+      "region": "HTTP"
+    },
+    {
+      "name": "DeleteСТелом",
+      "id": "DELETEСТЕЛОМ",
+      "description": "HTTP DELETE with optional body",
+      "params": [
+        {
+          "name": "--url",
+          "types": "Строка",
+          "description": "Request URL",
+          "default": null,
+          "short": "-u"
+        },
+        {
+          "name": "--data",
+          "types": "Строка",
+          "description": "Request body",
+          "default": "",
+          "short": "-d"
+        },
+        {
+          "name": "--headers",
+          "types": "Строка",
+          "description": "Additional headers",
+          "default": "",
+          "short": "-h"
+        }
+      ],
+      "region": "HTTP"
+    }
+  ]
+}

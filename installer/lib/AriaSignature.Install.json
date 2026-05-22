@@ -1,0 +1,18 @@
+{
+  "mainServiceName": "AriaSignatureService",
+  "melezhServiceName": "AriaSignatureMelezhService",
+  "apiPort": 5160,
+  "melezhPort": 7788,
+  "paths": {
+    "serviceExe": "service\\AriaSignature.Service.exe",
+    "apiExe": "service\\AriaSignature.Api.exe",
+    "uiExe": "ui\\AriaSignature.UI.exe",
+    "bootstrapExe": "ui\\bootstrap\\AriaSignature.ServiceBootstrap.exe",
+    "melezhHostExe": "melezh-host\\AriaSignature.MelezhHost.exe",
+    "melezhBat": "melezh\\bin\\melezh.bat",
+    "oscriptExe": "melezh\\lib\\oint\\bin\\oscript.exe",
+    "melezhShareOint": "melezh\\share\\oint",
+    "smartctlExe": "service\\smartctl\\smartctl.exe",
+    "drivedb": "service\\smartctl\\drivedb.h"
+  }
+}

@@ -89,8 +89,11 @@ public static class WindowsServiceInstaller
 
                 if (createExit == 1073)
                 {
-                    created = true;
-                    break;
+                    Log("sc create returned 1073 (already exists); forcing delete before retry.");
+                    RunScBestEffort(scPath, $"stop {ServiceName}", Log);
+                    RunScBestEffort(scPath, $"delete {ServiceName}", Log);
+                    Thread.Sleep(1500);
+                    continue;
                 }
 
                 if (createExit != 1078)

@@ -676,6 +676,21 @@ label.check {
   font-size: 0.95rem;
 }
 
+.about-melezh {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.about-melezh-logo {
+  display: block;
+  max-width: 420px;
+  width: 100%;
+  height: auto;
+  margin: 0 0 12px;
+  border-radius: 8px;
+}
+
 .service-control-box {
   margin-bottom: 20px;
 }

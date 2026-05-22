@@ -8,6 +8,8 @@
 
 # AriaSignature
 
+**Версия продукта:** 1.1.2
+
 Агент для **Windows**, рассчитанный на партнёров и франчайзи **1С** и на ИТ-службы с распределёнными клиентами. На каждой машине он собирает **диагностику дисков**, выполняет **резервное копирование** файловых баз (`.1CD`) и **Microsoft SQL Server**, и отдаёт всё это через **HTTP API** — чтобы вы могли **опрашивать парк машин с одной центральной точки** (VPN, закрытая сеть) **без постоянного удалённого рабочего стола** на каждый ПК.
 
 Дополнительно, по желанию, агент может **периодически отправлять JSON на ваш сервер** (исходящий `POST` на коллектор) — это второй канал рядом с прямым `GET` по IP агента.
@@ -22,7 +24,7 @@
 ## Зачем это вам
 
 - **Массовый мониторинг:** с вашей станции или скрипта: `http://<IP_клиента_в_VPN>:5160/api/v1/system`, `/disks`, `/backups`, `/backups/logs` — те же данные, что видит локальная панель (вкладка «О системе» соответствует `GET /system`).
-- **Гибкая сеть:** Radmin VPN, корпоративная LAN или другой туннель; на агенте по умолчанию API слушает все интерфейсы, установщик добавляет правило брандмауэра для порта **5160**.
+- **Гибкая сеть:** Radmin VPN, корпоративная LAN или другой туннель; на агенте по умолчанию API слушает все интерфейсы, установщик добавляет правила брандмауэра для портов **5160** (API) и **7788** (Melezh).
 - **Опциональная защита:** общий токен в настройках — для запросов **не с localhost** требуется `Authorization: Bearer` или `X-Aria-Api-Key`; локальная панель на том же ПК заголовки не задаёт.
 
 <p align="center">
@@ -43,7 +45,9 @@
 
 | Компонент | Назначение |
 |-----------|------------|
-| `AriaSignature.Service` | Служба Windows: телеметрия, планировщик архивации, SQLite, хост API (в т.ч. доступ по LAN/VPN). |
+| `AriaSignature.Service` | Служба Windows: телеметрия, планировщик архивации, SQLite, хост API (в т.ч. доступ по LAN/VPN), порт **5160**. |
+| `AriaSignatureMelezhService` | Служба Melezh (OpenIntegrations HTTP gateway), порт **7788** — внешние интеграции для 1С (Telegram, HTTP и др.). |
+| `AriaSignature.MelezhHost` | Windows Service wrapper для `melezh RunProject`. |
 | `AriaSignature.UI` | Панель управления (WPF + WebView2 + React). |
 | `src/web` | Исходники SPA (Vite/React), собираются в `wwwroot` сервиса. |
 
@@ -59,6 +63,8 @@
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | История изменений. |
 | [`docs/INSTALLER.md`](docs/INSTALLER.md), [`docs/RELEASE_GATE.md`](docs/RELEASE_GATE.md) | Сборка установщика и проверки. |
 | [`docs/OPERATIONS_RUNBOOK.md`](docs/OPERATIONS_RUNBOOK.md) | Runbook эксплуатации, triage/recovery, SLO/SLI. |
+| [`docs/MELEZH.md`](docs/MELEZH.md) | Melezh / OpenIntegrations: служба, порты, связка с 1С. |
+| [`docs/MELEZH_HANDLER_CATALOG.md`](docs/MELEZH_HANDLER_CATALOG.md) | Каталог handler keys ↔ API агента (bridge 1.1.1). |
 
 В работающей установке доступен **Swagger**: `http://<хост>:<порт>/swagger`.
 
@@ -92,7 +98,7 @@ SPA перед публикацией сервиса обязательно до
 .\scripts\release-gate.ps1 -Configuration Release
 ```
 
-Артефакт: `artifacts/installer/AriaSignature-Setup.exe`. Бинарники `installer/smartctl/` не входят в Git — их создаёт `release-gate` или их нужно положить вручную (см. [`installer/smartctl/README.md`](installer/smartctl/README.md)).
+Артефакт: `artifacts/installer/AriaSignature-Setup.exe`. Бинарники `installer/smartctl/` и `installer/melezh/` не входят в Git — их создаёт `release-gate` (`prepare-smartctl`, `prepare-melezh`) или их нужно положить вручную (см. [`installer/smartctl/README.md`](installer/smartctl/README.md), [`installer/melezh/README.md`](installer/melezh/README.md)).
 
 ## Ветки и релизы
 
