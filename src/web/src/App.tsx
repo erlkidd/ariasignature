@@ -580,6 +580,7 @@ export default function App() {
   const [autostartMelezhBootAuto, setAutostartMelezhBootAuto] = useState<boolean | null>(null);
   const [autostartAllServicesBootAuto, setAutostartAllServicesBootAuto] = useState<boolean | null>(null);
   const [melezhRepairBusy, setMelezhRepairBusy] = useState(false);
+  const [melezhServiceControlBusy, setMelezhServiceControlBusy] = useState(false);
   const [melezhPushBusy, setMelezhPushBusy] = useState(false);
   const [autostartBusy, setAutostartBusy] = useState(false);
 
@@ -1073,6 +1074,18 @@ export default function App() {
             setStatus("Служба Melezh восстановлена.");
           } else if (typeof data.error === "string" && data.error) {
             setStatus(`Восстановление Melezh: ${data.error}`);
+          }
+        }
+        if (data?.action === "melezhServiceProgress") {
+          setMelezhServiceControlBusy(true);
+        }
+        if (data?.action === "melezhServiceControl") {
+          setMelezhServiceControlBusy(false);
+          void refreshSettings();
+          if (data.ok === true && typeof data.status === "string") {
+            setStatus(`${settings?.melezhServiceName ?? "AriaSignatureMelezhService"}: ${formatWindowsServiceStatus(data.status)}`);
+          } else if (typeof data.error === "string" && data.error) {
+            setStatus(`Melezh: ${data.error}`);
           }
         }
         if (data?.action === "pickedFile" && typeof data.path === "string") {
@@ -2814,7 +2827,8 @@ export default function App() {
             <div className="settings-collapsible-body">
               <div className="box service-control-box">
                 <p className="hint">
-                  HTTP-шлюз на порту <span className="mono">{settings.melezhPort}</span> (интеграции 1С, OInt).
+                  Управление выполняется оболочкой приложения (нужны права администратора). HTTP-шлюз на порту{" "}
+                  <span className="mono">{settings.melezhPort}</span> (интеграции 1С, OInt).
                 </p>
                 <p>
                   <strong>{settings.melezhServiceName}:</strong>{" "}
@@ -2851,6 +2865,9 @@ export default function App() {
                 {melezhRepairBusy ? (
                   <p className="hint">Восстановление службы Melezh…</p>
                 ) : null}
+                {melezhServiceControlBusy ? (
+                  <p className="hint">Управление службой Melezh…</p>
+                ) : null}
                 <div className="row service-control-actions">
                   <button
                     type="button"
@@ -2862,6 +2879,28 @@ export default function App() {
                   >
                     Обновить статус
                   </button>
+                  <button
+                    type="button"
+                    disabled={melezhServiceControlBusy || melezhRepairBusy}
+                    onClick={() => postToHost({ action: "controlMelezhService", command: "start" })}
+                  >
+                    Запуск
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={melezhServiceControlBusy || melezhRepairBusy}
+                    onClick={() => postToHost({ action: "controlMelezhService", command: "stop" })}
+                  >
+                    Остановить
+                  </button>
+                  <button
+                    type="button"
+                    disabled={melezhServiceControlBusy || melezhRepairBusy}
+                    onClick={() => postToHost({ action: "controlMelezhService", command: "restart" })}
+                  >
+                    Перезапуск
+                  </button>
                   <a href={settings.melezhUiUrl} target="_blank" rel="noreferrer" className="secondary">
                     Открыть Web UI
                   </a>
@@ -2869,7 +2908,7 @@ export default function App() {
                     <button
                       type="button"
                       className="secondary"
-                      disabled={melezhRepairBusy}
+                      disabled={melezhRepairBusy || melezhServiceControlBusy}
                       onClick={() => {
                         setMelezhRepairBusy(true);
                         postToHost({ action: "repairMelezh" });

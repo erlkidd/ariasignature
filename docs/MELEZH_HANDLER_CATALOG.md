@@ -1,9 +1,9 @@
-# Melezh handler catalog (AriaSignature API bridge)
+﻿# Melezh handler catalog (AriaSignature API bridge)
 
 Версия документа: 1.1.2
 
 Источник правды в коде: `src/service/AriaSignature.MelezhHost/MelezhAriaApiHandlerCatalog.cs`.  
-При старте `AriaSignatureMelezhService` выполняется идемпотентный bootstrap (`MelezhProjectBootstrap`, schema v2: пересоздание handler при несовпадении `library`/`function`/`method` или устаревшей версии в SQLite).
+При старте `AriaSignatureMelezhService` выполняется идемпотентный bootstrap (`MelezhProjectBootstrap`, schema **v6**: стабильные ключи handler’ов по `rowid` после CLI add, prune GUID-сирот, cron только для static GET).
 
 ## Инварианты
 
@@ -64,7 +64,9 @@
 
 **HTTP на :7788 vs :5160:** клиент вызывает handler на Melezh методом **POST** + `Content-Type: application/json` (тип handler `JSON`). Melezh выполняет OInt `http` с нужным глаголом к API: `PostСТелом` / `PutСТелом` / `DeleteСТелом` → `POST` / `PUT` / `DELETE` на `:5160`. Ошибка `"Method Not Allowed"` у `aria_sync` в Web UI — вызов **GET** вместо POST; у outbound write — устаревший bootstrap (repair v4+).
 
-**Pull cron (bootstrap v5+):** каждый scheduled `aria_get_*` — отдельная секунда (`0`, `4`, `8`, … `36` в шаблоне `N */5 * * * * *`). Repair: `repair-melezh.ps1` или `MelezhHost --bootstrap-only` при `BootstrapVersion` &lt; 5.
+**Pull cron (bootstrap v5+):** каждый scheduled `aria_get_*` — отдельная секунда (`0`, `4`, `8`, … `36` в шаблоне `N */5 * * * * *`).
+
+**Repair v6:** при `BootstrapVersion` &lt; 6 — пересоздание handler’ов с корректным rename (не по `lib/func/method`), удаление GUID-ключей и лишних `scheduler_tasks`. Команды: `repair-melezh.ps1`, `MelezhHost --bootstrap-only`, перезапуск `AriaSignatureMelezhService`.
 
 ## Переменные окружения (bootstrap / host)
 

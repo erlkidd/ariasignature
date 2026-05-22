@@ -68,18 +68,45 @@ try {
 
     $listScript = Join-Path $env:TEMP "melezh-list-handlers.py"
     @'
-import sqlite3, sys
+import sqlite3, sys, re
+catalog = [
+    "aria_ping", "aria_sync",
+    "aria_get_status", "aria_get_health_live", "aria_get_health_ready",
+    "aria_get_health_degradation", "aria_get_observability_runtime", "aria_get_settings",
+    "aria_get_system", "aria_get_disks", "aria_get_backups", "aria_get_backups_logs",
+    "aria_get_disk", "aria_get_disk_smart",
+    "aria_post_backups_test_mssql", "aria_post_disks_refresh", "aria_post_backups",
+    "aria_post_backup_run", "aria_put_settings", "aria_put_backup",
+    "aria_delete_disk_smart", "aria_delete_disks_smart", "aria_delete_backup",
+    "aria_delete_backups_logs",
+]
+scheduled_get = [
+    "aria_get_status", "aria_get_health_live", "aria_get_health_ready",
+    "aria_get_health_degradation", "aria_get_observability_runtime", "aria_get_settings",
+    "aria_get_system", "aria_get_disks", "aria_get_backups", "aria_get_backups_logs",
+]
+guid_re = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 c = sqlite3.connect(sys.argv[1])
-rows = c.execute("select key from handlers").fetchall()
+rows = [r[0] for r in c.execute("select key from handlers").fetchall()]
 sched = c.execute("select handler, cron from scheduler_tasks").fetchall()
 print("handlers", len(rows))
 print("scheduled", len(sched))
-for k in ["aria_sync","aria_get_status","aria_get_disks","aria_put_settings"]:
-    if (k,) not in rows:
+if len(rows) != len(catalog):
+    raise SystemExit("handler count expected %d got %d keys=%s" % (len(catalog), len(rows), rows))
+for k in catalog:
+    if k not in rows:
         raise SystemExit("missing handler " + k)
+for key in rows:
+    if guid_re.match(key):
+        raise SystemExit("orphan GUID handler key: " + key)
 for h, cron in sched:
     if h and not str(h).startswith("aria_get_"):
         raise SystemExit("scheduled non-get handler " + h)
+if len(sched) != len(scheduled_get):
+    raise SystemExit("scheduler count expected %d got %d" % (len(scheduled_get), len(sched)))
+for k in scheduled_get:
+    if (k,) not in [(h,) for h, _ in sched]:
+        raise SystemExit("missing scheduler for " + k)
 secs = []
 for h, cron in sched:
     parts = str(cron).split()
@@ -89,8 +116,8 @@ for h, cron in sched:
 if len(secs) != len(set(secs)):
     raise SystemExit("scheduled pull crons must use distinct second offsets: " + str(sched))
 ver = c.execute("select value from settings where name='AriaSignature:BootstrapVersion'").fetchone()
-if not ver or int(ver[0]) < 5:
-    raise SystemExit("bootstrap version expected >= 5, got " + str(ver))
+if not ver or int(ver[0]) < 6:
+    raise SystemExit("bootstrap version expected >= 6, got " + str(ver))
 '@ | Set-Content -Encoding utf8 $listScript
     python $listScript $proj
     if ($LASTEXITCODE -ne 0) { throw "handler catalog verification failed" }

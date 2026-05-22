@@ -988,6 +988,11 @@ public partial class MainWindow : Window
                 var cmd = cmdEl.GetString();
                 _ = RunWindowsServiceControlAsync(cmd);
             }
+            else if (action == "controlMelezhService" && root.TryGetProperty("command", out var mzCmdEl))
+            {
+                var cmd = mzCmdEl.GetString();
+                _ = RunMelezhServiceControlAsync(cmd);
+            }
             else if (action == "repairMelezh")
             {
                 _ = RunMelezhRepairAsync();
@@ -1106,6 +1111,16 @@ public partial class MainWindow : Window
         });
     }
 
+    private async Task RunMelezhServiceControlAsync(string? cmd)
+    {
+        PostWebMessageJson(new { action = "melezhServiceProgress", command = cmd });
+        var controlPayload = await Task.Run(() => TryControlMelezhService(cmd)).ConfigureAwait(true);
+        await Dispatcher.InvokeAsync(() =>
+        {
+            PostWebMessageJson(controlPayload);
+        });
+    }
+
     private async Task RunMelezhRepairAsync()
     {
         PostWebMessageJson(new { action = "repairMelezhProgress", phase = "start" });
@@ -1139,6 +1154,60 @@ public partial class MainWindow : Window
                 status = "Unknown",
                 error = ex.Message
             };
+        }
+    }
+
+    private static object TryControlMelezhService(string? command)
+    {
+        try
+        {
+            using var sc = new ServiceController(MelezhServiceRepair.ServiceName);
+            switch (command?.ToLowerInvariant())
+            {
+                case "start":
+                    if (sc.Status == ServiceControllerStatus.Stopped)
+                    {
+                        WindowsServiceEnsure.StartServiceAllowingScmTimeout1053(sc, TimeSpan.FromSeconds(90));
+                    }
+
+                    break;
+                case "stop":
+                    if (sc.Status == ServiceControllerStatus.Running)
+                    {
+                        sc.Stop();
+                        sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(90));
+                    }
+
+                    break;
+                case "restart":
+                    if (sc.Status == ServiceControllerStatus.Running)
+                    {
+                        sc.Stop();
+                        sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(90));
+                    }
+
+                    sc.Refresh();
+                    if (sc.Status == ServiceControllerStatus.Stopped)
+                    {
+                        WindowsServiceEnsure.StartServiceAllowingScmTimeout1053(sc, TimeSpan.FromSeconds(90));
+                    }
+
+                    break;
+                default:
+                    return new { action = "melezhServiceControl", ok = false, error = "Неизвестная команда" };
+            }
+
+            sc.Refresh();
+            return new
+            {
+                action = "melezhServiceControl",
+                ok = true,
+                status = NormalizeWindowsServiceStatus(sc.Status.ToString())
+            };
+        }
+        catch (Exception ex)
+        {
+            return new { action = "melezhServiceControl", ok = false, error = ex.Message };
         }
     }
 
