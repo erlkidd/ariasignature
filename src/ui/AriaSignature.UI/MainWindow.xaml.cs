@@ -40,6 +40,32 @@ public partial class MainWindow : Window
     private bool _startupWarmupPrepared;
     private bool _awaitingAppReady;
     private string? _pendingLocalApiNavigation;
+    private DateTime _lastMelezhBootstrapUtc = DateTime.MinValue;
+    private int _melezhWebUiFailStreak;
+    private static readonly TimeSpan StartupMaxWait = TimeSpan.FromMinutes(4);
+    private static readonly TimeSpan MelezhBootstrapCooldown = TimeSpan.FromSeconds(15);
+
+    private sealed class StartupReadinessState
+    {
+        public bool MelezhBundlePresent;
+        public string? BundleError;
+        public bool MelezhRequired = true;
+        public bool AriaServiceRunning;
+        public bool ApiReady;
+        public string? ApiDetail;
+        public bool MelezhServiceRunning;
+        public bool MelezhWebUiOk;
+        public bool MelezhPingOk;
+        public string? MelezhDetail;
+        public int MelezhPort = DefaultMelezhPort;
+
+        public bool IsReady =>
+            MelezhBundlePresent
+            && AriaServiceRunning
+            && ApiReady
+            && (!MelezhRequired
+                || (MelezhServiceRunning && MelezhWebUiOk && MelezhPingOk));
+    }
 
     public MainWindow(App app)
     {
@@ -241,7 +267,7 @@ public partial class MainWindow : Window
         if (_expectStartupLoadingHtml
             && (string.IsNullOrEmpty(uri) || uri.StartsWith("about:", StringComparison.OrdinalIgnoreCase)))
         {
-            ShowLoadingOverlay("Подключение к сервису…", "Ожидаем ответ локального API…");
+            ShowLoadingOverlay("Подготовка служб…", "AriaSignature :5160 и Melezh :7788…");
             TryPostAutostartPayload();
             return;
         }
@@ -334,130 +360,91 @@ public partial class MainWindow : Window
         _startupRetryCts?.Dispose();
         _startupRetryCts = new CancellationTokenSource();
         var token = _startupRetryCts.Token;
-        _recoveryServiceEnsureNotBeforeUtc = DateTime.UtcNow.AddSeconds(38);
-        _recoveryMelezhEnsureNotBeforeUtc = DateTime.UtcNow.AddSeconds(10);
+        var sw = _startupSw ?? Stopwatch.StartNew();
+        var exe = _serviceExePath ?? string.Empty;
         _ = Task.Run(async () =>
         {
-            bool? melezhRequired = null;
-            var melezhPort = DefaultMelezhPort;
-            while (!token.IsCancellationRequested)
+            try
             {
-                var (apiReady, _) = await TryProbeApiOnceAsync(baseUrl).ConfigureAwait(false);
-                var melezhReady = true;
-                if (apiReady)
-                {
-                    if (!melezhRequired.HasValue)
-                    {
-                        var settings = await TryReadMelezhSettingsAsync(baseUrl).ConfigureAwait(false);
-                        melezhRequired = settings.Enabled;
-                        melezhPort = settings.Port;
-                    }
-
-                    if (melezhRequired == true)
-                    {
-                        (melezhReady, _) = await TryProbeMelezhOnceAsync(melezhPort).ConfigureAwait(false);
-                    }
-                }
-
-                var requireMelezhRecovery = melezhRequired == true;
-                if (apiReady && (!requireMelezhRecovery || melezhReady))
-                {
-                    await NavigateToPanelAsync(baseUrl).ConfigureAwait(false);
-                    return;
-                }
-
-                if (apiReady && requireMelezhRecovery && !melezhReady)
-                {
-                    await Task.Run(MelezhServiceRepair.RunBootstrapOnlyBestEffort, token).ConfigureAwait(false);
-                }
-
-                var exePath = _serviceExePath;
-                if (!string.IsNullOrWhiteSpace(exePath)
-                    && DateTime.UtcNow >= _recoveryServiceEnsureNotBeforeUtc)
-                {
-                    var status = TryGetServiceControllerStatus();
-                    if (status == ServiceControllerStatus.Stopped)
-                    {
-                        _recoveryServiceEnsureNotBeforeUtc = DateTime.UtcNow.AddSeconds(38);
-                        await Task.Run(() =>
-                            WindowsServiceEnsure.TryStartOrFallback(exePath, TimeSpan.FromSeconds(30), _serviceBootstrapExePath, out _), token).ConfigureAwait(false);
-                    }
-                }
-
-                if (DateTime.UtcNow >= _recoveryMelezhEnsureNotBeforeUtc)
-                {
-                    _recoveryMelezhEnsureNotBeforeUtc = DateTime.UtcNow.AddSeconds(25);
-                    await Task.Run(TryEnsureMelezhServiceStartedBestEffort, token).ConfigureAwait(false);
-                }
-
-                await Task.Delay(800, token).ConfigureAwait(false);
+                await RunStartupReadinessUntilNavigateOrFailAsync(baseUrl, sw, exe, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // recovery cancelled
             }
         }, token);
     }
 
     private async Task PollUntilReadyAndNavigateAsync(string baseUrl, Stopwatch startupSw, string serviceExePath)
     {
+        using var cts = new CancellationTokenSource();
+        await RunStartupReadinessUntilNavigateOrFailAsync(baseUrl, startupSw, serviceExePath, cts.Token).ConfigureAwait(false);
+    }
+
+    private async Task RunStartupReadinessUntilNavigateOrFailAsync(
+        string baseUrl,
+        Stopwatch startupSw,
+        string serviceExePath,
+        CancellationToken token)
+    {
         var loadStart = DateTime.UtcNow;
         _deferredServiceStartWarning = null;
-        ServiceControllerStatus? cachedAriaStatus = null;
-        ServiceControllerStatus? cachedMelezhStatus = null;
-        var nextStatusPollAt = DateTime.MinValue;
+        _melezhWebUiFailStreak = 0;
         var lastOverlaySecond = -1;
-        bool? melezhRequired = null;
         var melezhPort = DefaultMelezhPort;
+        bool? melezhRequired = null;
         var ensureTask = Task.Run(() =>
         {
             WindowsServiceEnsure.TryStartOrFallback(serviceExePath, TimeSpan.FromSeconds(30), _serviceBootstrapExePath, out var warning);
             _deferredServiceStartWarning = warning;
-        });
-        _ = Task.Run(TryEnsureMelezhServiceStartedBestEffort);
+        }, token);
+        _ = Task.Run(TryEnsureMelezhServiceStartedBestEffort, token);
 
-        while (true)
+        while (!token.IsCancellationRequested)
         {
-            var (apiReady, apiDetail) = await TryProbeApiOnceAsync(baseUrl).ConfigureAwait(false);
-            var melezhReady = true;
-            string? melezhDetail = null;
-
-            if (apiReady)
+            var bundle = ValidateMelezhBundle();
+            if (!bundle.Ok)
             {
-                if (!melezhRequired.HasValue)
+                await Dispatcher.InvokeAsync(() =>
                 {
-                    var settings = await TryReadMelezhSettingsAsync(baseUrl).ConfigureAwait(false);
-                    melezhRequired = settings.Enabled;
-                    melezhPort = settings.Port;
-                }
-
-                if (melezhRequired == true)
-                {
-                    _ = Task.Run(TryEnsureMelezhServiceStartedBestEffort);
-                    (melezhReady, melezhDetail) = await TryProbeMelezhOnceAsync(melezhPort).ConfigureAwait(false);
-                }
+                    _expectStartupLoadingHtml = false;
+                    RenderFallbackPage(
+                        "Компоненты Melezh не найдены",
+                        bundle.Error ?? "Переустановите AriaSignature с полным bundle OInt/Melezh.",
+                        baseUrl,
+                        null,
+                        "bundle-missing");
+                }, DispatcherPriority.Background);
+                return;
             }
 
-            var requireMelezh = melezhRequired == true;
-            if (apiReady && (!requireMelezh || melezhReady))
+            if (!melezhRequired.HasValue)
+            {
+                var settings = await TryReadMelezhSettingsAsync(baseUrl).ConfigureAwait(false);
+                melezhRequired = settings.Enabled;
+                melezhPort = settings.Port;
+            }
+
+            var state = await EvaluateStartupReadinessAsync(baseUrl, melezhPort, melezhRequired == true).ConfigureAwait(false);
+
+            if (state.IsReady)
             {
                 await NavigateToPanelAsync(baseUrl).ConfigureAwait(false);
                 return;
             }
 
-            if (apiReady && requireMelezh && !melezhReady)
-            {
-                _ = Task.Run(MelezhServiceRepair.RunBootstrapOnlyBestEffort);
-            }
+            await ApplyStartupRepairAsync(state, serviceExePath, token).ConfigureAwait(false);
 
             var elapsed = DateTime.UtcNow - loadStart;
-            if (DateTime.UtcNow >= nextStatusPollAt)
-            {
-                (cachedAriaStatus, cachedMelezhStatus) = await Task.Run(() =>
-                    (TryGetServiceControllerStatus(), TryGetMelezhServiceControllerStatus())).ConfigureAwait(false);
-                nextStatusPollAt = DateTime.UtcNow.AddSeconds(2);
-            }
-
+            var ariaStatus = TryGetServiceControllerStatus();
+            var melezhStatus = TryGetMelezhServiceControllerStatus();
             var ensureDone = ensureTask.IsCompleted;
 
-            if (ShouldShowHardStartupFailure(elapsed, cachedAriaStatus, ensureDone, apiReady))
+            if (elapsed >= StartupMaxWait
+                || ShouldShowHardStartupFailure(elapsed, ariaStatus, ensureDone, state.ApiReady))
             {
+                var apiDetail = state.ApiDetail;
+                var melezhDetail = state.MelezhDetail;
                 await Dispatcher.InvokeAsync(() =>
                 {
                     _expectStartupLoadingHtml = false;
@@ -467,18 +454,18 @@ public partial class MainWindow : Window
                     var stage = BuildStartupFailureStage(
                         elapsed,
                         startupSw.Elapsed,
-                        cachedAriaStatus,
-                        cachedMelezhStatus,
+                        ariaStatus,
+                        melezhStatus,
                         ensureDone,
-                        requireMelezh,
+                        state.MelezhRequired,
                         _deferredServiceStartWarning);
                     RenderFallbackPage(
-                        "Локальный сервис не отвечает",
-                        "Ожидается AriaSignatureService (API :5160). Melezh (:7788) не блокирует панель — его можно восстановить в настройках. " +
-                        "После запуска службы интерфейс откроется сам." + warn,
+                        "Службы не готовы к открытию панели",
+                        "Ожидаются AriaSignatureService (API :5160) и AriaSignatureMelezhService (Web UI :7788). " +
+                        "Автовосстановление не завершилось — используйте «Восстановить службу Melezh» в настройках после открытия или переустановите продукт." + warn,
                         baseUrl,
                         null,
-                        apiDetail,
+                        $"API: {apiDetail}; Melezh: {melezhDetail}",
                         stage);
                     StartApiRecoveryLoop(baseUrl);
                 }, DispatcherPriority.Background);
@@ -489,26 +476,19 @@ public partial class MainWindow : Window
             if (sec != lastOverlaySecond)
             {
                 lastOverlaySecond = sec;
-                var (overlayTitle, overlayHint) = BuildStartupOverlayMessage(
-                    sec,
-                    apiReady,
-                    requireMelezh,
-                    melezhReady,
-                    apiDetail,
-                    melezhDetail);
+                var (overlayTitle, overlayHint) = BuildStartupOverlayMessage(sec, state);
                 await Dispatcher.InvokeAsync(() =>
                 {
                     ShowLoadingOverlay(overlayTitle, overlayHint);
                 }, DispatcherPriority.Background);
             }
 
-            await Task.Delay(850).ConfigureAwait(false);
+            await Task.Delay(850, token).ConfigureAwait(false);
         }
     }
 
     private async Task NavigateToPanelAsync(string baseUrl)
     {
-        _ = Task.Run(TryEnsureMelezhServiceStartedBestEffort);
         await Dispatcher.InvokeAsync(() =>
         {
             _expectStartupLoadingHtml = false;
@@ -516,31 +496,188 @@ public partial class MainWindow : Window
         }, DispatcherPriority.Background);
     }
 
-    private static (string Title, string Hint) BuildStartupOverlayMessage(
-        int seconds,
-        bool apiReady,
-        bool melezhRequired,
-        bool melezhReady,
-        string? apiDetail,
-        string? melezhDetail)
+    private static (bool Ok, string? Error) ValidateMelezhBundle()
     {
-        if (!apiReady)
+        var hostExe = Path.GetFullPath(
+            Path.Combine(AppContext.BaseDirectory, "..", "melezh-host", "AriaSignature.MelezhHost.exe"));
+        var melezhBat = Path.GetFullPath(
+            Path.Combine(AppContext.BaseDirectory, "..", "melezh", "bin", "melezh.bat"));
+        if (!File.Exists(hostExe))
+        {
+            return (false, $"Не найден Melezh host: {hostExe}");
+        }
+
+        if (!File.Exists(melezhBat))
+        {
+            return (false, $"Не найден OInt bundle (melezh.bat): {melezhBat}");
+        }
+
+        return (true, null);
+    }
+
+    private async Task<StartupReadinessState> EvaluateStartupReadinessAsync(
+        string baseUrl,
+        int melezhPort,
+        bool melezhRequired)
+    {
+        var bundle = ValidateMelezhBundle();
+        var state = new StartupReadinessState
+        {
+            MelezhBundlePresent = bundle.Ok,
+            BundleError = bundle.Error,
+            MelezhRequired = melezhRequired,
+            MelezhPort = melezhPort,
+        };
+
+        state.AriaServiceRunning = TryGetServiceControllerStatus() == ServiceControllerStatus.Running;
+        (state.ApiReady, state.ApiDetail) = await TryProbeApiOnceAsync(baseUrl).ConfigureAwait(false);
+
+        if (!melezhRequired)
+        {
+            state.MelezhServiceRunning = true;
+            state.MelezhWebUiOk = true;
+            state.MelezhPingOk = true;
+            return state;
+        }
+
+        state.MelezhServiceRunning = TryGetMelezhServiceControllerStatus() == ServiceControllerStatus.Running;
+        (state.MelezhWebUiOk, var webDetail) = await TryProbeMelezhWebUiAsync(melezhPort).ConfigureAwait(false);
+        (state.MelezhPingOk, var pingDetail) = await TryProbeMelezhPingAsync(melezhPort).ConfigureAwait(false);
+        state.MelezhDetail = !state.MelezhWebUiOk
+            ? webDetail
+            : !state.MelezhPingOk
+                ? pingDetail
+                : null;
+        return state;
+    }
+
+    private async Task ApplyStartupRepairAsync(
+        StartupReadinessState state,
+        string serviceExePath,
+        CancellationToken token)
+    {
+        if (!state.AriaServiceRunning || !state.ApiReady)
+        {
+            await Task.Run(() =>
+                WindowsServiceEnsure.TryStartOrFallback(
+                    serviceExePath,
+                    TimeSpan.FromSeconds(30),
+                    _serviceBootstrapExePath,
+                    out _), token).ConfigureAwait(false);
+        }
+
+        if (!state.MelezhRequired)
+        {
+            return;
+        }
+
+        if (!state.MelezhServiceRunning)
+        {
+            await Task.Run(TryEnsureMelezhServiceStartedBestEffort, token).ConfigureAwait(false);
+            return;
+        }
+
+        if (!state.MelezhWebUiOk)
+        {
+            _melezhWebUiFailStreak++;
+            RequestMelezhBootstrapIfDue();
+            if (_melezhWebUiFailStreak >= 24)
+            {
+                await Task.Run(TryRestartMelezhServiceBestEffort, token).ConfigureAwait(false);
+                _melezhWebUiFailStreak = 0;
+            }
+
+            return;
+        }
+
+        _melezhWebUiFailStreak = 0;
+
+        if (!state.MelezhPingOk)
+        {
+            RequestMelezhBootstrapIfDue();
+        }
+    }
+
+    private void RequestMelezhBootstrapIfDue()
+    {
+        var now = DateTime.UtcNow;
+        if (now - _lastMelezhBootstrapUtc < MelezhBootstrapCooldown)
+        {
+            return;
+        }
+
+        _lastMelezhBootstrapUtc = now;
+        _ = Task.Run(MelezhServiceRepair.RunBootstrapOnlyBestEffort);
+    }
+
+    private static void TryRestartMelezhServiceBestEffort()
+    {
+        try
+        {
+            using var sc = new ServiceController(MelezhServiceName);
+            sc.Refresh();
+            if (sc.Status == ServiceControllerStatus.Running)
+            {
+                sc.Stop();
+                sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(30));
+            }
+
+            sc.Start();
+            sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(25));
+        }
+        catch
+        {
+            // best-effort
+        }
+    }
+
+    private static (string Title, string Hint) BuildStartupOverlayMessage(int seconds, StartupReadinessState state)
+    {
+        if (!state.AriaServiceRunning)
         {
             return (
                 "Запуск AriaSignature…",
-                $"Поднимается API агента (:5160)… ({seconds} с){FormatProbeSuffix(apiDetail)}");
+                $"Служба AriaSignatureService… ({seconds} с){FormatProbeSuffix(state.ApiDetail)}");
         }
 
-        if (melezhRequired && !melezhReady)
+        if (!state.ApiReady)
+        {
+            return (
+                "Запуск API агента…",
+                $"Ожидаем ответ :5160… ({seconds} с){FormatProbeSuffix(state.ApiDetail)}");
+        }
+
+        if (!state.MelezhRequired)
+        {
+            return (
+                "Подключение к панели…",
+                $"Загружаем интерфейс… ({seconds} с)");
+        }
+
+        if (!state.MelezhServiceRunning)
         {
             return (
                 "Запуск Melezh…",
-                $"Поднимается шлюз OpenIntegrations (:7788)… ({seconds} с){FormatProbeSuffix(melezhDetail)}");
+                $"Служба AriaSignatureMelezhService… ({seconds} с){FormatProbeSuffix(state.MelezhDetail)}");
+        }
+
+        if (!state.MelezhWebUiOk)
+        {
+            return (
+                "Запуск Web UI Melezh…",
+                $"Ожидаем http://127.0.0.1:{state.MelezhPort}/ui … ({seconds} с){FormatProbeSuffix(state.MelezhDetail)}");
+        }
+
+        if (!state.MelezhPingOk)
+        {
+            return (
+                "Настройка handlers Melezh…",
+                $"Bootstrap aria_ping / aria_* … ({seconds} с){FormatProbeSuffix(state.MelezhDetail)}");
         }
 
         return (
             "Подключение к панели…",
-            $"Сервисы готовы, загружаем интерфейс… ({seconds} с)");
+            $"Все службы готовы, загружаем интерфейс… ({seconds} с)");
     }
 
     private static string FormatProbeSuffix(string? detail) =>
@@ -766,46 +903,49 @@ public partial class MainWindow : Window
         }
     }
 
-    private static async Task<(bool Ready, string? Detail)> TryProbeMelezhOnceAsync(int port)
+    private static async Task<(bool Ok, string? Detail)> TryProbeMelezhWebUiAsync(int port)
     {
-        var uris = new[]
+        var uri = $"http://127.0.0.1:{port}/ui";
+        try
         {
-            $"http://127.0.0.1:{port}/ui",
-            $"http://127.0.0.1:{port}/aria_ping",
-        };
-
-        string? lastErr = null;
-        foreach (var uri in uris)
-        {
-            try
+            using var response = await StartupProbeHttp.GetAsync(uri).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode)
             {
-                using var response = await StartupProbeHttp.GetAsync(uri).ConfigureAwait(false);
-                if (!response.IsSuccessStatusCode)
-                {
-                    lastErr = $"{uri} => {(int)response.StatusCode}";
-                    continue;
-                }
-
-                if (uri.EndsWith("/aria_ping", StringComparison.OrdinalIgnoreCase))
-                {
-                    var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                    if (body.Contains("\"result\":false", StringComparison.OrdinalIgnoreCase)
-                        || body.Contains("\"result\": false", StringComparison.OrdinalIgnoreCase))
-                    {
-                        lastErr = "aria_ping result=false";
-                        continue;
-                    }
-                }
-
                 return (true, null);
             }
-            catch (Exception ex)
-            {
-                lastErr = $"{uri}: {ex.Message}";
-            }
-        }
 
-        return (false, lastErr);
+            return (false, $"{uri} => {(int)response.StatusCode}");
+        }
+        catch (Exception ex)
+        {
+            return (false, $"{uri}: {ex.Message}");
+        }
+    }
+
+    private static async Task<(bool Ok, string? Detail)> TryProbeMelezhPingAsync(int port)
+    {
+        var uri = $"http://127.0.0.1:{port}/aria_ping";
+        try
+        {
+            using var response = await StartupProbeHttp.GetAsync(uri).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return (false, $"{uri} => {(int)response.StatusCode}");
+            }
+
+            var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            if (body.Contains("\"result\":false", StringComparison.OrdinalIgnoreCase)
+                || body.Contains("\"result\": false", StringComparison.OrdinalIgnoreCase))
+            {
+                return (false, "aria_ping result=false (нужен bootstrap)");
+            }
+
+            return (true, null);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"{uri}: {ex.Message}");
+        }
     }
 
     private static ServiceControllerStatus? TryGetMelezhServiceControllerStatus()
@@ -854,7 +994,7 @@ public partial class MainWindow : Window
         }
 
         _expectStartupLoadingHtml = true;
-        ShowLoadingOverlay("Подключение к сервису…", "Ожидаем ответ локального API…");
+        ShowLoadingOverlay("Подготовка служб…", "AriaSignature :5160 и Melezh :7788…");
 
         const string html =
             "<!DOCTYPE html><html lang=\"ru\"><head><meta charset=\"utf-8\"/><title>AriaSignature</title>" +
@@ -863,7 +1003,7 @@ public partial class MainWindow : Window
             "animation:a 0.9s linear infinite;vertical-align:middle;margin-right:12px}" +
             "@keyframes a{to{transform:rotate(360deg)}} .muted{color:#bcc3d4;font-size:15px;margin-top:16px}</style></head><body>" +
             "<p><span class=\"spin\"></span>Загрузка панели…</p>" +
-            "<p class=\"muted\">Подключение к локальному сервису AriaSignature.</p>" +
+            "<p class=\"muted\">Подготовка AriaSignature и Melezh (службы, API :5160, Web UI :7788).</p>" +
             "</body></html>";
         Browser.CoreWebView2.NavigateToString(html);
     }

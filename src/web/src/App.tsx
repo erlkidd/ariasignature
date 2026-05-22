@@ -963,18 +963,6 @@ export default function App() {
     const initialLoad = async () => {
       try {
         await Promise.all([refreshSettings(), refreshServiceVersion()]);
-        let s = await apiGet<SettingsDto>("/settings");
-        const melezhOn = s.melezhEnabled !== false;
-        if (melezhOn) {
-          for (let attempt = 0; attempt < 12; attempt++) {
-            s = await apiGet<SettingsDto>("/settings");
-            if (s.melezhServiceStatus === "Running" && s.melezhRunning) {
-              break;
-            }
-            await new Promise((r) => window.setTimeout(r, 2500));
-          }
-          await refreshSettings();
-        }
       } catch (e) {
         showErr(e);
       } finally {
