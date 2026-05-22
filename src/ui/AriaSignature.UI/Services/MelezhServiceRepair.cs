@@ -96,7 +96,49 @@ public static class MelezhServiceRepair
             return;
         }
 
+        TryRunBootstrapOnlyQuiesced(hostExe);
+    }
+
+    private static void TryRunBootstrapOnlyQuiesced(string hostExe)
+    {
+        var restartAfter = false;
+        try
+        {
+            using var sc = new ServiceController(ServiceName);
+            sc.Refresh();
+            if (sc.Status == ServiceControllerStatus.Running)
+            {
+                restartAfter = true;
+                sc.Stop();
+                sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(45));
+            }
+        }
+        catch
+        {
+            // service may be absent during first install
+        }
+
         TryRunBootstrapOnly(hostExe);
+
+        if (!restartAfter)
+        {
+            return;
+        }
+
+        try
+        {
+            using var sc = new ServiceController(ServiceName);
+            sc.Refresh();
+            if (sc.Status == ServiceControllerStatus.Stopped)
+            {
+                sc.Start();
+                sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(45));
+            }
+        }
+        catch
+        {
+            // best-effort
+        }
     }
 
     private static void TryRunBootstrapOnly(string hostExe)

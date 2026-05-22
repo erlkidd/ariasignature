@@ -86,17 +86,18 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 & sc.exe description $ServiceName "OpenIntegrations Melezh HTTP gateway for AriaSignature" | Out-Null
-Write-RepairLog "Starting $ServiceName"
-& sc.exe start $ServiceName | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw "[repair-melezh] sc start failed with exit code $LASTEXITCODE"
-}
 
-Write-RepairLog "Rebuilding Melezh handler catalog (bootstrap-only)"
+Write-RepairLog "Rebuilding Melezh handler catalog (bootstrap-only, service stopped)"
 $bootstrapOut = & $hostExe --bootstrap-only 2>&1
 $bootstrapOut | ForEach-Object { Write-RepairLog $_ }
 if ($LASTEXITCODE -ne 0) {
     throw "[repair-melezh] MelezhHost --bootstrap-only failed with exit code $LASTEXITCODE"
+}
+
+Write-RepairLog "Starting $ServiceName"
+& sc.exe start $ServiceName | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "[repair-melezh] sc start failed with exit code $LASTEXITCODE"
 }
 
 $needsRestart = $false

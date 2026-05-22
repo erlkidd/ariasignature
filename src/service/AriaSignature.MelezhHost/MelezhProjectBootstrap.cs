@@ -29,19 +29,23 @@ public static class MelezhProjectBootstrap
         }
 
         var storedVersion = await GetBootstrapVersionAsync(options.ProjectPath, cancellationToken);
-        var forceRepair = storedVersion < MelezhBootstrapSchema.CurrentVersion;
+        var catalogDrift = await ProjectNeedsCatalogRepairAsync(options.ProjectPath, cancellationToken);
+        var forceRepair = storedVersion < MelezhBootstrapSchema.CurrentVersion || catalogDrift;
+
+        var prunedStart = await PruneOrphanHandlersAsync(options.ProjectPath, logger, cancellationToken);
+        if (prunedStart > 0)
+        {
+            logger.LogInformation("Melezh bootstrap: pruned {Count} orphan handler(s) at start", prunedStart);
+        }
 
         if (forceRepair)
         {
-            var pruned = await PruneOrphanHandlersAsync(options.ProjectPath, logger, cancellationToken);
-            if (pruned > 0)
-            {
-                logger.LogInformation("Melezh bootstrap: pruned {Count} orphan handler(s)", pruned);
-            }
-
             await ClearScheduledTasksForCatalogAsync(options.ProjectPath, cancellationToken);
-            logger.LogInformation("Melezh bootstrap: cleared scheduled pull tasks for repair to v{Version}",
-                MelezhBootstrapSchema.CurrentVersion);
+            logger.LogInformation(
+                "Melezh bootstrap: repair mode (stored v{Stored}, target v{Target}, catalogDrift={Drift})",
+                storedVersion,
+                MelezhBootstrapSchema.CurrentVersion,
+                catalogDrift);
         }
 
         foreach (var def in MelezhAriaApiHandlerCatalog.All)
@@ -135,6 +139,7 @@ public static class MelezhProjectBootstrap
                 MelezhCliCommands.AddRequestsHandlerMethod,
                 exit,
                 def.Key);
+            await PruneHandlersAddedAfterRowIdAsync(options.ProjectPath, maxRowId, logger, cancellationToken);
             return;
         }
 
@@ -145,10 +150,30 @@ public static class MelezhProjectBootstrap
                 "Melezh bootstrap: could not locate new handler row for {Key} after add (maxRowId={MaxRowId})",
                 def.Key,
                 maxRowId);
+            await PruneHandlersAddedAfterRowIdAsync(options.ProjectPath, maxRowId, logger, cancellationToken);
+            return;
+        }
+
+        if (string.Equals(newKey, def.Key, StringComparison.Ordinal))
+        {
+            await ApplyOutboundArgsAsync(options, runCliAsync, def, api, logger, cancellationToken);
+            await ApplyInboundArgsAsync(options, runCliAsync, def, api, logger, cancellationToken);
+            logger.LogInformation("Melezh bootstrap: handler {Key} ready", def.Key);
             return;
         }
 
         await RenameHandlerKeyAsync(options.ProjectPath, newKey, def.Key, cancellationToken);
+        var renamed = await TryGetHandlerRowAsync(options.ProjectPath, def.Key, cancellationToken);
+        if (renamed is null)
+        {
+            logger.LogWarning(
+                "Melezh bootstrap: rename to {Key} failed (left {OldKey}); deleting stale row",
+                def.Key,
+                newKey);
+            await DeleteHandlerAsync(options.ProjectPath, newKey, cancellationToken);
+            await PruneHandlersAddedAfterRowIdAsync(options.ProjectPath, maxRowId, logger, cancellationToken);
+            return;
+        }
 
         await ApplyOutboundArgsAsync(options, runCliAsync, def, api, logger, cancellationToken);
         await ApplyInboundArgsAsync(options, runCliAsync, def, api, logger, cancellationToken);
@@ -291,6 +316,62 @@ public static class MelezhProjectBootstrap
         }
 
         logger.LogInformation("Melezh bootstrap: scheduled task for {Key} cron={Cron}", handlerKey, cron);
+    }
+
+    internal static async Task<bool> ProjectNeedsCatalogRepairAsync(
+        string projectPath,
+        CancellationToken cancellationToken)
+    {
+        var catalogKeys = MelezhAriaApiHandlerCatalog.All
+            .Select(d => d.Key)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var presentCatalog = new HashSet<string>(StringComparer.Ordinal);
+        var hasOrphans = false;
+
+        await using var connection = OpenProject(projectPath);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT key FROM handlers";
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var key = reader.GetString(0);
+            if (catalogKeys.Contains(key))
+            {
+                presentCatalog.Add(key);
+                continue;
+            }
+
+            hasOrphans = true;
+        }
+
+        return hasOrphans || presentCatalog.Count != catalogKeys.Count;
+    }
+
+    private static async Task PruneHandlersAddedAfterRowIdAsync(
+        string projectPath,
+        long maxRowId,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = OpenProject(projectPath);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT key FROM handlers WHERE rowid > $maxRowId";
+        cmd.Parameters.AddWithValue("$maxRowId", maxRowId);
+        var keys = new List<string>();
+        await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                keys.Add(reader.GetString(0));
+            }
+        }
+
+        foreach (var key in keys)
+        {
+            await DeleteHandlerAsync(projectPath, key, cancellationToken);
+            logger.LogDebug("Melezh bootstrap: removed failed-add handler {Key}", key);
+        }
     }
 
     internal static async Task<int> PruneOrphanHandlersAsync(

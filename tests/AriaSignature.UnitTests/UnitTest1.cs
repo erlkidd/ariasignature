@@ -484,9 +484,9 @@ public class MelezhPullCronScheduleTests
 public class MelezhBootstrapSchemaTests
 {
     [Fact]
-    public void CurrentVersion_IsSix()
+    public void CurrentVersion_IsSeven()
     {
-        Assert.Equal(6, MelezhBootstrapSchema.CurrentVersion);
+        Assert.Equal(7, MelezhBootstrapSchema.CurrentVersion);
     }
 }
 
@@ -582,6 +582,31 @@ public class MelezhProjectBootstrapTests
             catch (IOException)
             {
                 /* temp file may remain locked briefly on Windows */
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ProjectNeedsCatalogRepairAsync_DetectsGuidOrphansAndMissingCatalog()
+    {
+        var path = CreateTestProject();
+        try
+        {
+            InsertHandler(path, "aria_sync", "http", "PostСТелом", "JSON");
+            InsertHandler(path, "dac022bc-5165-4b10-a59d-9c2cf6fd2d35", "http", "Get", "GET");
+
+            var needsRepair = await MelezhProjectBootstrap.ProjectNeedsCatalogRepairAsync(path, CancellationToken.None);
+            Assert.True(needsRepair);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
             }
         }
     }

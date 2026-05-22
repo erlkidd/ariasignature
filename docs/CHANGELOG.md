@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Melezh bootstrap **v7**: prune GUID-сирот на каждом ensure; repair при дрейфе каталога; `bootstrap-only` только при остановленной службе (устраняет плодение GUID и потерю планировщиков).
+
 ## [1.1.2] - 2026-05-20
 
 ### Added

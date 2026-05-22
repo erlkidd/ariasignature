@@ -40,10 +40,10 @@ public partial class MainWindow : Window
     private bool _startupWarmupPrepared;
     private bool _awaitingAppReady;
     private string? _pendingLocalApiNavigation;
-    private DateTime _lastMelezhBootstrapUtc = DateTime.MinValue;
+    private DateTime _lastMelezhRestartUtc = DateTime.MinValue;
     private int _melezhWebUiFailStreak;
     private static readonly TimeSpan StartupMaxWait = TimeSpan.FromMinutes(4);
-    private static readonly TimeSpan MelezhBootstrapCooldown = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan MelezhRestartCooldown = TimeSpan.FromSeconds(45);
 
     private sealed class StartupReadinessState
     {
@@ -580,10 +580,9 @@ public partial class MainWindow : Window
         if (!state.MelezhWebUiOk)
         {
             _melezhWebUiFailStreak++;
-            RequestMelezhBootstrapIfDue();
-            if (_melezhWebUiFailStreak >= 24)
+            if (_melezhWebUiFailStreak >= 20)
             {
-                await Task.Run(TryRestartMelezhServiceBestEffort, token).ConfigureAwait(false);
+                RequestMelezhServiceRestartIfDue();
                 _melezhWebUiFailStreak = 0;
             }
 
@@ -594,20 +593,20 @@ public partial class MainWindow : Window
 
         if (!state.MelezhPingOk)
         {
-            RequestMelezhBootstrapIfDue();
+            RequestMelezhServiceRestartIfDue();
         }
     }
 
-    private void RequestMelezhBootstrapIfDue()
+    private void RequestMelezhServiceRestartIfDue()
     {
         var now = DateTime.UtcNow;
-        if (now - _lastMelezhBootstrapUtc < MelezhBootstrapCooldown)
+        if (now - _lastMelezhRestartUtc < MelezhRestartCooldown)
         {
             return;
         }
 
-        _lastMelezhBootstrapUtc = now;
-        _ = Task.Run(MelezhServiceRepair.RunBootstrapOnlyBestEffort);
+        _lastMelezhRestartUtc = now;
+        _ = Task.Run(TryRestartMelezhServiceBestEffort);
     }
 
     private static void TryRestartMelezhServiceBestEffort()

@@ -3,7 +3,7 @@
 Версия документа: 1.1.2
 
 Источник правды в коде: `src/service/AriaSignature.MelezhHost/MelezhAriaApiHandlerCatalog.cs`.  
-При старте `AriaSignatureMelezhService` выполняется идемпотентный bootstrap (`MelezhProjectBootstrap`, schema **v6**: стабильные ключи handler’ов по `rowid` после CLI add, prune GUID-сирот, cron только для static GET).
+При старте `AriaSignatureMelezhService` выполняется идемпотентный bootstrap (`MelezhProjectBootstrap`, schema **v7**: стабильные ключи `aria_*` по `rowid` после CLI add, prune GUID-сирот на каждом ensure, cron только для static GET).
 
 ## Инварианты
 
@@ -66,7 +66,7 @@
 
 **Pull cron (bootstrap v5+):** каждый scheduled `aria_get_*` — отдельная секунда (`0`, `4`, `8`, … `36` в шаблоне `N */5 * * * * *`).
 
-**Repair v6:** при `BootstrapVersion` &lt; 6 — пересоздание handler’ов с корректным rename (не по `lib/func/method`), удаление GUID-ключей и лишних `scheduler_tasks`. Команды: `repair-melezh.ps1`, `MelezhHost --bootstrap-only`, перезапуск `AriaSignatureMelezhService`.
+**Repair v7:** при `BootstrapVersion` &lt; 7 или «дрейфе» каталога (GUID-ключи, пропущенные `aria_*`) — полный repair: prune, пересоздание handler’ов, `scheduler_tasks`. `bootstrap-only` только при **остановленной** службе Melezh. Команды: `repair-melezh.ps1`, `MelezhHost --bootstrap-only`, перезапуск `AriaSignatureMelezhService`.
 
 ## Переменные окружения (bootstrap / host)
 
