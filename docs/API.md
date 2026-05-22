@@ -1,4 +1,4 @@
-# AriaSignature — спецификация API (v1)
+﻿# AriaSignature — спецификация API (v1)
 
 Версия документа: 1.1.2
 
@@ -62,6 +62,15 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
   - Назначение: проверка доступности и версии сервиса.
   - Ответ: `status`, `timestampUtc`, `version`.
 
+### 3.1a Health и observability
+
+- `GET /health/live` — liveness (процесс API отвечает).
+- `GET /health/ready` — readiness (доступны настройки SQLite, порт API).
+- `GET /health/degradation` — агрегированные причины деградации (`RuntimeObservability`).
+- `GET /observability/runtime` — счётчики backup/SMART refresh/outbound/Melezh sync, uptime, latency старта API.
+
+Эти эндпоинты **не** вызываются из панели UI; используются мониторингом и Melezh pull (`aria_get_health_*`, `aria_get_observability_runtime`). См. матрицу покрытия (§7).
+
 ### 3.2 Настройки
 
 - `GET /settings`
@@ -118,7 +127,7 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
 | Агент `:5160` | Melezh `:7788` | Примечание |
 |---------------|----------------|------------|
 | `POST /api/v1/melezh/push` | `POST /aria_sync` | Один JSON-снимок телеметрии |
-| `GET /api/v1/disks` | `GET /aria_get_disks` | Pull по cron (stagger v5) |
+| `GET /api/v1/disks` | `GET /aria_get_disks` | Pull по cron (stagger v6) |
 | `GET /api/v1/disks/{id}/smart` | `GET /aria_get_disk_smart` | В bootstrap URL подставлен **placeholder** `00000000-0000-0000-0000-000000000001`; тест из Web UI без реального `id` даёт **404** — ожидаемо. Возьмите `id` из `aria_get_disks` / `GET /disks`. |
 | `GET /api/v1/status` | `GET /aria_ping` | Health |
 
@@ -129,7 +138,12 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
 - Назначение: доставка того же JSON-снимка, что и раздел 3.5 исходящего sync, в handler Melezh на этой машине (интеграции OInt / 1С).
 - Управление: `melezhSync*` в разделе 3.2; Quartz job `melezh-sync-job` в `AriaSignatureService`.
 - URL: `http://127.0.0.1:{melezhPort}/{melezhSyncHandler}` (handler по умолчанию `aria_sync`, health `aria_ping`).
-- Схема тела: как в разделе 3.5 (исходящий POST на коллектор).
+- Схема тела (`OutboundTelemetryPayload`, camelCase JSON):
+  - `timestampUtc` (`DateTimeOffset`);
+  - `agentVersion` (`string`);
+  - `system` — объект как `GET /system`;
+  - `disks` — массив как `GET /disks`;
+  - `backups` — `{ "jobs": [...], "recentLogs": [...] }` (до 80 последних записей журнала).
 - **Push в шлюз обязателен** для доставки снимка на `:7788` (Quartz + `POST /api/v1/melezh/push` → тот же handler `aria_sync`).
 - **Опрос через Melezh (pull):** планировщик Melezh по cron вызывает outbound GET handlers (`aria_get_*`); прямой `GET :5160/api/v1/*` допустим для UI/диагностики, но внешние интеграции ориентируются на `:7788`. См. [`docs/MELEZH_HANDLER_CATALOG.md`](MELEZH_HANDLER_CATALOG.md).
 
@@ -252,3 +266,36 @@ X-Aria-Api-Key: <ваш_токен_из_настроек>
 - Для старта локальной панели должны отвечать `GET /api/v1/status` и корневой `GET /` (SPA).
 - Установщик добавляет правило брандмауэра для **TCP 5160**; при смене порта обновите правило вручную.
 - Не выставляйте открытый порт API в публичный интернет без изоляции; предпочтительны частные сети и опциональный токен удалённого API.
+
+## 7. Матрица покрытия (UI / Melezh / sync)
+
+Префикс `/api/v1` опущен. «Melezh outbound» — handler key на `:7788`; «Melezh cron» — планировщик Melezh (только static GET). «Outbound sync» — `outbound-sync-job` и тот же JSON, что `POST /melezh/push`.
+
+| Endpoint | UI | Melezh outbound | Melezh cron | Outbound sync POST |
+|----------|:--:|:---------------:|:-----------:|:------------------:|
+| `GET /status` | да | `aria_ping` | — | — |
+| `GET /health/live` | — | `aria_get_health_live` | да | — |
+| `GET /health/ready` | — | `aria_get_health_ready` | да | — |
+| `GET /health/degradation` | — | `aria_get_health_degradation` | да | — |
+| `GET /observability/runtime` | — | `aria_get_observability_runtime` | да | — |
+| `GET /settings` | да | `aria_get_settings` | да | — |
+| `PUT /settings` | да | `aria_put_settings` | — | — |
+| `GET /system` | да | `aria_get_system` | да | — |
+| `POST /melezh/push` | да | — (→ `POST /aria_sync`) | — | — |
+| `POST /melezh/ingest` | — | — (ACK `aria_sync`) | — | — |
+| `GET /disks` | да | `aria_get_disks` | да | да |
+| `POST /disks/refresh` | да | `aria_post_disks_refresh` | — | — |
+| `GET /disks/{id}` | — | `aria_get_disk` | — | — |
+| `GET /disks/{id}/smart` | да | `aria_get_disk_smart` | — | — |
+| `DELETE /disks/{id}/smart` | да | `aria_delete_disk_smart` | — | — |
+| `DELETE /disks/smart` | да | `aria_delete_disks_smart` | — | — |
+| `GET /backups` | да | `aria_get_backups` | да | да |
+| `POST /backups` | да | `aria_post_backups` | — | — |
+| `PUT /backups/{id}` | да | `aria_put_backup` | — | — |
+| `DELETE /backups/{id}` | да | `aria_delete_backup` | — | — |
+| `POST /backups/{id}/run` | да | `aria_post_backup_run` | — | — |
+| `POST /backups/test-mssql` | да | `aria_post_backups_test_mssql` | — | — |
+| `GET /backups/logs` | да | `aria_get_backups_logs` | да | да |
+| `DELETE /backups/logs` | да | `aria_delete_backups_logs` | — | — |
+
+Исходящий sync и Melezh push отправляют один снимок: поля `timestampUtc`, `agentVersion`, `system`, `disks`, `backups` (см. §3.4–3.5).

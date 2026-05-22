@@ -6,14 +6,6 @@
 
 ## [Unreleased]
 
-### Added
-
-- Настройки → Melezh: кнопки **Запуск**, **Остановить**, **Перезапуск** для `AriaSignatureMelezhService` (через `controlMelezhService` в оболочке).
-
-### Fixed
-
-- Melezh bootstrap **v6**: после `ДобавитьОбработчикЗапросов` переименование handler по `rowid` (не по общему `http/Get/GET`), обновление `scheduler_tasks`, prune GUID-сирот и лишних cron на каждом ensure.
-
 ## [1.1.2] - 2026-05-20
 
 ### Added
@@ -21,10 +13,17 @@
 - Melezh API bridge: `MelezhAriaApiHandlerCatalog`, `MelezhProjectBootstrap` (1 handler на endpoint API, inbound `aria_ping`/`aria_sync`, cron только для static GET).
 - `docs/MELEZH_HANDLER_CATALOG.md`; smoke `Test-MelezhHandlerBootstrap.ps1`, `Test-MelezhAriaBridge.ps1` в release-gate.
 - Env `ARIASIGNATURE_MELEZH_ROOT`, `ARIASIGNATURE_MELEZH_PROJECT`, `ARIASIGNATURE_MELEZH_PULL_CRON`; режим `AriaSignature.MelezhHost --bootstrap-only`.
+- Настройки → Melezh: кнопки **Запуск**, **Остановить**, **Перезапуск** для `AriaSignatureMelezhService` (`controlMelezhService`).
+- `NAVIGATION-DOCS.MD`, `CONTRIBUTING.md`; `Test-ApiDocParity.ps1`, `Test-MelezhCatalogParity.ps1` в release-gate; матрица покрытия API в `docs/API.md` §7.
 
 ### Changed
 
 - Версия продукта **1.1.2**.
+- Документация: индекс `NAVIGATION-DOCS.MD`; инциденты в `docs/incidents/`; удалены устаревшие `INSTRUCTIONS.md`, `DEVELOPMENT_NOTES.md`, `TZ_1C_EXTENSION_AriaSignature_LT.md`.
+
+### Fixed
+
+- Melezh bootstrap **v6**: переименование handler по `rowid`, обновление `scheduler_tasks`, prune GUID-сирот и лишних cron.
 
 ## [1.1.0] - 2026-05-19
 

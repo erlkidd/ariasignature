@@ -1,4 +1,4 @@
-# AriaSignature — руководство разработчика
+﻿# AriaSignature — руководство разработчика
 
 Версия документа: 1.1.2
 
@@ -10,6 +10,12 @@ AriaSignature реализует `service-first` модель:
 - API публикует состояние и результаты работы сервиса для локальной панели и для **удалённого опроса** по IP (VPN/LAN): Kestrel слушает все интерфейсы, пока в настройках `Api:Bind=all`; опциональный токен для запросов не с loopback (`RemoteApiAuthMiddleware`).
 
 Система должна работать автономно после настройки: автозапуск, плановое выполнение, доступность HTTP API.
+
+### 1.1 Границы продукта
+
+**Включено:** диагностика дисков (HDD/SSD/NVMe), архивация `.1CD` и MSSQL, HTTP API `/api/v1`, панель и трей, установщик, опционально Melezh (порт 7788) и исходящий POST на коллектор.
+
+**Исключено:** облачная инфраструктура заказчика, маршрутизация/VPN между узлами, сторонние панели мониторинга вне API агента.
 
 ## 2. Архитектурные границы и ответственность
 
@@ -84,17 +90,17 @@ Startup-пайплайн оптимизирован под быстрый отк
 - `installer/inno/AriaSignature.iss` (`MyAppVersion`);
 - `src/web/package.json` и `package-lock.json`;
 - `src/web/src/App.tsx` (константа `UI_BUILD_VERSION`);
-- `docs/API.md`, `docs/USER_GUIDE.md`, `docs/MELEZH.md` и прочие документы с номером версии в шапке (`INSTALLER.md`, `RELEASE_GATE.md`, `DEVELOPER_GUIDE.md`, `DEVELOPMENT_NOTES.md`, `AI_CONTEXT.md`, `OPERATIONS_RUNBOOK.md`, `README.md`).
+- `docs/API.md`, `docs/USER_GUIDE.md`, `docs/MELEZH.md`, `NAVIGATION-DOCS.MD` и прочие документы с номером версии в шапке (`INSTALLER.md`, `RELEASE_GATE.md`, `DEVELOPER_GUIDE.md`, `AI_CONTEXT.md`, `OPERATIONS_RUNBOOK.md`, `README.md`).
 
 Release-gate публикует также `AriaSignature.MelezhHost` в `publish/melezh-host`; bundle Melezh — `installer/melezh/` (см. `scripts/prepare-melezh.ps1`).
 
 Единственный источник графики брендинга: **`assets/branding/logo.png`**. При `npm run build` создаётся **`assets/branding/icon.ico`** (exe, трей, Inno Setup). Подключение: `src/ui/AriaSignature.UI/AriaSignature.UI.csproj`, `installer/inno/AriaSignature.iss` (`SetupIconFile`).
 
-Изменения релиза фиксировать в `docs/CHANGELOG.md`; в `DEVELOPMENT_NOTES.md` — краткий указатель и матрицы проверок.
+Изменения релиза фиксировать в `docs/CHANGELOG.md`. Карта документации: [`NAVIGATION-DOCS.MD`](../NAVIGATION-DOCS.MD).
 
 ## 8. Стандарты документации
 
-При изменении эндпоинтов `/api/v1/*`: обновить [`docs/API.md`](API.md), проверить `/swagger` на запущенной службе (`.\scripts\Test-ApiDocParity.ps1` — сверка списка путей с кодом).
+При изменении эндпоинтов `/api/v1/*`: обновить [`docs/API.md`](API.md), [`docs/MELEZH_HANDLER_CATALOG.md`](MELEZH_HANDLER_CATALOG.md) при мосте Melezh, запустить `.\scripts\Test-ApiDocParity.ps1` и `.\scripts\Test-MelezhCatalogParity.ps1` (входят в `release-gate`).
 
 Обязательные требования:
 - документация обновляется вместе с изменением контракта/поведения;
@@ -105,7 +111,7 @@ Release-gate публикует также `AriaSignature.MelezhHost` в `publis
 - пользовательское воздействие (`USER_GUIDE.md`);
 - API-контракт (`API.md`);
 - техническая реализация/процесс (`DEVELOPER_GUIDE.md`, при необходимости `INSTALLER.md`, `RELEASE_GATE.md`);
-- запись в `DEVELOPMENT_NOTES.md` и `CHANGELOG.md`.
+- запись в `CHANGELOG.md`.
 
 ## 9. Сборка и проверка
 
@@ -115,9 +121,21 @@ Release-gate публикует также `AriaSignature.MelezhHost` в `publis
 Release-gate выполняет:
 - сборку SPA;
 - build/test .NET решения;
+- `Test-ApiDocParity.ps1`, `Test-MelezhCatalogParity.ps1`;
+- smoke Melezh (bundle, CLI, handler bootstrap, aria bridge, write handlers);
 - publish UI/service;
 - проверку runtime-зависимостей (`WebView2`, `smartctl`, `drivedb.h`);
 - сборку Inno Setup installer.
+
+### 9.1 Матрица ручной проверки службы (Windows 10 / 11)
+
+| Сценарий | Ожидание |
+|----------|----------|
+| Установка под администратором, холодный старт | Служба **Running**, probe `/api/v1/status` ок; при медленном старте возможна **1053** с последующим Running (см. логи). |
+| Установка: служба не стартовала | В логе Inno — **sc query** / **sc qc**; сообщение про UAC / **ServiceBootstrap**. |
+| UI под ограниченным пользователем, служба **Stopped** | Один запрос UAC → bootstrap; отмена — подсказка services.msc. |
+| UI под администратором | Без лишних UAC при успешном `TryInstallAndStart`. |
+| Служба **Running**, API не отвечает | Порт, брандмауэр, `service-*.log` (не путать с правами SCM). |
 
 Артефакт: `artifacts/installer/AriaSignature-Setup.exe`.
 

@@ -135,4 +135,4 @@ dotnet publish .\src\service\AriaSignature.MelezhHost\AriaSignature.MelezhHost.c
 
 ## 11. Инцидентные заметки
 
-- SCM/install/uninstall + Melezh autostart incident: [`docs/INCIDENT_SCM_INSTALL_UNINSTALL_MELEZH.md`](./INCIDENT_SCM_INSTALL_UNINSTALL_MELEZH.md)
+- SCM/install/uninstall + Melezh autostart incident: [`docs/incidents/INCIDENT_SCM_INSTALL_UNINSTALL_MELEZH.md`](incidents/INCIDENT_SCM_INSTALL_UNINSTALL_MELEZH.md)

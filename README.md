@@ -55,16 +55,18 @@
 
 ## Документация
 
+Полная карта: **[`NAVIGATION-DOCS.MD`](NAVIGATION-DOCS.MD)**. Участие в разработке: [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 | Документ | Содержание |
 |----------|------------|
 | [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | Руководство пользователя, сценарии UI. |
-| [`docs/API.md`](docs/API.md) | Контракт REST API `/api/v1`, удалённый опрос, авторизация. |
+| [`docs/API.md`](docs/API.md) | Контракт REST API `/api/v1`, матрица UI/Melezh/sync. |
 | [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) | Модули, процессы разработки, версионирование. |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | История изменений. |
 | [`docs/INSTALLER.md`](docs/INSTALLER.md), [`docs/RELEASE_GATE.md`](docs/RELEASE_GATE.md) | Сборка установщика и проверки. |
-| [`docs/OPERATIONS_RUNBOOK.md`](docs/OPERATIONS_RUNBOOK.md) | Runbook эксплуатации, triage/recovery, SLO/SLI. |
-| [`docs/MELEZH.md`](docs/MELEZH.md) | Melezh / OpenIntegrations: служба, порты, связка с 1С. |
-| [`docs/MELEZH_HANDLER_CATALOG.md`](docs/MELEZH_HANDLER_CATALOG.md) | Каталог handler keys ↔ API агента (bridge 1.1.1). |
+| [`docs/OPERATIONS_RUNBOOK.md`](docs/OPERATIONS_RUNBOOK.md) | Runbook эксплуатации, triage/recovery. |
+| [`docs/MELEZH.md`](docs/MELEZH.md) | Melezh / OpenIntegrations: служба, порты. |
+| [`docs/MELEZH_HANDLER_CATALOG.md`](docs/MELEZH_HANDLER_CATALOG.md) | Каталог handler keys ↔ API (bootstrap v6). |
 
 В работающей установке доступен **Swagger**: `http://<хост>:<порт>/swagger`.
 
