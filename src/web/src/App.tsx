@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, apiGet, apiSend } from "./api";
 
 const GITHUB_REPO_URL = "https://github.com/erlkidd/AriaSignature";
 const MELEZH_REPO_URL = "https://github.com/Bayselonarrend/Melezh";
 const UI_BUILD_VERSION = "1.1.2";
 const DISKS_LIVE_REFRESH_MS = 60_000;
-const MIN_TELEMETRY_CONFIDENCE_FOR_HEALTH = 50;
+const MIN_TELEMETRY_CONFIDENCE_FOR_HEALTH = 40;
 
 const logoSrc = `./logo.png?v=${encodeURIComponent(__LOGO_CACHE_BUST__)}`;
 const melezhLogoSrc = `./melezh_long.png?v=${encodeURIComponent(__LOGO_CACHE_BUST__)}`;
@@ -32,6 +32,7 @@ type DiskRow = {
   storageReliabilityUsed: boolean;
   telemetryConfidence: number;
   telemetryDegradationReason: string;
+  healthSummary?: string;
   status: string;
   updatedAtUtc: string;
 };
@@ -162,13 +163,17 @@ function formatSsdLifePercent(d: Pick<DiskRow, "ssdLifeRemainingPercent" | "medi
 
 function formatHealthPercent(
   p: number | null | undefined,
-  telemetryConfidence?: number
+  telemetryConfidence?: number,
+  healthSummary?: string | null
 ): string {
-  if (telemetryConfidence != null && telemetryConfidence < MIN_TELEMETRY_CONFIDENCE_FOR_HEALTH) {
-    return "н/д";
-  }
   if (p == null) {
     return "н/д";
+  }
+  if (telemetryConfidence != null && telemetryConfidence < MIN_TELEMETRY_CONFIDENCE_FOR_HEALTH) {
+    return `${p}%*`;
+  }
+  if (healthSummary?.includes("неполным данным")) {
+    return `${p}%*`;
   }
   return `${p}%`;
 }
@@ -567,7 +572,8 @@ export default function App() {
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
   const [launchAtStartup, setLaunchAtStartup] = useState(true);
   const [serviceSettingsExpanded, setServiceSettingsExpanded] = useState(false);
-  const [melezhSettingsExpanded, setMelezhSettingsExpanded] = useState(true);
+  const [melezhSettingsExpanded, setMelezhSettingsExpanded] = useState(false);
+  const windowsServiceStatusNotifyRef = useRef(false);
   const [outboundSettingsExpanded, setOutboundSettingsExpanded] = useState(false);
   /** Сообщение хоста: тип запуска службы — Automatic (null = ещё не приходило). */
   const [autostartServiceBootAuto, setAutostartServiceBootAuto] = useState<boolean | null>(null);
@@ -793,7 +799,7 @@ export default function App() {
       const d = await apiSend<DiskRow[]>("/disks/refresh", "POST");
       setDisks(d);
       if (!silent) {
-        setStatus("");
+        setStatus("Данные дисков обновлены.");
       }
     } catch (e) {
       showErr(e);
@@ -956,6 +962,18 @@ export default function App() {
     const initialLoad = async () => {
       try {
         await Promise.all([refreshSettings(), refreshServiceVersion()]);
+        let s = await apiGet<SettingsDto>("/settings");
+        const melezhOn = s.melezhEnabled !== false;
+        if (melezhOn) {
+          for (let attempt = 0; attempt < 12; attempt++) {
+            s = await apiGet<SettingsDto>("/settings");
+            if (s.melezhServiceStatus === "Running" && s.melezhRunning) {
+              break;
+            }
+            await new Promise((r) => window.setTimeout(r, 2500));
+          }
+          await refreshSettings();
+        }
       } catch (e) {
         showErr(e);
       } finally {
@@ -1064,7 +1082,16 @@ export default function App() {
           setDestFolder(data.path);
         }
         if (data?.action === "windowsServiceStatus") {
-          setWindowsService(data as WindowsServiceStatus);
+          const ws = data as WindowsServiceStatus;
+          setWindowsService(ws);
+          if (windowsServiceStatusNotifyRef.current) {
+            windowsServiceStatusNotifyRef.current = false;
+            if (ws.ok === false) {
+              setStatus(`AriaSignatureService: ${ws.error ?? "недоступна"}`);
+            } else if (ws.status) {
+              setStatus(`AriaSignatureService: ${formatWindowsServiceStatus(ws.status)}`);
+            }
+          }
         }
       } catch {
         /* ignore */
@@ -1078,7 +1105,6 @@ export default function App() {
     if (tab !== "settings") {
       return;
     }
-    setMelezhSettingsExpanded(true);
     postToHost({ action: "getWindowsServiceStatus" });
   }, [tab]);
 
@@ -1687,7 +1713,10 @@ export default function App() {
                       <td>
                         {d["interface"]} {d.mediaType ? `· ${d.mediaType}` : ""}
                       </td>
-                      <td>{formatHealthPercent(d.healthPercent, d.telemetryConfidence)}</td>
+                      <td>
+                        {formatHealthPercent(d.healthPercent, d.telemetryConfidence, d.healthSummary)}{" "}
+                        <span className={statusClass(d.status)}>{d.status}</span>
+                      </td>
                       <td>
                         <button type="button" onClick={() => void loadSmart(d)}>
                           Детали
@@ -1715,6 +1744,21 @@ export default function App() {
                     <dd>{formatTempC(selectedDisk.temperatureCelsius)}</dd>
                     <dt>Ресурс SSD</dt>
                     <dd>{formatSsdLifePercent(selectedDisk)}</dd>
+                    <dt>Оценка здоровья</dt>
+                    <dd>
+                      {formatHealthPercent(
+                        selectedDisk.healthPercent,
+                        selectedDisk.telemetryConfidence,
+                        selectedDisk.healthSummary
+                      )}{" "}
+                      <span className={statusClass(selectedDisk.status)}>{selectedDisk.status}</span>
+                    </dd>
+                    {selectedDisk.healthSummary ? (
+                      <>
+                        <dt>Пояснение</dt>
+                        <dd className="muted">{selectedDisk.healthSummary}</dd>
+                      </>
+                    ) : null}
                     <dt>Обновлено</dt>
                     <dd>{formatDiskUpdatedAt(selectedDisk.updatedAtUtc)}</dd>
                     <dt>Наработка</dt>
@@ -2457,7 +2501,14 @@ export default function App() {
               )}
             </p>
             <div className="row service-control-actions">
-              <button type="button" className="secondary" onClick={() => postToHost({ action: "getWindowsServiceStatus" })}>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  windowsServiceStatusNotifyRef.current = true;
+                  postToHost({ action: "getWindowsServiceStatus" });
+                }}
+              >
                 Обновить статус
               </button>
               <button type="button" onClick={() => postToHost({ action: "controlWindowsService", command: "start" })}>
@@ -2759,7 +2810,7 @@ export default function App() {
             open={melezhSettingsExpanded}
             onToggle={(e) => setMelezhSettingsExpanded((e.currentTarget as HTMLDetailsElement).open)}
           >
-            <summary className="settings-collapsible-summary">Melezh / OpenIntegrations</summary>
+            <summary className="settings-collapsible-summary">Melezh</summary>
             <div className="settings-collapsible-body">
               <div className="box service-control-box">
                 <p className="hint">
@@ -2801,7 +2852,14 @@ export default function App() {
                   <p className="hint">Восстановление службы Melezh…</p>
                 ) : null}
                 <div className="row service-control-actions">
-                  <button type="button" className="secondary" onClick={() => void refreshSettings()}>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={async () => {
+                      await refreshSettings();
+                      setStatus("Статус Melezh обновлён.");
+                    }}
+                  >
                     Обновить статус
                   </button>
                   <a href={settings.melezhUiUrl} target="_blank" rel="noreferrer" className="secondary">
@@ -2823,8 +2881,9 @@ export default function App() {
                 </div>
               </div>
 
+              <div className="box">
               <h3>Синхронизация в Melezh</h3>
-              <label className="checkbox">
+              <label className="check">
                 <input
                   type="checkbox"
                   checked={settings.melezhSyncEnabled}
@@ -2879,6 +2938,7 @@ export default function App() {
                 >
                   {melezhPushBusy ? "Отправка…" : "Отправить сейчас"}
                 </button>
+              </div>
               </div>
             </div>
           </details>

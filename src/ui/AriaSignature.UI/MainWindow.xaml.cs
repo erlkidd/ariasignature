@@ -359,10 +359,16 @@ public partial class MainWindow : Window
                     }
                 }
 
-                if (apiReady)
+                var requireMelezhRecovery = melezhRequired == true;
+                if (apiReady && (!requireMelezhRecovery || melezhReady))
                 {
                     await NavigateToPanelAsync(baseUrl).ConfigureAwait(false);
                     return;
+                }
+
+                if (apiReady && requireMelezhRecovery && !melezhReady)
+                {
+                    await Task.Run(MelezhServiceRepair.RunBootstrapOnlyBestEffort, token).ConfigureAwait(false);
                 }
 
                 var exePath = _serviceExePath;
@@ -428,10 +434,16 @@ public partial class MainWindow : Window
                 }
             }
 
-            if (apiReady)
+            var requireMelezh = melezhRequired == true;
+            if (apiReady && (!requireMelezh || melezhReady))
             {
                 await NavigateToPanelAsync(baseUrl).ConfigureAwait(false);
                 return;
+            }
+
+            if (apiReady && requireMelezh && !melezhReady)
+            {
+                _ = Task.Run(MelezhServiceRepair.RunBootstrapOnlyBestEffort);
             }
 
             var elapsed = DateTime.UtcNow - loadStart;
@@ -443,7 +455,6 @@ public partial class MainWindow : Window
             }
 
             var ensureDone = ensureTask.IsCompleted;
-            var requireMelezh = melezhRequired == true;
 
             if (ShouldShowHardStartupFailure(elapsed, cachedAriaStatus, ensureDone, apiReady))
             {

@@ -296,16 +296,49 @@ public sealed class SmartCtlLowLevelReader
                         snap.UncorrectableErrors = (int)Math.Clamp(raw, 0, int.MaxValue);
                         break;
                     case 177:
+                    {
+                        TryApplySsdLifeFromAtaAttribute(snap, row, raw, attrName);
+                        var wearValue = GetInt(row, "value");
+                        if (wearValue is >= 0 and <= 100)
+                        {
+                            snap.VendorHealthPercent = snap.VendorHealthPercent is int v
+                                ? Math.Max(v, wearValue.Value)
+                                : wearValue.Value;
+                        }
+
+                        break;
+                    }
                     case 231:
                     case 233:
                         TryApplySsdLifeFromAtaAttribute(snap, row, raw, attrName);
+                        break;
+                    case 187:
+                    case 190:
+                    case 199:
+                        if (raw > 0)
+                        {
+                            snap.UncorrectableErrors = Math.Max(snap.UncorrectableErrors, (int)Math.Clamp(raw, 0, int.MaxValue));
+                        }
+
                         break;
                 }
             }
         }
 
+        if (root.TryGetProperty("smart_status", out var smartStatus)
+            && smartStatus.TryGetProperty("passed", out var passedEl)
+            && passedEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            snap.SmartPassed = passedEl.GetBoolean();
+        }
+
         if (root.TryGetProperty("nvme_smart_health_information_log", out var nvme))
         {
+            var criticalWarning = GetInt(nvme, "critical_warning");
+            if (criticalWarning is >= 0)
+            {
+                snap.NvmeCriticalWarning = criticalWarning;
+            }
             if (snap.TemperatureCelsius <= 0)
             {
                 var k = GetInt(nvme, "temperature");
@@ -597,6 +630,12 @@ public sealed class SmartCtlLowLevelReader
         public int? SsdLifeRemainingPercent { get; set; }
 
         public bool SsdLifeEndOfLife { get; set; }
+
+        public bool? SmartPassed { get; set; }
+
+        public int? NvmeCriticalWarning { get; set; }
+
+        public int? VendorHealthPercent { get; set; }
     }
 
     public sealed record ReadResult(

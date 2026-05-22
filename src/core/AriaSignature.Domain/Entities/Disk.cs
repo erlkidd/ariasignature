@@ -23,6 +23,9 @@ public sealed class Disk
 
     /// <summary>Процент «здоровья» по SMART/износу; null если метрик недостаточно для оценки.</summary>
     public int? HealthPercent { get; set; }
+
+    /// <summary>Краткое пояснение оценки здоровья (факторы SMART, источники).</summary>
+    public string HealthSummary { get; set; } = string.Empty;
     public long PowerOnHours { get; set; }
     public long PowerCycleCount { get; set; }
     public int ReallocatedSectors { get; set; }

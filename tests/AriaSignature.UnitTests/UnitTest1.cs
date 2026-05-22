@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using AriaSignature.Application.Services;
 using AriaSignature.Application.Telemetry;
+using AriaSignature.Domain.Enums;
 using AriaSignature.Infrastructure.Backup;
 using AriaSignature.Infrastructure.Melezh;
 using AriaSignature.Infrastructure.Monitoring;
@@ -234,6 +235,103 @@ public class DiskTelemetryRulesTests
         var map = new Dictionary<int, string> { [0] = "HDD" };
         var actual = DiskTelemetryRules.NormalizeMediaType("Fixed hard disk media", 0, "SCSI", "Unknown", map);
         Assert.Equal("HDD", actual);
+    }
+}
+
+public class DiskHealthEngineTests
+{
+    [Fact]
+    public void Compute_WithSsdWear80_ReturnsApproximately80()
+    {
+        var a = DiskHealthEngine.Compute(new DiskHealthInput(
+            SsdLifeRemainingPercent: 80,
+            SsdLifeEndOfLife: false,
+            TemperatureCelsius: 42,
+            PowerOnHours: 1000,
+            ReallocatedSectors: 0,
+            PendingSectors: 0,
+            UncorrectableErrors: 0,
+            PredictFailure: false,
+            SmartPassed: true,
+            NvmeCriticalWarning: null,
+            VendorHealthPercent: null,
+            SmartCtlUsed: true,
+            StorageReliabilityUsed: false,
+            WmiUsed: false));
+
+        Assert.Equal(80, a.HealthPercent);
+        Assert.Equal(DiskHealthStatus.Ok, a.Status);
+        Assert.Contains("80%", a.HealthSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compute_WithReallocated5_LowersHealth()
+    {
+        var a = DiskHealthEngine.Compute(new DiskHealthInput(
+            SsdLifeRemainingPercent: null,
+            SsdLifeEndOfLife: false,
+            TemperatureCelsius: null,
+            PowerOnHours: 0,
+            ReallocatedSectors: 5,
+            PendingSectors: 0,
+            UncorrectableErrors: 0,
+            PredictFailure: false,
+            SmartPassed: null,
+            NvmeCriticalWarning: null,
+            VendorHealthPercent: null,
+            SmartCtlUsed: true,
+            StorageReliabilityUsed: false,
+            WmiUsed: false));
+
+        Assert.NotNull(a.HealthPercent);
+        Assert.True(a.HealthPercent < 100);
+        Assert.Contains("Reallocated", a.HealthSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compute_PredictFailure_CapsCritical()
+    {
+        var a = DiskHealthEngine.Compute(new DiskHealthInput(
+            SsdLifeRemainingPercent: 90,
+            SsdLifeEndOfLife: false,
+            TemperatureCelsius: 40,
+            PowerOnHours: 500,
+            ReallocatedSectors: 0,
+            PendingSectors: 0,
+            UncorrectableErrors: 0,
+            PredictFailure: true,
+            SmartPassed: null,
+            NvmeCriticalWarning: null,
+            VendorHealthPercent: null,
+            SmartCtlUsed: false,
+            StorageReliabilityUsed: false,
+            WmiUsed: true));
+
+        Assert.True(a.HealthPercent <= 35);
+        Assert.Equal(DiskHealthStatus.Critical, a.Status);
+    }
+
+    [Fact]
+    public void Compute_TempAndHoursOnly_ReturnsNullHealth()
+    {
+        var a = DiskHealthEngine.Compute(new DiskHealthInput(
+            SsdLifeRemainingPercent: null,
+            SsdLifeEndOfLife: false,
+            TemperatureCelsius: 38,
+            PowerOnHours: 2000,
+            ReallocatedSectors: 0,
+            PendingSectors: 0,
+            UncorrectableErrors: 0,
+            PredictFailure: false,
+            SmartPassed: null,
+            NvmeCriticalWarning: null,
+            VendorHealthPercent: null,
+            SmartCtlUsed: false,
+            StorageReliabilityUsed: false,
+            WmiUsed: true));
+
+        Assert.Null(a.HealthPercent);
+        Assert.Contains("Недостаточно SMART", a.HealthSummary, StringComparison.Ordinal);
     }
 }
 

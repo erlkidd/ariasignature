@@ -87,6 +87,18 @@ public static class MelezhServiceRepair
         Thread.Sleep(1500);
     }
 
+    public static void RunBootstrapOnlyBestEffort()
+    {
+        var hostExe = Path.GetFullPath(
+            Path.Combine(AppContext.BaseDirectory, "..", "melezh-host", "AriaSignature.MelezhHost.exe"));
+        if (!File.Exists(hostExe))
+        {
+            return;
+        }
+
+        TryRunBootstrapOnly(hostExe);
+    }
+
     private static void TryRunBootstrapOnly(string hostExe)
     {
         try
