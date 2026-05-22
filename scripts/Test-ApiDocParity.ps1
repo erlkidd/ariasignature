@@ -1,4 +1,4 @@
-# Verifies docs/API.md and Swagger-relevant routes match AriaApiExtensions route map.
+# Verifies docs/API.md and route map match AriaApiExtensions.
 param(
     [string]$RepoRoot = ""
 )
@@ -38,15 +38,17 @@ $expected = @(
     "/backups/{id:guid}",
     "/backups/{id:guid}/run",
     "/backups/logs"
-)
+) | Sort-Object -Unique
 
 $missingInCode = $expected | Where-Object { $_ -notin $codeRoutes }
-$extraInCode = $codeRoutes | Where-Object {
-    $_ -notin $expected -and $_ -notlike "/disks/*" -and $_ -notlike "/backups/*"
-}
+$extraInCode = $codeRoutes | Where-Object { $_ -notin $expected }
 
 if ($missingInCode.Count -gt 0) {
-    throw "[Test-ApiDocParity] routes in script missing in code: $($missingInCode -join ', ')"
+    throw "[Test-ApiDocParity] routes in baseline missing in code: $($missingInCode -join ', ')"
+}
+
+if ($extraInCode.Count -gt 0) {
+    throw "[Test-ApiDocParity] extra routes in code not in baseline: $($extraInCode -join ', ')"
 }
 
 Write-Host "[Test-ApiDocParity] code routes: $($codeRoutes.Count)"
@@ -54,20 +56,34 @@ foreach ($r in $codeRoutes) {
     Write-Host "  $r"
 }
 
-if ($extraInCode.Count -gt 0) {
-    Write-Host "[Test-ApiDocParity] warn: extra routes in code not in baseline: $($extraInCode -join ', ')"
+$md = Get-Content -LiteralPath $apiMd -Raw
+
+function Get-DocPathPattern {
+    param([string]$Route)
+    $p = $Route -replace '\{id:guid\}', '\{id\}'
+    return [regex]::Escape($p)
 }
 
-$md = Get-Content -LiteralPath $apiMd -Raw
-$checks = @(
-    @{ Path = "/melezh/push"; Pattern = "POST /melezh/push" },
-    @{ Path = "/melezh/ingest"; Pattern = "POST /melezh/ingest" },
-    @{ Path = "/settings"; Pattern = "GET /settings" },
-    @{ Path = "/disks"; Pattern = "GET /disks" }
+foreach ($route in $expected) {
+    $docPath = $route -replace '\{id:guid\}', '{id}'
+    $escaped = [regex]::Escape($docPath)
+    if ($md -notmatch $escaped) {
+        throw "[Test-ApiDocParity] API.md missing route mention: $docPath (from $route)"
+    }
+}
+
+$methodChecks = @(
+    @{ Route = "/status"; Pattern = "GET /status" },
+    @{ Route = "/melezh/push"; Pattern = "POST /melezh/push" },
+    @{ Route = "/melezh/ingest"; Pattern = "POST /melezh/ingest" },
+    @{ Route = "/settings"; Pattern = "GET /settings" },
+    @{ Route = "/disks"; Pattern = "GET /disks" },
+    @{ Route = "/health/live"; Pattern = "GET /health/live" },
+    @{ Route = "/observability/runtime"; Pattern = "GET /observability/runtime" }
 )
-foreach ($c in $checks) {
+foreach ($c in $methodChecks) {
     if ($md -notmatch [regex]::Escape($c.Pattern)) {
-        throw "[Test-ApiDocParity] API.md missing mention: $($c.Pattern)"
+        throw "[Test-ApiDocParity] API.md missing: $($c.Pattern)"
     }
 }
 

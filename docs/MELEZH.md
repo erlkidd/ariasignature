@@ -128,4 +128,5 @@ Cron pull (bootstrap v5+): для каждого из 10 `aria_get_*` — **св
 - Каталог handlers: [`docs/MELEZH_HANDLER_CATALOG.md`](MELEZH_HANDLER_CATALOG.md)
 - Локальное зеркало: `docs-opi-melezh/melezh/`
 - OpenIntegrations: https://en.openintegrations.dev/docs/Addons/Melezh/Start/Installation/
-- Инцидент SCM/install/uninstall + autostart: `docs/INCIDENT_SCM_INSTALL_UNINSTALL_MELEZH.md`
+- Инцидент SCM/install/uninstall + autostart: [`docs/incidents/INCIDENT_SCM_INSTALL_UNINSTALL_MELEZH.md`](incidents/INCIDENT_SCM_INSTALL_UNINSTALL_MELEZH.md)
+- Каталог handler keys: [`MELEZH_HANDLER_CATALOG.md`](MELEZH_HANDLER_CATALOG.md) (источник правды в коде — `MelezhAriaApiHandlerCatalog.cs`)

@@ -132,6 +132,16 @@ Write-Step -Index 3 -Total 12 -Name "run-tests"
 dotnet test .\AriaSignature.slnx -c $Configuration
 Assert-ExitCode -Code $LASTEXITCODE -Operation "dotnet-test"
 
+& powershell -ExecutionPolicy Bypass -File ".\scripts\Test-ApiDocParity.ps1"
+if ($LASTEXITCODE -ne 0) {
+    throw "[release-gate][step-fail] operation=""test-api-doc-parity"" reason=""api-routes-or-docs-mismatch"""
+}
+
+& powershell -ExecutionPolicy Bypass -File ".\scripts\Test-MelezhCatalogParity.ps1"
+if ($LASTEXITCODE -ne 0) {
+    throw "[release-gate][step-fail] operation=""test-melezh-catalog-parity"" reason=""handler-catalog-doc-mismatch"""
+}
+
 Write-Step -Index 4 -Total 12 -Name "publish-ui"
 Stop-RepoLockedProcess -ProcessName "AriaSignature.UI.exe" -LockedRoot (Join-Path (Get-Location) "publish\ui")
 Remove-Item -Path .\publish\ui -Recurse -Force -ErrorAction SilentlyContinue

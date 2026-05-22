@@ -21,14 +21,15 @@ Pipeline выполняет:
 1. `npm ci` + `npm run build` (`src/web`)
 2. `dotnet build .\AriaSignature.slnx -c Release`
 3. `dotnet test .\AriaSignature.slnx -c Release`
-4. `dotnet publish` UI, Service и **MelezhHost** в `win-x64 --self-contained true`; bootstrap публикуется отдельным шагом в `publish/bootstrap` и затем копируется в `publish/ui` (единственный разрешённый источник bootstrap для installer)
-5. подготовку runtime-зависимостей (`WebView2`, `smartctl`, `drivedb.h`, **Melezh/oint** bundle) с проверкой целостности и host-dependency-check (`powershell/sc/taskkill`, запись в `%ProgramData%\AriaSignature\logs\`)
+4. `Test-ApiDocParity.ps1`, `Test-MelezhCatalogParity.ps1` (код ↔ `docs/API.md` ↔ каталог Melezh)
+5. `dotnet publish` UI, Service и **MelezhHost** в `win-x64 --self-contained true`; bootstrap публикуется отдельным шагом в `publish/bootstrap` и затем копируется в `publish/ui` (единственный разрешённый источник bootstrap для installer)
+6. подготовку runtime-зависимостей (`WebView2`, `smartctl`, `drivedb.h`, **Melezh/oint** bundle) с проверкой целостности и host-dependency-check (`powershell/sc/taskkill`, запись в `%ProgramData%\AriaSignature\logs\`)
    - `WebView2` принимается только как standalone offline installer: проверяется минимальный размер файла и валидная Microsoft-подпись (bootstrap online-пакет блокирует gate)
    - `prepare-melezh.ps1`: извлекает OInt/Melezh из `installer/melezh/oint_*_installer_ru.exe` в `installer/melezh/bundle/` (обязательно перед Inno), см. `installer/melezh/README.md`
-6. regression smoke для уже установленной службы (`scripts/service-startup-smoke.ps1`) — если служба присутствует на build-host
-7. `Test-MelezhBundle.ps1` — полнота OInt bundle;
+7. regression smoke для уже установленной службы (`scripts/service-startup-smoke.ps1`) — если служба присутствует на build-host
+8. `Test-MelezhBundle.ps1` — полнота OInt bundle;
 8. `install-cli.ps1` smoke (install → verify → uninstall во временную папку);
-9. `ISCC` сборку `installer/inno/AriaSignature.iss`
+10. `ISCC` сборку `installer/inno/AriaSignature.iss`
 
 Опционально (локально): `Invoke-Pester .\tests\installer\ -ExcludeTag Integration`
 

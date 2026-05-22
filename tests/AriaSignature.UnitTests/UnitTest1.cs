@@ -335,8 +335,66 @@ public class DiskHealthEngineTests
     }
 }
 
+public class AriaApiRouteCatalogTests
+{
+    public static readonly HashSet<string> ApiRoutes = new(StringComparer.Ordinal)
+    {
+        "/status",
+        "/health/live",
+        "/health/ready",
+        "/health/degradation",
+        "/observability/runtime",
+        "/settings",
+        "/system",
+        "/melezh/push",
+        "/melezh/ingest",
+        "/backups/test-mssql",
+        "/disks",
+        "/disks/refresh",
+        "/disks/{id:guid}",
+        "/disks/{id:guid}/smart",
+        "/disks/smart",
+        "/backups",
+        "/backups/{id:guid}",
+        "/backups/{id:guid}/run",
+        "/backups/logs",
+    };
+
+    [Fact]
+    public void ApiRoutes_Baseline_HasNineteenEntries()
+    {
+        Assert.Equal(19, ApiRoutes.Count);
+    }
+}
+
 public class MelezhAriaApiHandlerCatalogTests
 {
+    private static string NormalizeCatalogPath(string? template) =>
+        (template ?? "")
+            .Replace("{diskId}", "{id:guid}", StringComparison.Ordinal)
+            .Replace("{backupId}", "{id:guid}", StringComparison.Ordinal);
+
+    [Fact]
+    public void Catalog_OutboundPaths_MatchApiRoutes()
+    {
+        var apiRoutes = AriaApiRouteCatalogTests.ApiRoutes;
+        var outbound = MelezhAriaApiHandlerCatalog.All
+            .Where(d => d.Direction == MelezhHandlerDirection.OutboundToAria && d.ApiPathTemplate is not null)
+            .ToList();
+
+        Assert.Equal(MelezhAriaApiHandlerCatalog.OutboundCount, outbound.Count);
+        Assert.Equal(23, outbound.Count);
+
+        foreach (var def in outbound)
+        {
+            var path = NormalizeCatalogPath(def.ApiPathTemplate);
+            Assert.Contains(path, apiRoutes);
+        }
+
+        Assert.DoesNotContain(outbound, d => d.ApiPathTemplate!.Contains("melezh/push", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(outbound, d => d.ApiPathTemplate!.Contains("melezh/ingest", StringComparison.OrdinalIgnoreCase));
+    }
+
     [Fact]
     public void All_HandlerKeys_AreUnique()
     {
@@ -567,6 +625,31 @@ public class MelezhProjectBootstrapTests
                 /* temp file may remain locked briefly on Windows */
             }
         }
+    }
+}
+
+public class OutboundTelemetryPayloadTests
+{
+    [Fact]
+    public void Payload_ExposesDocumentedJsonProperties()
+    {
+        var names = typeof(OutboundTelemetryPayload)
+            .GetProperties()
+            .Select(p => JsonNamingPolicy.CamelCase.ConvertName(p.Name))
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.Contains("timestampUtc", names);
+        Assert.Contains("agentVersion", names);
+        Assert.Contains("system", names);
+        Assert.Contains("disks", names);
+        Assert.Contains("backups", names);
+
+        var backupNames = typeof(OutboundBackupSnapshot)
+            .GetProperties()
+            .Select(p => JsonNamingPolicy.CamelCase.ConvertName(p.Name))
+            .ToHashSet(StringComparer.Ordinal);
+        Assert.Contains("jobs", backupNames);
+        Assert.Contains("recentLogs", backupNames);
     }
 }
 
