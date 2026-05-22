@@ -133,3 +133,26 @@ SPA перед публикацией сервиса обязательно до
 ## Лицензия
 
 MIT © см. [`LICENSE`](LICENSE).
+
+## Melezh
+
+<div align="center">
+
+<img src="assets/branding/melezh_long.png" alt="Melezh — HTTP-шлюз OpenIntegrations" width="480" />
+
+</div>
+
+**[Melezh](https://github.com/Bayselonarrend/Melezh)** — серверная версия [Открытого пакета интеграций](https://openintegrations.dev/), предоставляющая единый настраиваемый HTTP API для доступа к любым его библиотекам с возможностью установки значений по умолчанию, веб-консолью и встроенным логированием входящих запросов.
+
+В составе AriaSignature Melezh работает как служба **`AriaSignatureMelezhService`** (порт **7788**): готовые handler’ы `aria_*` проксируют REST API агента для интеграций 1С и OInt. Подробнее: [`docs/MELEZH.md`](docs/MELEZH.md), [`docs/MELEZH_HANDLER_CATALOG.md`](docs/MELEZH_HANDLER_CATALOG.md).
+
+<p align="center">
+  <img src="assets/screenshots/melezh-web-ui.png" alt="Melezh — веб-консоль, главная панель" width="1024" />
+</p>
+
+<p align="center">
+  <em>Веб-консоль Melezh: <code>http://127.0.0.1:7788/ui</code></em>
+</p>
+
+- Репозиторий: [github.com/Bayselonarrend/Melezh](https://github.com/Bayselonarrend/Melezh)
+- Автор: [Bayselonarrend](https://github.com/Bayselonarrend)
