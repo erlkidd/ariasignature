@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Настройки → Melezh: кнопки **Запуск**, **Остановить**, **Перезапуск** для `AriaSignatureMelezhService` (через `controlMelezhService` в оболочке).
+
+### Fixed
+
+- Melezh bootstrap **v6**: после `ДобавитьОбработчикЗапросов` переименование handler по `rowid` (не по общему `http/Get/GET`), обновление `scheduler_tasks`, prune GUID-сирот и лишних cron на каждом ensure.
+
 ## [1.1.2] - 2026-05-20
 
 ### Added

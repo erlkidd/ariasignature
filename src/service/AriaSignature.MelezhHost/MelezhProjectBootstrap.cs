@@ -64,6 +64,20 @@ public static class MelezhProjectBootstrap
                 cancellationToken);
         }
 
+        var prunedAfter = await PruneOrphanHandlersAsync(options.ProjectPath, logger, cancellationToken);
+        if (prunedAfter > 0)
+        {
+            logger.LogInformation("Melezh bootstrap: pruned {Count} orphan handler(s) after ensure", prunedAfter);
+        }
+
+        var prunedCron = await PruneOrphanSchedulerTasksAsync(options.ProjectPath, logger, cancellationToken);
+        if (prunedCron > 0)
+        {
+            logger.LogInformation("Melezh bootstrap: pruned {Count} orphan scheduler task(s)", prunedCron);
+        }
+
+        await VerifyCatalogHandlersAsync(options, runCliAsync, api, logger, cancellationToken);
+
         await SetBootstrapVersionAsync(options.ProjectPath, MelezhBootstrapSchema.CurrentVersion, cancellationToken);
 
         var upgraded = storedVersion > 0 && storedVersion < MelezhBootstrapSchema.CurrentVersion;
@@ -109,6 +123,8 @@ public static class MelezhProjectBootstrap
                 def.OintMethod);
         }
 
+        var maxRowId = await GetMaxHandlerRowIdAsync(options.ProjectPath, cancellationToken);
+
         var addArgs =
             $"{MelezhCliCommands.AddRequestsHandlerMethod} --proj {MelezhCliCommands.QuoteArg(options.ProjectPath)} --lib {def.OintLibrary} --func {def.OintFunction} --method {def.OintMethod}";
         var exit = await runCliAsync(addArgs, cancellationToken);
@@ -122,13 +138,17 @@ public static class MelezhProjectBootstrap
             return;
         }
 
-        await RenameLatestHandlerKeyAsync(
-            options.ProjectPath,
-            def.OintLibrary,
-            def.OintFunction,
-            def.OintMethod,
-            def.Key,
-            cancellationToken);
+        var newKey = await TryGetHandlerKeyAfterRowIdAsync(options.ProjectPath, maxRowId, cancellationToken);
+        if (newKey is null)
+        {
+            logger.LogWarning(
+                "Melezh bootstrap: could not locate new handler row for {Key} after add (maxRowId={MaxRowId})",
+                def.Key,
+                maxRowId);
+            return;
+        }
+
+        await RenameHandlerKeyAsync(options.ProjectPath, newKey, def.Key, cancellationToken);
 
         await ApplyOutboundArgsAsync(options, runCliAsync, def, api, logger, cancellationToken);
         await ApplyInboundArgsAsync(options, runCliAsync, def, api, logger, cancellationToken);
@@ -273,7 +293,7 @@ public static class MelezhProjectBootstrap
         logger.LogInformation("Melezh bootstrap: scheduled task for {Key} cron={Cron}", handlerKey, cron);
     }
 
-    private static async Task<int> PruneOrphanHandlersAsync(
+    internal static async Task<int> PruneOrphanHandlersAsync(
         string projectPath,
         ILogger logger,
         CancellationToken cancellationToken)
@@ -407,38 +427,137 @@ public static class MelezhProjectBootstrap
         await tx.CommitAsync(cancellationToken);
     }
 
-    private static async Task RenameLatestHandlerKeyAsync(
+    private static async Task<long> GetMaxHandlerRowIdAsync(string projectPath, CancellationToken cancellationToken)
+    {
+        await using var connection = OpenProject(projectPath);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT COALESCE(MAX(rowid), 0) FROM handlers";
+        var raw = await cmd.ExecuteScalarAsync(cancellationToken);
+        return raw is long l ? l : Convert.ToInt64(raw, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static async Task<string?> TryGetHandlerKeyAfterRowIdAsync(
         string projectPath,
-        string library,
-        string function,
-        string method,
-        string desiredKey,
+        long maxRowId,
         CancellationToken cancellationToken)
     {
         await using var connection = OpenProject(projectPath);
-        await using var select = connection.CreateCommand();
-        select.CommandText =
-            "SELECT key FROM handlers WHERE library = $lib AND function = $func AND upper(method) = $method ORDER BY rowid DESC LIMIT 1";
-        select.Parameters.AddWithValue("$lib", library);
-        select.Parameters.AddWithValue("$func", function);
-        select.Parameters.AddWithValue("$method", method.ToUpperInvariant());
-        var oldKey = await select.ExecuteScalarAsync(cancellationToken) as string;
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT key FROM handlers WHERE rowid > $maxRowId ORDER BY rowid ASC";
+        cmd.Parameters.AddWithValue("$maxRowId", maxRowId);
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        string? found = null;
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (found is not null)
+            {
+                return null;
+            }
+
+            found = reader.GetString(0);
+        }
+
+        return found;
+    }
+
+    internal static async Task RenameHandlerKeyAsync(
+        string projectPath,
+        string oldKey,
+        string desiredKey,
+        CancellationToken cancellationToken)
+    {
         if (string.IsNullOrWhiteSpace(oldKey) || string.Equals(oldKey, desiredKey, StringComparison.Ordinal))
         {
             return;
         }
 
-        await using var update = connection.CreateCommand();
-        update.CommandText = "UPDATE handlers SET key = $newKey WHERE key = $oldKey";
-        update.Parameters.AddWithValue("$newKey", desiredKey);
-        update.Parameters.AddWithValue("$oldKey", oldKey);
-        await update.ExecuteNonQueryAsync(cancellationToken);
+        await using var connection = OpenProject(projectPath);
+        await using var tx = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
 
-        await using var updateArgs = connection.CreateCommand();
-        updateArgs.CommandText = "UPDATE arguments SET key = $newKey WHERE key = $oldKey";
-        updateArgs.Parameters.AddWithValue("$newKey", desiredKey);
-        updateArgs.Parameters.AddWithValue("$oldKey", oldKey);
-        await updateArgs.ExecuteNonQueryAsync(cancellationToken);
+        await using (var update = connection.CreateCommand())
+        {
+            update.Transaction = tx;
+            update.CommandText = "UPDATE handlers SET key = $newKey WHERE key = $oldKey";
+            update.Parameters.AddWithValue("$newKey", desiredKey);
+            update.Parameters.AddWithValue("$oldKey", oldKey);
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var updateArgs = connection.CreateCommand())
+        {
+            updateArgs.Transaction = tx;
+            updateArgs.CommandText = "UPDATE arguments SET key = $newKey WHERE key = $oldKey";
+            updateArgs.Parameters.AddWithValue("$newKey", desiredKey);
+            updateArgs.Parameters.AddWithValue("$oldKey", oldKey);
+            await updateArgs.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var updateSched = connection.CreateCommand())
+        {
+            updateSched.Transaction = tx;
+            updateSched.CommandText = "UPDATE scheduler_tasks SET handler = $newKey WHERE handler = $oldKey";
+            updateSched.Parameters.AddWithValue("$newKey", desiredKey);
+            updateSched.Parameters.AddWithValue("$oldKey", oldKey);
+            await updateSched.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await tx.CommitAsync(cancellationToken);
+    }
+
+    private static async Task<int> PruneOrphanSchedulerTasksAsync(
+        string projectPath,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        var allowedHandlers = MelezhAriaApiHandlerCatalog.All
+            .Where(d => d.ScheduleByDefault)
+            .Select(d => d.Key)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var orphanHandlers = new List<string>();
+        await using (var connection = OpenProject(projectPath))
+        await using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "SELECT DISTINCT handler FROM scheduler_tasks";
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var handler = reader.GetString(0);
+                if (!allowedHandlers.Contains(handler))
+                {
+                    orphanHandlers.Add(handler);
+                }
+            }
+        }
+
+        foreach (var handler in orphanHandlers)
+        {
+            await DeleteSchedulerTaskAsync(projectPath, handler, cancellationToken);
+            logger.LogDebug("Melezh bootstrap: pruned orphan scheduler for {Handler}", handler);
+        }
+
+        return orphanHandlers.Count;
+    }
+
+    private static async Task VerifyCatalogHandlersAsync(
+        MelezhHostOptions options,
+        Func<string, CancellationToken, Task<int>> runCliAsync,
+        MelezhAgentApiSettings api,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        foreach (var def in MelezhAriaApiHandlerCatalog.All)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var row = await TryGetHandlerRowAsync(options.ProjectPath, def.Key, cancellationToken);
+            if (row is not null)
+            {
+                continue;
+            }
+
+            logger.LogWarning("Melezh bootstrap: catalog handler {Key} missing after ensure; retrying", def.Key);
+            await EnsureHandlerAsync(options, runCliAsync, def, api, forceRepair: true, logger, cancellationToken);
+        }
     }
 
     private static async Task<int> GetBootstrapVersionAsync(string projectPath, CancellationToken cancellationToken)

@@ -423,6 +423,153 @@ public class MelezhPullCronScheduleTests
     }
 }
 
+public class MelezhBootstrapSchemaTests
+{
+    [Fact]
+    public void CurrentVersion_IsSix()
+    {
+        Assert.Equal(6, MelezhBootstrapSchema.CurrentVersion);
+    }
+}
+
+public class MelezhProjectBootstrapTests
+{
+    private static string CreateTestProject()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "aria-mz-bootstrap-" + Guid.NewGuid().ToString("N") + ".melezh");
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}");
+        connection.Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE handlers (key TEXT PRIMARY KEY, library TEXT, function TEXT, method TEXT);
+            CREATE TABLE arguments (key TEXT, arg TEXT, value TEXT);
+            CREATE TABLE scheduler_tasks (handler TEXT, cron TEXT);
+            CREATE TABLE settings (name TEXT PRIMARY KEY, value TEXT);
+            """;
+        cmd.ExecuteNonQuery();
+        return path;
+    }
+
+    private static void InsertHandler(string projectPath, string key, string library, string function, string method)
+    {
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={projectPath}");
+        connection.Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText =
+            "INSERT INTO handlers(key, library, function, method) VALUES ($key, $lib, $func, $method)";
+        cmd.Parameters.AddWithValue("$key", key);
+        cmd.Parameters.AddWithValue("$lib", library);
+        cmd.Parameters.AddWithValue("$func", function);
+        cmd.Parameters.AddWithValue("$method", method);
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void InsertScheduler(string projectPath, string handler, string cron)
+    {
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={projectPath}");
+        connection.Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "INSERT INTO scheduler_tasks(handler, cron) VALUES ($handler, $cron)";
+        cmd.Parameters.AddWithValue("$handler", handler);
+        cmd.Parameters.AddWithValue("$cron", cron);
+        cmd.ExecuteNonQuery();
+    }
+
+    [Fact]
+    public async Task RenameHandlerKeyAsync_UpdatesHandlersArgumentsAndScheduler()
+    {
+        var path = CreateTestProject();
+        try
+        {
+            InsertHandler(path, "guid-old", "http", "Get", "GET");
+            using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+            {
+                connection.Open();
+                using var cmd = connection.CreateCommand();
+                cmd.CommandText = "INSERT INTO arguments(key, arg, value) VALUES ('guid-old', 'url', 'http://test')";
+                cmd.ExecuteNonQuery();
+            }
+
+            InsertScheduler(path, "guid-old", "0 */5 * * * * *");
+
+            await MelezhProjectBootstrap.RenameHandlerKeyAsync(path, "guid-old", "aria_get_status", CancellationToken.None);
+
+            using var verify = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}");
+            verify.Open();
+            using (var cmd = verify.CreateCommand())
+            {
+                cmd.CommandText = "SELECT COUNT(*) FROM handlers WHERE key = 'aria_get_status'";
+                Assert.Equal(1L, cmd.ExecuteScalar());
+            }
+
+            using (var cmd = verify.CreateCommand())
+            {
+                cmd.CommandText = "SELECT COUNT(*) FROM arguments WHERE key = 'aria_get_status'";
+                Assert.Equal(1L, cmd.ExecuteScalar());
+            }
+
+            using (var cmd = verify.CreateCommand())
+            {
+                cmd.CommandText = "SELECT handler FROM scheduler_tasks LIMIT 1";
+                Assert.Equal("aria_get_status", cmd.ExecuteScalar() as string);
+            }
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                /* temp file may remain locked briefly on Windows */
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PruneOrphanHandlersAsync_RemovesNonCatalogKeys()
+    {
+        var path = CreateTestProject();
+        try
+        {
+            InsertHandler(path, "aria_sync", "http", "PostСТелом", "JSON");
+            InsertHandler(path, Guid.NewGuid().ToString(), "http", "Get", "GET");
+
+            var logger = NullLogger.Instance;
+            var pruned = await MelezhProjectBootstrap.PruneOrphanHandlersAsync(path, logger, CancellationToken.None);
+
+            Assert.Equal(1, pruned);
+            using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}");
+            connection.Open();
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = "SELECT key FROM handlers";
+            var keys = new List<string>();
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                keys.Add(reader.GetString(0));
+            }
+
+            Assert.Single(keys);
+            Assert.Equal("aria_sync", keys[0]);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                /* temp file may remain locked briefly on Windows */
+            }
+        }
+    }
+}
+
 public class MelezhSyncDispatcherTests
 {
     [Fact]
